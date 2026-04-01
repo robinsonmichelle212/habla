@@ -1,8 +1,11 @@
+import { askJavi, lessonKindToLessonType, type JaviMessage } from '@/lib/claude';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -19,13 +22,21 @@ const palette = {
   surface: '#151B24',
   surfaceBorder: '#252D3A',
   bubbleAi: '#1E2633',
+  bubbleUser: '#2A1F2E',
   text: '#F4F6F8',
   muted: '#8B95A5',
   accent: '#FF7A59',
+  accentPressed: '#E86242',
   accentMuted: 'rgba(255, 122, 89, 0.18)',
 };
 
 type LessonKind = 'grammar' | 'vocabulary' | 'your-day';
+
+type ChatMessage = {
+  id: string;
+  role: 'user' | 'assistant';
+  text: string;
+};
 
 const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'grammar', label: 'Grammar' },
@@ -33,17 +44,64 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'your-day', label: 'Your day' },
 ];
 
+const INITIAL_MESSAGE: ChatMessage = {
+  id: 'welcome',
+  role: 'assistant',
+  text: '¡Hola! ¿Cómo estás?',
+};
+
+function newId(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const scrollRef = useRef<ScrollView>(null);
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
+  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
   const [reply, setReply] = useState('');
+  const [sending, setSending] = useState(false);
+
+  const scrollToEnd = useCallback(() => {
+    scrollRef.current?.scrollToEnd({ animated: true });
+  }, []);
 
   const goToSummary = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     router.push('/summary');
+  };
+
+  const sendMessage = async () => {
+    const trimmed = reply.trim();
+    if (!trimmed || sending) return;
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    const priorForApi: JaviMessage[] = messages.map((m) => ({
+      role: m.role,
+      content: m.text,
+    }));
+
+    const lessonType = lessonKindToLessonType(lessonKind);
+    setReply('');
+    setSending(true);
+    setMessages((prev) => [...prev, { id: newId(), role: 'user', text: trimmed }]);
+
+    try {
+      const javiText = await askJavi(lessonType, trimmed, priorForApi);
+      setMessages((prev) => [...prev, { id: newId(), role: 'assistant', text: javiText }]);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Something went wrong.';
+      Alert.alert('Could not reach Javi', message);
+      setReply(trimmed);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (
@@ -87,13 +145,24 @@ export default function LessonScreen() {
         </View>
 
         <ScrollView
+          ref={scrollRef}
           style={styles.chatScroll}
           contentContainerStyle={styles.chatScrollContent}
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-          <View style={styles.aiBubble}>
-            <Text style={styles.aiBubbleText}>¡Hola! ¿Cómo estás?</Text>
-          </View>
+          showsVerticalScrollIndicator={false}
+          onContentSizeChange={scrollToEnd}>
+          {messages.map((m) => (
+            <View
+              key={m.id}
+              style={[
+                styles.bubbleOuter,
+                m.role === 'user' ? styles.bubbleOuterUser : styles.bubbleOuterAi,
+              ]}>
+              <View style={[styles.bubble, m.role === 'user' ? styles.bubbleUser : styles.bubbleAi]}>
+                <Text style={styles.bubbleText}>{m.text}</Text>
+              </View>
+            </View>
+          ))}
         </ScrollView>
 
         <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -107,16 +176,36 @@ export default function LessonScreen() {
             accessibilityLabel="View lesson summary">
             <Text style={styles.summaryButtonText}>Finish lesson</Text>
           </Pressable>
-          <TextInput
-            style={styles.input}
-            value={reply}
-            onChangeText={setReply}
-            placeholder="Type your reply..."
-            placeholderTextColor={palette.muted}
-            multiline
-            maxLength={2000}
-            textAlignVertical="top"
-          />
+
+          <View style={styles.composeRow}>
+            <TextInput
+              style={styles.input}
+              value={reply}
+              onChangeText={setReply}
+              placeholder="Type your reply..."
+              placeholderTextColor={palette.muted}
+              multiline
+              maxLength={2000}
+              textAlignVertical="top"
+              editable={!sending}
+            />
+            <Pressable
+              onPress={sendMessage}
+              disabled={sending || !reply.trim()}
+              style={({ pressed }) => [
+                styles.sendButton,
+                (sending || !reply.trim()) && styles.sendButtonDisabled,
+                pressed && !sending && reply.trim() && styles.sendButtonPressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Send message">
+              {sending ? (
+                <ActivityIndicator color="#0B0F14" size="small" />
+              ) : (
+                <Text style={styles.sendButtonText}>Send</Text>
+              )}
+            </Pressable>
+          </View>
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -192,19 +281,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 12,
+    gap: 10,
   },
-  aiBubble: {
-    alignSelf: 'flex-start',
+  bubbleOuter: {
+    width: '100%',
+  },
+  bubbleOuterAi: {
+    alignItems: 'flex-start',
+  },
+  bubbleOuterUser: {
+    alignItems: 'flex-end',
+  },
+  bubble: {
     maxWidth: '88%',
-    backgroundColor: palette.bubbleAi,
     borderRadius: 18,
-    borderBottomLeftRadius: 6,
     paddingVertical: 14,
     paddingHorizontal: 16,
     borderWidth: 1,
-    borderColor: palette.surfaceBorder,
   },
-  aiBubbleText: {
+  bubbleAi: {
+    alignSelf: 'flex-start',
+    backgroundColor: palette.bubbleAi,
+    borderColor: palette.surfaceBorder,
+    borderBottomLeftRadius: 6,
+  },
+  bubbleUser: {
+    alignSelf: 'flex-end',
+    backgroundColor: palette.bubbleUser,
+    borderColor: 'rgba(255, 122, 89, 0.35)',
+    borderBottomRightRadius: 6,
+  },
+  bubbleText: {
     fontSize: 16,
     lineHeight: 22,
     color: palette.text,
@@ -234,7 +341,13 @@ const styles = StyleSheet.create({
     color: '#0B0F14',
     letterSpacing: 0.2,
   },
+  composeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 10,
+  },
   input: {
+    flex: 1,
     minHeight: 44,
     maxHeight: 120,
     backgroundColor: palette.surface,
@@ -245,5 +358,26 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     color: palette.text,
+  },
+  sendButton: {
+    backgroundColor: palette.accent,
+    borderRadius: 14,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    minWidth: 76,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 1,
+  },
+  sendButtonDisabled: {
+    opacity: 0.45,
+  },
+  sendButtonPressed: {
+    backgroundColor: palette.accentPressed,
+  },
+  sendButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0B0F14',
   },
 });
