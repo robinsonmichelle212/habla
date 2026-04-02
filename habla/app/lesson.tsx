@@ -1,11 +1,16 @@
 import { askJavi, lessonKindToLessonType, type JaviMessage } from '@/lib/claude';
+import {
+  setLessonSession,
+  type LessonConversationTurn,
+} from '@/lib/lesson-session';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -13,6 +18,7 @@ import {
   StyleSheet,
   Text,
   TextInput,
+  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,7 +41,8 @@ type LessonKind = 'grammar' | 'vocabulary' | 'your-day';
 type ChatMessage = {
   id: string;
   role: 'user' | 'assistant';
-  text: string;
+  spanish: string;
+  translation?: string;
 };
 
 const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
@@ -47,31 +54,158 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
 const INITIAL_MESSAGE: ChatMessage = {
   id: 'welcome',
   role: 'assistant',
-  text: '¡Hola! ¿Cómo estás?',
+  spanish: '¡Hola! ¿Cómo estás?',
+  translation: 'Hello! How are you?',
 };
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function parseJaviResponse(fullText: string): { spanish: string; translation?: string } {
+  const raw = fullText.trim();
+  if (!raw) return { spanish: '(Sin respuesta)' };
+
+  // Extract at the first "Translate:" line so English never leaks into the Spanish part.
+  const lines = raw.split(/\r?\n/);
+  const translateIdx = lines.findIndex((l) => /^\s*(Translate|Translation)\s*:\s*/i.test(l));
+
+  if (translateIdx === -1) {
+    return { spanish: raw };
+  }
+
+  const spanish = lines.slice(0, translateIdx).join('\n').trim();
+
+  const firstLine = lines[translateIdx] ?? '';
+  const firstPart = firstLine.replace(/^\s*(Translate|Translation)\s*:\s*/i, '').trim();
+  const rest = lines.slice(translateIdx + 1).join('\n').trim();
+  const translation = [firstPart, rest].filter(Boolean).join('\n').trim();
+
+  return {
+    spanish: spanish || '(Sin respuesta)',
+    translation: translation || undefined,
+  };
+}
+
+function MessageBubble({
+  role,
+  spanish,
+  translation,
+}: {
+  role: ChatMessage['role'];
+  spanish: string;
+  translation?: string;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const isAssistant = role === 'assistant';
+  const canReveal = isAssistant && !!translation;
+  // Safety: show only the Spanish part before any Translate label, even if formatting varies.
+  const safeSpanish = spanish
+    .split(/\r?\n\s*(Translate|Translation)\s*:/i)[0]
+    .trim();
+
+  return (
+    <View
+      style={[
+        styles.bubbleOuter,
+        isAssistant ? styles.bubbleOuterAi : styles.bubbleOuterUser,
+      ]}>
+      <View
+        style={[
+          styles.bubble,
+          isAssistant ? styles.bubbleAi : styles.bubbleUser,
+        ]}>
+        <Text style={styles.bubbleText}>{safeSpanish}</Text>
+      </View>
+
+      {canReveal ? (
+        <View style={styles.translationBlock}>
+          {revealed ? (
+            <>
+              <Pressable
+                onPress={() => setRevealed(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Hide translation"
+                style={({ pressed }) => [
+                  styles.revealTranslationButton,
+                  pressed && styles.revealTranslationButtonPressed,
+                ]}>
+                <Text style={styles.revealTranslationText}>Hide</Text>
+              </Pressable>
+              <Text style={styles.translationText}>{translation}</Text>
+            </>
+          ) : (
+            <Pressable
+              onPress={() => setRevealed(true)}
+              accessibilityRole="button"
+              accessibilityLabel="Reveal translation"
+              style={({ pressed }) => [
+                styles.revealTranslationButton,
+                pressed && styles.revealTranslationButtonPressed,
+              ]}>
+              <Text style={styles.revealTranslationText}>👁️ Reveal</Text>
+            </Pressable>
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollViewRef = useRef<any>(null);
+  const replyInputRef = useRef<TextInput>(null);
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
+  const [endingLesson, setEndingLesson] = useState(false);
 
-  const scrollToEnd = useCallback(() => {
-    scrollRef.current?.scrollToEnd({ animated: true });
-  }, []);
+  useEffect(() => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true })
+    }, 100)
+  }, [messages])
 
-  const goToSummary = () => {
+  useEffect(() => {
+    const keyboardListener = Keyboard.addListener('keyboardDidShow', () => {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true })
+      }, 100)
+    })
+    return () => keyboardListener.remove()
+  }, [])
+
+  const endLesson = async () => {
+    if (endingLesson) return;
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
-    router.push('/summary');
+
+    const lessonType = lessonKindToLessonType(lessonKind);
+    const conversation: LessonConversationTurn[] = messages.map((m) => ({
+      role: m.role,
+      spanish: m.spanish,
+      translation: m.translation,
+    }));
+
+    // Persist lesson context for the writing screen.
+    setEndingLesson(true);
+    try {
+      setLessonSession({
+        lessonType,
+        conversation,
+        analysis: undefined,
+        drills: undefined,
+        writingTask: undefined,
+        writingEvaluation: undefined,
+      });
+      router.push('/writing');
+    } finally {
+      setEndingLesson(false);
+    }
   };
 
   const sendMessage = async () => {
@@ -84,17 +218,29 @@ export default function LessonScreen() {
 
     const priorForApi: JaviMessage[] = messages.map((m) => ({
       role: m.role,
-      content: m.text,
+      content: m.spanish,
     }));
 
     const lessonType = lessonKindToLessonType(lessonKind);
     setReply('');
     setSending(true);
-    setMessages((prev) => [...prev, { id: newId(), role: 'user', text: trimmed }]);
+    setMessages((prev) => [
+      ...prev,
+      { id: newId(), role: 'user', spanish: trimmed },
+    ]);
 
     try {
       const javiText = await askJavi(lessonType, trimmed, priorForApi);
-      setMessages((prev) => [...prev, { id: newId(), role: 'assistant', text: javiText }]);
+      const parsed = parseJaviResponse(javiText);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: newId(),
+          role: 'assistant',
+          spanish: parsed.spanish,
+          translation: parsed.translation,
+        },
+      ]);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
       Alert.alert('Could not reach Javi', message);
@@ -108,9 +254,8 @@ export default function LessonScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
       <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}>
         <View style={styles.topBar}>
           <Pressable
             onPress={() => router.back()}
@@ -145,68 +290,83 @@ export default function LessonScreen() {
         </View>
 
         <ScrollView
-          ref={scrollRef}
+          ref={scrollViewRef}
           style={styles.chatScroll}
           contentContainerStyle={styles.chatScrollContent}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          onContentSizeChange={scrollToEnd}>
+          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}>
           {messages.map((m) => (
-            <View
+            <MessageBubble
               key={m.id}
-              style={[
-                styles.bubbleOuter,
-                m.role === 'user' ? styles.bubbleOuterUser : styles.bubbleOuterAi,
-              ]}>
-              <View style={[styles.bubble, m.role === 'user' ? styles.bubbleUser : styles.bubbleAi]}>
-                <Text style={styles.bubbleText}>{m.text}</Text>
-              </View>
-            </View>
-          ))}
-        </ScrollView>
-
-        <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
-          <Pressable
-            onPress={goToSummary}
-            style={({ pressed }) => [
-              styles.summaryButton,
-              pressed && styles.summaryButtonPressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="View lesson summary">
-            <Text style={styles.summaryButtonText}>Finish lesson</Text>
-          </Pressable>
-
-          <View style={styles.composeRow}>
-            <TextInput
-              style={styles.input}
-              value={reply}
-              onChangeText={setReply}
-              placeholder="Type your reply..."
-              placeholderTextColor={palette.muted}
-              multiline
-              maxLength={2000}
-              textAlignVertical="top"
-              editable={!sending}
+              role={m.role}
+              spanish={m.spanish}
+              translation={m.translation}
             />
+          ))}
+          <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
             <Pressable
-              onPress={sendMessage}
-              disabled={sending || !reply.trim()}
+              onPress={endLesson}
+              disabled={endingLesson}
               style={({ pressed }) => [
-                styles.sendButton,
-                (sending || !reply.trim()) && styles.sendButtonDisabled,
-                pressed && !sending && reply.trim() && styles.sendButtonPressed,
+                styles.summaryButton,
+                endingLesson && styles.summaryButtonDisabled,
+                pressed && styles.summaryButtonPressed,
               ]}
               accessibilityRole="button"
-              accessibilityLabel="Send message">
-              {sending ? (
+              accessibilityLabel="End lesson and continue to writing">
+              {endingLesson ? (
                 <ActivityIndicator color="#0B0F14" size="small" />
               ) : (
-                <Text style={styles.sendButtonText}>Send</Text>
+                <Text style={styles.summaryButtonText}>End Lesson</Text>
               )}
             </Pressable>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spanishRow}>
+              {['á','é','í','ó','ú','ü','ñ','¿','¡','Á','É','Í','Ó','Ú','Ñ'].map((char) => (
+                <TouchableOpacity key={char} onPress={() => setReply((prev) => prev + char)} style={styles.spanishButton}>
+                  <Text style={styles.spanishButtonText}>{char}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <View style={styles.composeRow}>
+              <TextInput
+                ref={replyInputRef}
+                style={styles.input}
+                value={reply}
+                onChangeText={setReply}
+                placeholder="Type your reply..."
+                placeholderTextColor={palette.muted}
+                multiline
+                maxLength={2000}
+                textAlignVertical="top"
+                editable={!sending}
+                onFocus={() => {
+                  setTimeout(() => {
+                    scrollViewRef.current?.scrollToEnd({ animated: true });
+                  }, 60);
+                }}
+              />
+              <Pressable
+                onPress={sendMessage}
+                disabled={sending || !reply.trim()}
+                style={({ pressed }) => [
+                  styles.sendButton,
+                  (sending || !reply.trim()) && styles.sendButtonDisabled,
+                  pressed && !sending && reply.trim() && styles.sendButtonPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Send message">
+                {sending ? (
+                  <ActivityIndicator color="#0B0F14" size="small" />
+                ) : (
+                  <Text style={styles.sendButtonText}>Send</Text>
+                )}
+              </Pressable>
+            </View>
           </View>
-        </View>
+        </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -316,6 +476,32 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     color: palette.text,
   },
+  translationBlock: {
+    alignSelf: 'flex-start',
+    marginTop: 6,
+    maxWidth: '88%',
+  },
+  revealTranslationButton: {
+    backgroundColor: 'transparent',
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+  },
+  revealTranslationButtonPressed: {
+    backgroundColor: 'rgba(139, 149, 165, 0.12)',
+  },
+  revealTranslationText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.muted,
+    letterSpacing: 0.2,
+  },
+  translationText: {
+    marginTop: 6,
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.muted,
+  },
   inputWrap: {
     paddingHorizontal: 20,
     paddingTop: 8,
@@ -325,30 +511,56 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   summaryButton: {
-    backgroundColor: palette.accent,
-    borderRadius: 14,
-    paddingVertical: 16,
+    alignSelf: 'flex-start',
+    backgroundColor: palette.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
     alignItems: 'center',
     justifyContent: 'center',
   },
   summaryButtonPressed: {
-    backgroundColor: palette.accentPressed,
-    opacity: 0.95,
+    opacity: 0.88,
+  },
+  summaryButtonDisabled: {
+    opacity: 0.5,
   },
   summaryButtonText: {
-    fontSize: 17,
+    fontSize: 14,
     fontWeight: '700',
-    color: '#0B0F14',
-    letterSpacing: 0.2,
+    color: palette.muted,
+    letterSpacing: 0.1,
   },
   composeRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 10,
   },
+  spanishRow: {
+    gap: 8,
+    paddingVertical: 6,
+  },
+  spanishButton: {
+    minWidth: 34,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#323C4D',
+    backgroundColor: '#0F141C',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spanishButtonText: {
+    color: '#F4F6F8',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   input: {
     flex: 1,
-    minHeight: 44,
+    minHeight: 52,
     maxHeight: 120,
     backgroundColor: palette.surface,
     borderRadius: 14,

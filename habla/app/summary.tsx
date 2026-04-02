@@ -1,7 +1,21 @@
+import { checkDrillAnswer, generateDrills } from '@/lib/claude';
+import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
+import { recordLessonCompleted } from '@/lib/streak';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const palette = {
@@ -20,19 +34,109 @@ const palette = {
   blueBg: 'rgba(96, 165, 250, 0.12)',
 };
 
-/** Placeholder score out of 100 */
-const TODAYS_SCORE_PERCENT = 87;
-
 export default function SummaryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const session = useMemo(() => getLessonSession(), []);
+  const analysis = session.analysis;
+  const lessonType = session.lessonType;
+  const writing = session.writingEvaluation;
+  const didRecordRef = useRef(false);
+  const [streakBanner, setStreakBanner] = useState<string | null>(null);
+  const [milestone, setMilestone] = useState<{ day: number; starsAwarded: number } | null>(null);
+
+  const [mode, setMode] = useState<'summary' | 'drills'>('summary');
+  const [loadingDrills, setLoadingDrills] = useState(false);
+  const [drills, setDrills] = useState(session.drills ?? []);
+  const [drillIdx, setDrillIdx] = useState(0);
+  const [answer, setAnswer] = useState('');
+  const [checking, setChecking] = useState(false);
+  const [lastFeedback, setLastFeedback] = useState<{
+    score: number;
+    feedback: string;
+    correctAnswer?: string;
+  } | null>(null);
+  const [stars, setStars] = useState(0);
+
+  useEffect(() => {
+    if (didRecordRef.current) return;
+    didRecordRef.current = true;
+
+    recordLessonCompleted()
+      .then((res) => {
+        if (res.usedFreeze && res.message) setStreakBanner(res.message);
+        if (res.milestone) setMilestone(res.milestone);
+      })
+      .catch(() => {
+        // no-op: streak should not block summary UI
+      });
+  }, []);
 
   const goHome = () => {
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
+    resetLessonSession();
     router.replace('/(tabs)');
   };
+
+  const startDrills = async () => {
+    if (!analysis || !lessonType || loadingDrills) return;
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    setLoadingDrills(true);
+    setLastFeedback(null);
+    setAnswer('');
+    try {
+      const exercises = await generateDrills(lessonType, analysis.weakAreas, analysis.focusAreas);
+      if (!exercises.length) {
+        Alert.alert('No drills generated', 'Try again in a moment.');
+        return;
+      }
+      setLessonSession({ drills: exercises });
+      setDrills(exercises);
+      setDrillIdx(0);
+      setStars(0);
+      setMode('drills');
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Something went wrong.';
+      Alert.alert('Could not generate drills', message);
+    } finally {
+      setLoadingDrills(false);
+    }
+  };
+
+  const submitDrillAnswer = async () => {
+    if (!lessonType) return;
+    const exercise = drills[drillIdx];
+    if (!exercise) return;
+    const trimmed = answer.trim();
+    if (!trimmed || checking) return;
+
+    setChecking(true);
+    try {
+      const result = await checkDrillAnswer(lessonType, exercise, trimmed);
+      const score = Math.max(0, Math.min(100, Math.round(result.score ?? 0)));
+      const feedback = `${result.feedbackSpanish}\n\n${result.feedbackEnglish}`;
+      setLastFeedback({ score, feedback, correctAnswer: result.correctAnswer });
+      if (score >= 75) setStars((s) => s + 1);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Something went wrong.';
+      Alert.alert('Could not check answer', message);
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  const nextExercise = () => {
+    setLastFeedback(null);
+    setAnswer('');
+    setDrillIdx((i) => Math.min(i + 1, Math.max(0, drills.length - 1)));
+  };
+
+  const hasAnalysis = !!analysis;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -45,38 +149,180 @@ export default function SummaryScreen() {
         showsVerticalScrollIndicator={false}>
         <Text style={styles.pageTitle}>Lesson Complete</Text>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Strong Areas ✅</Text>
-          <View style={[styles.item, styles.itemGreen]}>
-            <Text style={[styles.itemText, styles.textGreen]}>Present tense conjugations</Text>
+        {streakBanner ? (
+          <View style={styles.banner}>
+            <Text style={styles.bannerText}>{streakBanner}</Text>
           </View>
-          <View style={[styles.item, styles.itemGreen]}>
-            <Text style={[styles.itemText, styles.textGreen]}>Basic greetings & introductions</Text>
-          </View>
-        </View>
+        ) : null}
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Weak Areas ⚠️</Text>
-          <View style={[styles.item, styles.itemAmber]}>
-            <Text style={[styles.itemText, styles.textAmber]}>Subjunctive mood in conversation</Text>
+        {milestone ? (
+          <View style={styles.milestoneCard}>
+            <Text style={styles.milestoneTitle}>Streak milestone!</Text>
+            <Text style={styles.milestoneText}>
+              Day {milestone.day} — +{milestone.starsAwarded} gold star
+              {milestone.starsAwarded === 1 ? '' : 's'} ⭐
+            </Text>
           </View>
-          <View style={[styles.item, styles.itemAmber]}>
-            <Text style={[styles.itemText, styles.textAmber]}>Por vs. para in context</Text>
-          </View>
-        </View>
+        ) : null}
 
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Focus Tomorrow 🎯</Text>
-          <View style={[styles.item, styles.itemBlue]}>
-            <Text style={[styles.itemText, styles.textBlue]}>Review irregular verb patterns</Text>
+        {!hasAnalysis ? (
+          <View style={styles.emptyState}>
+            <Text style={styles.emptyTitle}>No summary yet</Text>
+            <Text style={styles.emptyText}>
+              Go back to the lesson and tap End Lesson to generate your personalised summary.
+            </Text>
           </View>
-        </View>
+        ) : mode === 'summary' ? (
+          <>
+            {writing ? (
+              <View style={styles.writingCard}>
+                <Text style={styles.writingTitle}>Writing scores</Text>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Grammar</Text>
+                  <Text style={styles.writingValue}>{Math.round(writing.grammarScore)}%</Text>
+                </View>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Vocabulary</Text>
+                  <Text style={styles.writingValue}>{Math.round(writing.vocabularyScore)}%</Text>
+                </View>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Fluency</Text>
+                  <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
+                </View>
+              </View>
+            ) : null}
 
-        <View style={styles.scoreBlock}>
-          <Text style={styles.scoreLabel}>{"Today's score"}</Text>
-          <Text style={styles.scoreValue}>{TODAYS_SCORE_PERCENT}%</Text>
-          <Text style={styles.scoreHint}>out of 100</Text>
-        </View>
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Strong Areas ✅</Text>
+              {analysis.strongAreas.map((t, idx) => (
+                <View key={`s-${idx}`} style={[styles.item, styles.itemGreen]}>
+                  <Text style={[styles.itemText, styles.textGreen]}>{t}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Weak Areas ⚠️</Text>
+              {analysis.weakAreas.map((t, idx) => (
+                <View key={`w-${idx}`} style={[styles.item, styles.itemAmber]}>
+                  <Text style={[styles.itemText, styles.textAmber]}>{t}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Focus Tomorrow 🎯</Text>
+              {analysis.focusAreas.map((t, idx) => (
+                <View key={`f-${idx}`} style={[styles.item, styles.itemBlue]}>
+                  <Text style={[styles.itemText, styles.textBlue]}>{t}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.scoreBlock}>
+              <Text style={styles.scoreLabel}>Correctness score</Text>
+              <Text style={styles.scoreValue}>{Math.round(analysis.correctnessScore)}%</Text>
+              <Text style={styles.scoreHint}>grammar + vocabulary</Text>
+            </View>
+
+            <View style={styles.encourageCard}>
+              <Text style={styles.encourageTitle}>Javi says</Text>
+              <Text style={styles.encourageText}>{analysis.encouragingMessage}</Text>
+            </View>
+
+            <Pressable
+              onPress={startDrills}
+              disabled={loadingDrills}
+              style={({ pressed }) => [
+                styles.practiceButton,
+                loadingDrills && styles.practiceButtonDisabled,
+                pressed && !loadingDrills && styles.practiceButtonPressed,
+              ]}
+              accessibilityRole="button"
+              accessibilityLabel="Practice weak areas">
+              {loadingDrills ? (
+                <ActivityIndicator color="#0B0F14" size="small" />
+              ) : (
+                <Text style={styles.practiceButtonText}>Practice Weak Areas</Text>
+              )}
+            </Pressable>
+          </>
+        ) : (
+          <>
+            <View style={styles.drillHeader}>
+              <Text style={styles.drillTitle}>Practice</Text>
+              <Text style={styles.drillMeta}>
+                Exercise {Math.min(drillIdx + 1, drills.length)} / {drills.length} · Stars {stars}
+              </Text>
+            </View>
+
+            <View style={styles.drillCard}>
+              <Text style={styles.drillPrompt}>{drills[drillIdx]?.prompt ?? ''}</Text>
+              {drills[drillIdx]?.expectedAnswer ? (
+                <Text style={styles.drillHint}>Hint: keep it short.</Text>
+              ) : null}
+            </View>
+
+            <View style={styles.answerCard}>
+              <TextInput
+                style={styles.answerInput}
+                value={answer}
+                onChangeText={setAnswer}
+                placeholder="Type your answer in Spanish..."
+                placeholderTextColor={palette.muted}
+                editable={!checking}
+                multiline
+              />
+              <Pressable
+                onPress={submitDrillAnswer}
+                disabled={checking || !answer.trim()}
+                style={({ pressed }) => [
+                  styles.checkButton,
+                  (checking || !answer.trim()) && styles.checkButtonDisabled,
+                  pressed && !checking && answer.trim() && styles.checkButtonPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Check answer">
+                {checking ? (
+                  <ActivityIndicator color="#0B0F14" size="small" />
+                ) : (
+                  <Text style={styles.checkButtonText}>Check</Text>
+                )}
+              </Pressable>
+            </View>
+
+            {lastFeedback ? (
+              <View style={styles.feedbackCard}>
+                <Text style={styles.feedbackTitle}>Score: {lastFeedback.score}%</Text>
+                <Text style={styles.feedbackText}>{lastFeedback.feedback}</Text>
+                {lastFeedback.correctAnswer ? (
+                  <Text style={styles.correctAnswerText}>
+                    Suggested answer: {lastFeedback.correctAnswer}
+                  </Text>
+                ) : null}
+
+                <Pressable
+                  onPress={() => {
+                    if (drillIdx >= drills.length - 1) {
+                      setMode('summary');
+                      return;
+                    }
+                    nextExercise();
+                  }}
+                  style={({ pressed }) => [
+                    styles.nextButton,
+                    pressed && styles.nextButtonPressed,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Next exercise">
+                  <Text style={styles.nextButtonText}>
+                    {drillIdx >= drills.length - 1 ? 'Back to Summary' : 'Next'}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+          </>
+        )}
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
@@ -108,6 +354,92 @@ const styles = StyleSheet.create({
     color: palette.text,
     marginBottom: 24,
     textAlign: 'center',
+  },
+  emptyState: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 20,
+  },
+  emptyTitle: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.text,
+    marginBottom: 6,
+  },
+  emptyText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: palette.muted,
+    lineHeight: 20,
+  },
+  banner: {
+    backgroundColor: 'rgba(96, 165, 250, 0.12)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(96, 165, 250, 0.35)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    marginBottom: 14,
+  },
+  bannerText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.blue,
+  },
+  milestoneCard: {
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.35)',
+    padding: 14,
+    marginBottom: 16,
+  },
+  milestoneTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.amber,
+    marginBottom: 6,
+  },
+  milestoneText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 20,
+  },
+  writingCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 16,
+  },
+  writingTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  writingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 6,
+  },
+  writingLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.text,
+  },
+  writingValue: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: palette.text,
   },
   scoreBlock: {
     alignItems: 'center',
@@ -180,6 +512,164 @@ const styles = StyleSheet.create({
   },
   textBlue: {
     color: palette.blue,
+  },
+  encourageCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 18,
+  },
+  encourageTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 8,
+  },
+  encourageText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.text,
+    lineHeight: 20,
+  },
+  practiceButton: {
+    backgroundColor: palette.blue,
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 22,
+  },
+  practiceButtonPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.99 }],
+  },
+  practiceButtonDisabled: {
+    opacity: 0.6,
+  },
+  practiceButtonText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: '#0B0F14',
+    letterSpacing: 0.2,
+  },
+  drillHeader: {
+    marginBottom: 12,
+  },
+  drillTitle: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: palette.text,
+    marginBottom: 4,
+  },
+  drillMeta: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+  },
+  drillCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 12,
+  },
+  drillPrompt: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 22,
+  },
+  drillHint: {
+    marginTop: 10,
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+  },
+  answerCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 12,
+    marginBottom: 12,
+    gap: 10,
+  },
+  answerInput: {
+    minHeight: 46,
+    maxHeight: 140,
+    backgroundColor: palette.background,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: palette.text,
+  },
+  checkButton: {
+    backgroundColor: palette.accent,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkButtonPressed: {
+    backgroundColor: palette.accentPressed,
+  },
+  checkButtonDisabled: {
+    opacity: 0.55,
+  },
+  checkButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0B0F14',
+  },
+  feedbackCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 22,
+  },
+  feedbackTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: palette.text,
+    marginBottom: 10,
+  },
+  feedbackText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 20,
+    marginBottom: 10,
+  },
+  correctAnswerText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.text,
+    marginBottom: 14,
+  },
+  nextButton: {
+    backgroundColor: palette.surfaceBorder,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  nextButtonPressed: {
+    opacity: 0.92,
+  },
+  nextButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.text,
   },
   footer: {
     paddingHorizontal: 20,
