@@ -22,6 +22,13 @@ export type StreakUpdateResult = {
 };
 
 const STORAGE_KEY = 'habla.streak.v1';
+const CURRENT_STREAK_KEY = 'currentStreak';
+const LONGEST_STREAK_KEY = 'longestStreak';
+const TOTAL_SESSIONS_KEY = 'totalSessionsCompleted';
+const LAST_SESSION_DATE_KEY = 'lastSessionDate';
+const FREEZES_KEY = 'freezes';
+const TOTAL_STARS_KEY = 'totalStars';
+const LAST_7_DAYS_KEY = 'last7Days';
 
 const MILESTONES: StreakMilestone[] = [3, 7, 14, 30, 50, 100];
 
@@ -128,92 +135,74 @@ export async function getStreakState(): Promise<StreakState> {
 }
 
 async function save(state: StreakState) {
-  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  await Promise.all([
+    AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(state)),
+    AsyncStorage.setItem(CURRENT_STREAK_KEY, String(state.currentStreak)),
+    AsyncStorage.setItem(LONGEST_STREAK_KEY, String(state.longestStreak)),
+    AsyncStorage.setItem(TOTAL_SESSIONS_KEY, String(state.totalSessionsCompleted)),
+    AsyncStorage.setItem(LAST_SESSION_DATE_KEY, state.lastSessionDate ?? ''),
+    AsyncStorage.setItem(FREEZES_KEY, String(state.freezes)),
+    AsyncStorage.setItem(TOTAL_STARS_KEY, String(state.totalStars)),
+    AsyncStorage.setItem(LAST_7_DAYS_KEY, JSON.stringify(state.last7Days)),
+  ]);
 }
 
-/**
- * Call this when the user completes a full lesson (reaches summary screen).
- * - increments totalSessionsCompleted each time
- * - increments streak once per day
- * - uses freeze automatically if a day was missed and freezes > 0
- */
-export async function recordLessonCompleted(today: string = formatLocalDate()): Promise<StreakUpdateResult> {
+export async function updateStreak(today: string = formatLocalDate()): Promise<StreakUpdateResult> {
   const prev = await getStreakState();
-  const usedFreeze = false;
-  const earnedFreeze = false;
+  const prevStreak = prev.currentStreak;
 
-  // Ensure last7Days window aligns to today before updates.
-  let next: StreakState = {
+  const next: StreakState = {
     ...prev,
     last7Days: normalizeLast7Days(prev.last7Days, today),
   };
 
-  // Always count sessions.
+  // Always count completed sessions when summary is reached.
   next.totalSessionsCompleted += 1;
 
-  if (next.lastSessionDate === today) {
-    // Already completed today: mark today completed in dots and save.
-    next.last7Days = next.last7Days.map((d) =>
-      d.date === today ? { ...d, completed: true } : d,
-    );
-    await save(next);
-    return { state: next, usedFreeze: false, earnedFreeze: false };
-  }
-
-  if (!next.lastSessionDate) {
+  if (next.lastSessionDate === null) {
+    // First ever session.
     next.currentStreak = 1;
+    next.lastSessionDate = today;
+  } else if (next.lastSessionDate === today) {
+    // Already logged for this day: keep streak unchanged.
   } else {
     const gap = daysBetween(next.lastSessionDate, today);
     if (gap === 1) {
+      // Yesterday -> increment
       next.currentStreak += 1;
-    } else if (gap >= 2) {
-      // Missed at least one day.
-      if (next.freezes > 0) {
-        next.freezes -= 1;
-        (next as any)._usedFreeze = true;
-        next.currentStreak += 1; // keep streak alive
-      } else {
-        next.currentStreak = 1; // reset to 0 then count today
-      }
     } else {
-      // Time travel or invalid (future date) - don't punish; start at 1.
-      next.currentStreak = Math.max(1, next.currentStreak);
+      // Older than yesterday -> reset to 0 then set to 1
+      next.currentStreak = 1;
     }
+    next.lastSessionDate = today;
   }
 
-  next.lastSessionDate = today;
   next.longestStreak = Math.max(next.longestStreak, next.currentStreak);
   next.last7Days = next.last7Days.map((d) => (d.date === today ? { ...d, completed: true } : d));
 
-  // Earn 1 freeze every 7 streak days (when currentStreak hits a multiple of 7).
-  let didEarnFreeze = false;
-  if (next.currentStreak > 0 && next.currentStreak % 7 === 0) {
-    next.freezes += 1;
-    didEarnFreeze = true;
-  }
-
-  // Milestones & stars
-  const milestoneDay = MILESTONES.find((m) => m === next.currentStreak);
+  // Keep milestone feedback for existing UI.
+  const streakChanged = next.currentStreak !== prevStreak;
   let milestone: StreakUpdateResult['milestone'] = undefined;
-  if (milestoneDay) {
-    const starsAwarded = starsForMilestone(milestoneDay);
-    if (starsAwarded > 0) {
-      next.totalStars += starsAwarded;
+  if (streakChanged) {
+    const milestoneDay = MILESTONES.find((m) => m === next.currentStreak);
+    if (milestoneDay) {
+      const starsAwarded = starsForMilestone(milestoneDay);
+      if (starsAwarded > 0) next.totalStars += starsAwarded;
+      milestone = { day: milestoneDay, starsAwarded };
     }
-    milestone = { day: milestoneDay, starsAwarded };
   }
-
-  const didUseFreeze = Boolean((next as any)._usedFreeze);
-  delete (next as any)._usedFreeze;
 
   await save(next);
-
   return {
     state: next,
-    usedFreeze: didUseFreeze,
-    earnedFreeze: didEarnFreeze,
+    usedFreeze: false,
+    earnedFreeze: false,
     milestone,
-    message: didUseFreeze ? 'Streak saved by freeze 🛡️' : undefined,
   };
+}
+
+// Backward compatible name used by existing screens.
+export async function recordLessonCompleted(today: string = formatLocalDate()): Promise<StreakUpdateResult> {
+  return updateStreak(today);
 }
 

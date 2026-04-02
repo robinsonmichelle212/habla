@@ -1,6 +1,6 @@
 import { checkDrillAnswer, generateDrills } from '@/lib/claude';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
-import { recordLessonCompleted } from '@/lib/streak';
+import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -62,8 +62,12 @@ export default function SummaryScreen() {
     if (didRecordRef.current) return;
     didRecordRef.current = true;
 
-    recordLessonCompleted()
+    updateStreak()
       .then((res) => {
+        const currentStreak = res.state.currentStreak;
+        const today = formatLocalDate();
+        console.log('Streak saved:', currentStreak)
+        console.log('Last session date saved:', today)
         if (res.usedFreeze && res.message) setStreakBanner(res.message);
         if (res.milestone) setMilestone(res.milestone);
       })

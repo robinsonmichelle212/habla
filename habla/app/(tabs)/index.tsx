@@ -3,9 +3,10 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getStreakState, type StreakState } from '@/lib/streak';
+import { getStreakState } from '@/lib/streak';
 
 const palette = {
   background: '#0B0F14',
@@ -20,30 +21,40 @@ const palette = {
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const [streak, setStreak] = useState<StreakState | null>(null);
+  const [currentStreak, setCurrentStreak] = useState(0);
+  const [longestStreak, setLongestStreak] = useState(0);
+  const [totalSessions, setTotalSessions] = useState(0);
+  const [freezes, setFreezes] = useState(0);
+  const [last7Days, setLast7Days] = useState<{ date: string; completed: boolean }[]>([]);
 
   useFocusEffect(
     useCallback(() => {
-      let alive = true;
-      getStreakState()
-        .then((s) => {
-          if (alive) setStreak(s);
-        })
-        .catch(() => {
-          if (alive) setStreak(null);
-        });
-      return () => {
-        alive = false;
-      };
+      const loadStreak = async () => {
+        const streak = await AsyncStorage.getItem('currentStreak')
+        const longest = await AsyncStorage.getItem('longestStreak')
+        const total = await AsyncStorage.getItem('totalSessionsCompleted')
+        const lastSessionDate = await AsyncStorage.getItem('lastSessionDate')
+        console.log('Streak loaded from storage:', streak)
+        console.log('Last session date loaded:', lastSessionDate)
+        setCurrentStreak(parseInt(streak ?? '', 10) || 0)
+        setLongestStreak(parseInt(longest ?? '', 10) || 0)
+        setTotalSessions(parseInt(total ?? '', 10) || 0)
+
+        // Keep existing UI details in sync.
+        const full = await getStreakState();
+        setFreezes(full.freezes);
+        setLast7Days(full.last7Days);
+      }
+      loadStreak()
     }, []),
   );
 
   const streakLabel = useMemo(() => {
-    const current = streak?.currentStreak ?? 0;
+    const current = currentStreak;
     if (current <= 0) return 'Start your streak today';
     if (current === 1) return 'Day 1';
     return `${current} day streak`;
-  }, [streak?.currentStreak]);
+  }, [currentStreak]);
 
   const handleStartLesson = () => {
     if (Platform.OS !== 'web') {
@@ -70,26 +81,26 @@ export default function HomeScreen() {
                 🔥
               </Text>
               <Text style={styles.streakNumber}>
-                {String(streak?.currentStreak ?? 0)}
+                {String(currentStreak)}
               </Text>
             </View>
 
             <View style={styles.freezeWrap} accessibilityLabel="Streak freezes">
               <Text style={styles.shieldEmoji}>🛡️</Text>
-              <Text style={styles.freezeCount}>{String(streak?.freezes ?? 0)}</Text>
+              <Text style={styles.freezeCount}>{String(freezes)}</Text>
             </View>
           </View>
 
           <Text style={styles.streakLabel}>{streakLabel}</Text>
 
           <View style={styles.dotsRow} accessibilityLabel="Last 7 days activity">
-            {(streak?.last7Days ?? []).map((d) => (
+            {last7Days.map((d) => (
               <View
                 key={d.date}
                 style={[styles.dot, d.completed ? styles.dotFilled : styles.dotEmpty]}
               />
             ))}
-            {!streak?.last7Days?.length
+            {!last7Days.length
               ? Array.from({ length: 7 }).map((_, i) => (
                   <View key={`p-${i}`} style={[styles.dot, styles.dotEmpty]} />
                 ))
@@ -97,7 +108,10 @@ export default function HomeScreen() {
           </View>
 
           <Text style={styles.longestLabel}>
-            Longest streak: {String(streak?.longestStreak ?? 0)} days
+            Longest streak: {String(longestStreak)} days
+          </Text>
+          <Text style={styles.longestLabel}>
+            Total sessions: {String(totalSessions)}
           </Text>
         </View>
 
