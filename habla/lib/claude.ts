@@ -33,7 +33,7 @@ function getApiKey(): string {
   const key = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY?.trim();
   if (!key) {
     throw new Error(
-      'Missing EXPO_PUBLIC_ANTHROPIC_API_KEY. Add it to your .env file (see app.config.js for load paths).',
+      'Missing EXPO_PUBLIC_ANTHROPIC_API_KEY environment variable.',
     );
   }
   return key;

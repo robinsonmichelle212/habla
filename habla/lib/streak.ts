@@ -92,19 +92,73 @@ function starsForMilestone(day: StreakMilestone): number {
   return 0;
 }
 
+function defaultStreakState(today: string): StreakState {
+  return {
+    currentStreak: 0,
+    longestStreak: 0,
+    lastSessionDate: null,
+    totalSessionsCompleted: 0,
+    freezes: 0,
+    totalStars: 0,
+    last7Days: getDefaultLast7Days(today),
+  };
+}
+
+/**
+ * If the JSON blob (`habla.streak.v1`) is missing or corrupt but we still have
+ * the flat keys written by `save()`, rebuild state so streak data survives.
+ */
+async function getStreakStateFromFlatKeys(today: string): Promise<StreakState | null> {
+  const [cs, ls, ts, lsd, fz, tst, l7] = await Promise.all([
+    AsyncStorage.getItem(CURRENT_STREAK_KEY),
+    AsyncStorage.getItem(LONGEST_STREAK_KEY),
+    AsyncStorage.getItem(TOTAL_SESSIONS_KEY),
+    AsyncStorage.getItem(LAST_SESSION_DATE_KEY),
+    AsyncStorage.getItem(FREEZES_KEY),
+    AsyncStorage.getItem(TOTAL_STARS_KEY),
+    AsyncStorage.getItem(LAST_7_DAYS_KEY),
+  ]);
+
+  const anyFlat =
+    cs != null ||
+    ls != null ||
+    ts != null ||
+    (lsd != null && lsd.length > 0) ||
+    fz != null ||
+    tst != null ||
+    (l7 != null && l7.length > 0);
+
+  if (!anyFlat) return null;
+
+  let last7Days: { date: string; completed: boolean }[] = getDefaultLast7Days(today);
+  if (l7) {
+    try {
+      last7Days = normalizeLast7Days(JSON.parse(l7), today);
+    } catch {
+      last7Days = getDefaultLast7Days(today);
+    }
+  }
+
+  const lastSessionDate =
+    typeof lsd === 'string' && lsd.length > 0 ? lsd : null;
+
+  return {
+    currentStreak: Math.max(0, parseInt(cs ?? '0', 10) || 0),
+    longestStreak: Math.max(0, parseInt(ls ?? '0', 10) || 0),
+    lastSessionDate,
+    totalSessionsCompleted: Math.max(0, parseInt(ts ?? '0', 10) || 0),
+    freezes: Math.max(0, parseInt(fz ?? '0', 10) || 0),
+    totalStars: Math.max(0, parseInt(tst ?? '0', 10) || 0),
+    last7Days,
+  };
+}
+
 export async function getStreakState(): Promise<StreakState> {
   const today = formatLocalDate();
   const raw = await AsyncStorage.getItem(STORAGE_KEY);
   if (!raw) {
-    return {
-      currentStreak: 0,
-      longestStreak: 0,
-      lastSessionDate: null,
-      totalSessionsCompleted: 0,
-      freezes: 0,
-      totalStars: 0,
-      last7Days: getDefaultLast7Days(today),
-    };
+    const fromFlat = await getStreakStateFromFlatKeys(today);
+    return fromFlat ?? defaultStreakState(today);
   }
 
   try {
@@ -122,16 +176,18 @@ export async function getStreakState(): Promise<StreakState> {
       last7Days: normalizeLast7Days((parsed as any).last7Days, today),
     };
   } catch {
-    return {
-      currentStreak: 0,
-      longestStreak: 0,
-      lastSessionDate: null,
-      totalSessionsCompleted: 0,
-      freezes: 0,
-      totalStars: 0,
-      last7Days: getDefaultLast7Days(today),
-    };
+    const fromFlat = await getStreakStateFromFlatKeys(today);
+    return fromFlat ?? defaultStreakState(today);
   }
+}
+
+/** Temporary: log every key/value for debugging persistence issues. */
+export async function debugLogAllAsyncStorage(): Promise<void> {
+  const keys = await AsyncStorage.getAllKeys();
+  const pairs = await AsyncStorage.multiGet(keys);
+  const obj = Object.fromEntries(pairs);
+  console.log('[Habla] AsyncStorage key count:', keys.length);
+  console.log('[Habla] AsyncStorage dump:', JSON.stringify(obj, null, 2));
 }
 
 async function save(state: StreakState) {

@@ -3,10 +3,9 @@ import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getStreakState } from '@/lib/streak';
+import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
 
 const palette = {
   background: '#0B0F14',
@@ -21,6 +20,7 @@ const palette = {
 export default function HomeScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const [streakHydrated, setStreakHydrated] = useState(false);
   const [currentStreak, setCurrentStreak] = useState(0);
   const [longestStreak, setLongestStreak] = useState(0);
   const [totalSessions, setTotalSessions] = useState(0);
@@ -30,31 +30,30 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       const loadStreak = async () => {
-        const streak = await AsyncStorage.getItem('currentStreak')
-        const longest = await AsyncStorage.getItem('longestStreak')
-        const total = await AsyncStorage.getItem('totalSessionsCompleted')
-        const lastSessionDate = await AsyncStorage.getItem('lastSessionDate')
-        console.log('Streak loaded from storage:', streak)
-        console.log('Last session date loaded:', lastSessionDate)
-        setCurrentStreak(parseInt(streak ?? '', 10) || 0)
-        setLongestStreak(parseInt(longest ?? '', 10) || 0)
-        setTotalSessions(parseInt(total ?? '', 10) || 0)
-
-        // Keep existing UI details in sync.
-        const full = await getStreakState();
-        setFreezes(full.freezes);
-        setLast7Days(full.last7Days);
-      }
-      loadStreak()
+        try {
+          const full = await getStreakState();
+          console.log('Streak loaded from storage:', full.currentStreak);
+          console.log('Last session date loaded:', full.lastSessionDate);
+          setCurrentStreak(full.currentStreak);
+          setLongestStreak(full.longestStreak);
+          setTotalSessions(full.totalSessionsCompleted);
+          setFreezes(full.freezes);
+          setLast7Days(full.last7Days);
+        } finally {
+          setStreakHydrated(true);
+        }
+      };
+      loadStreak();
     }, []),
   );
 
   const streakLabel = useMemo(() => {
+    if (!streakHydrated) return 'Loading…';
     const current = currentStreak;
     if (current <= 0) return 'Start your streak today';
     if (current === 1) return 'Day 1';
     return `${current} day streak`;
-  }, [currentStreak]);
+  }, [currentStreak, streakHydrated]);
 
   const handleStartLesson = () => {
     if (Platform.OS !== 'web') {
@@ -81,7 +80,7 @@ export default function HomeScreen() {
                 🔥
               </Text>
               <Text style={styles.streakNumber}>
-                {String(currentStreak)}
+                {streakHydrated ? String(currentStreak) : '—'}
               </Text>
             </View>
 
@@ -108,10 +107,10 @@ export default function HomeScreen() {
           </View>
 
           <Text style={styles.longestLabel}>
-            Longest streak: {String(longestStreak)} days
+            Longest streak: {streakHydrated ? `${String(longestStreak)} days` : '—'}
           </Text>
           <Text style={styles.longestLabel}>
-            Total sessions: {String(totalSessions)}
+            Total sessions: {streakHydrated ? String(totalSessions) : '—'}
           </Text>
         </View>
 
@@ -131,6 +130,16 @@ export default function HomeScreen() {
           <StatCard label="Top Score This Week" value="92" />
           <StatCard label="Level" value="3" />
         </View>
+
+        <Pressable
+          onPress={() => {
+            void debugLogAllAsyncStorage();
+          }}
+          style={({ pressed }) => [styles.debugDumpButton, pressed && styles.debugDumpButtonPressed]}
+          accessibilityRole="button"
+          accessibilityLabel="Debug dump AsyncStorage to console">
+          <Text style={styles.debugDumpText}>Debug: dump AsyncStorage</Text>
+        </Pressable>
       </ScrollView>
     </SafeAreaView>
   );
@@ -296,5 +305,23 @@ const styles = StyleSheet.create({
     color: palette.muted,
     textAlign: 'center',
     lineHeight: 14,
+  },
+  debugDumpButton: {
+    alignSelf: 'center',
+    marginTop: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    backgroundColor: palette.surface,
+  },
+  debugDumpButtonPressed: {
+    opacity: 0.85,
+  },
+  debugDumpText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.muted,
   },
 });
