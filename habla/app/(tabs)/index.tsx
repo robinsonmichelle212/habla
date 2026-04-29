@@ -125,6 +125,22 @@ export default function HomeScreen() {
           <Text style={styles.primaryButtonText}>{"Start Today's Lesson"}</Text>
         </Pressable>
 
+        <View style={styles.practiceBlock}>
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== 'web') {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              }
+              router.push('/practice');
+            }}
+            style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Practice mode">
+            <Text style={styles.secondaryButtonText}>Practice</Text>
+          </Pressable>
+          <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
+        </View>
+
         <View style={styles.statsRow}>
           <StatCard label="Today's score" value="85" />
           <StatCard label="Top Score This Week" value="92" />
@@ -277,6 +293,35 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#0B0F14',
     letterSpacing: 0.2,
+  },
+  practiceBlock: {
+    marginBottom: 28,
+  },
+  secondaryButton: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+  },
+  secondaryButtonPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.99 }],
+  },
+  secondaryButtonText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: palette.text,
+    letterSpacing: 0.2,
+  },
+  practiceHint: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
   },
   statsRow: {
     flexDirection: 'row',

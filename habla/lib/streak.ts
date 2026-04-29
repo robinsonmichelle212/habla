@@ -262,3 +262,64 @@ export async function recordLessonCompleted(today: string = formatLocalDate()): 
   return updateStreak(today);
 }
 
+export type PracticeStreakUpdateResult = StreakUpdateResult & {
+  starsAwarded: number; // practice stars only
+};
+
+/**
+ * Practice sessions can keep a streak alive even if the user didn't finish the full lesson.
+ * Rule: at least 3 completed exercises => streak maintained (same behavior as a "completed day").
+ * Practice stars (1 per exercise) are added to totalStars.
+ */
+export async function recordPracticeCompleted(
+  completedExercises: number,
+  today: string = formatLocalDate(),
+): Promise<PracticeStreakUpdateResult> {
+  const prev = await getStreakState();
+
+  if (completedExercises < 3) {
+    return {
+      state: prev,
+      usedFreeze: false,
+      earnedFreeze: false,
+      starsAwarded: 0,
+    };
+  }
+
+  const next: StreakState = {
+    ...prev,
+    last7Days: normalizeLast7Days(prev.last7Days, today),
+    // Important: practice does NOT increment totalSessionsCompleted (full lesson still owns that metric).
+  };
+
+  if (next.lastSessionDate === null) {
+    next.currentStreak = 1;
+    next.lastSessionDate = today;
+  } else if (next.lastSessionDate === today) {
+    // Already maintained for today: streak stays unchanged.
+  } else {
+    const gap = daysBetween(next.lastSessionDate, today);
+    if (gap === 1) {
+      next.currentStreak += 1;
+    } else {
+      next.currentStreak = 1;
+    }
+    next.lastSessionDate = today;
+  }
+
+  next.longestStreak = Math.max(next.longestStreak, next.currentStreak);
+  next.last7Days = next.last7Days.map((d) => (d.date === today ? { ...d, completed: true } : d));
+
+  // Add practice stars (1 per completed exercise).
+  next.totalStars += Math.max(0, Math.trunc(completedExercises));
+
+  await save(next);
+  return {
+    state: next,
+    usedFreeze: false,
+    earnedFreeze: false,
+    milestone: undefined,
+    starsAwarded: Math.max(0, Math.trunc(completedExercises)),
+  };
+}
+

@@ -16,6 +16,8 @@ export function lessonKindToLessonType(kind: LessonKindId): LessonType {
   }
 }
 
+export type PracticeDrillType = 'grammar' | 'vocabulary' | 'fluency';
+
 export type JaviMessage = { role: 'user' | 'assistant'; content: string };
 
 const LESSON_FOCUS: Record<LessonType, string> = {
@@ -157,6 +159,22 @@ export type DrillCheckJson = {
   feedbackEnglish: string;
   correctAnswer?: string;
 };
+
+export type PrioritizedWeakAreaInput = {
+  label: string;
+  frequency: number;
+};
+
+function drillTypeToHumanLabel(drillType: PracticeDrillType): string {
+  switch (drillType) {
+    case 'grammar':
+      return 'Grammar drill';
+    case 'vocabulary':
+      return 'Vocabulary drill';
+    case 'fluency':
+      return 'Fluency drill';
+  }
+}
 
 /**
  * Sends the user's message to Claude as Javi. Pass prior turns (excluding the current message)
@@ -370,6 +388,78 @@ Grade the learner's answer. Return ONLY valid JSON with keys:
 score (0-100 integer), feedbackSpanish, feedbackEnglish, correctAnswer (optional).`;
 
   const user = `Lesson type: ${lessonType}
+Exercise:
+${JSON.stringify(exercise, null, 2)}
+
+User answer:
+${userAnswer}
+
+Return JSON only.`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 600,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as DrillCheckJson;
+  return parsed;
+}
+
+export async function generatePracticeExercises(
+  drillType: PracticeDrillType,
+  prioritizedWeakAreas: PrioritizedWeakAreaInput[],
+): Promise<DrillExerciseJson[]> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a warm Spanish tutor in a mobile app.
+You create targeted B1 practice exercises.
+Return ONLY valid JSON. No markdown. No extra keys.`;
+
+  const user = `Generate 5 exercises targeting these prioritised weak areas: ${JSON.stringify(
+    prioritizedWeakAreas,
+  )}. Focus most on the highest priority items. B1 Spanish level.
+
+Drill type: ${drillTypeToHumanLabel(drillType)}
+
+Rules:
+- Each exercise must be answerable with a short Spanish response.
+- Keep prompts clear and specific to the prioritised weak areas.
+- Do not include any English in the prompts.
+
+Return JSON exactly:
+{ "exercises": [ { "id": "1", "prompt": "...", "expectedAnswer": "..." }, ... ] }`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 900,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as { exercises: DrillExerciseJson[] };
+  return Array.isArray(parsed.exercises) ? parsed.exercises : [];
+}
+
+export async function checkPracticeExerciseAnswer(
+  drillType: PracticeDrillType,
+  exercise: DrillExerciseJson,
+  userAnswer: string,
+): Promise<DrillCheckJson> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a friendly Spanish tutor.
+Grade the learner's answer for a B1 practice drill.
+Return ONLY valid JSON with keys:
+score (0-100 integer), feedbackSpanish, feedbackEnglish, correctAnswer (optional).`;
+
+  const user = `Drill type: ${drillTypeToHumanLabel(drillType)}
+
 Exercise:
 ${JSON.stringify(exercise, null, 2)}
 

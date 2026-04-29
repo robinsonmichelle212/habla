@@ -1,6 +1,7 @@
 import { checkDrillAnswer, generateDrills } from '@/lib/claude';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
+import { appendLessonHistory } from '@/lib/practice-storage';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -70,6 +71,21 @@ export default function SummaryScreen() {
         console.log('Last session date saved:', today)
         if (res.usedFreeze && res.message) setStreakBanner(res.message);
         if (res.milestone) setMilestone(res.milestone);
+
+        if (analysis) {
+          void appendLessonHistory({
+            date: today,
+            weakAreas: analysis.weakAreas ?? [],
+            focusAreas: analysis.focusAreas ?? [],
+            scores: {
+              grammar: Math.round(writing?.grammarScore ?? 0),
+              vocabulary: Math.round(writing?.vocabularyScore ?? 0),
+              fluency: Math.round(writing?.fluencyScore ?? 0),
+            },
+          }).catch(() => {
+            // Non-blocking: summary should not fail if lesson history cannot be saved.
+          });
+        }
       })
       .catch(() => {
         // no-op: streak should not block summary UI
