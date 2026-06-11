@@ -5,6 +5,12 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import {
+  getLessonHistory,
+  getProgressionLevel,
+  getTodaysLessonScore,
+  getTopScoreThisWeek,
+} from '@/lib/practice-storage';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
 
 const palette = {
@@ -26,12 +32,20 @@ export default function HomeScreen() {
   const [totalSessions, setTotalSessions] = useState(0);
   const [freezes, setFreezes] = useState(0);
   const [last7Days, setLast7Days] = useState<{ date: string; completed: boolean }[]>([]);
+  const [statsHydrated, setStatsHydrated] = useState(false);
+  const [todaysScore, setTodaysScore] = useState<number | null>(null);
+  const [topScoreWeek, setTopScoreWeek] = useState<number | null>(null);
+  const [levelLabel, setLevelLabel] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
-      const loadStreak = async () => {
+      let cancelled = false;
+
+      const loadHomeData = async () => {
         try {
-          const full = await getStreakState();
+          const [full, history] = await Promise.all([getStreakState(), getLessonHistory()]);
+          if (cancelled) return;
+
           console.log('Streak loaded from storage:', full.currentStreak);
           console.log('Last session date loaded:', full.lastSessionDate);
           setCurrentStreak(full.currentStreak);
@@ -39,11 +53,22 @@ export default function HomeScreen() {
           setTotalSessions(full.totalSessionsCompleted);
           setFreezes(full.freezes);
           setLast7Days(full.last7Days);
+
+          setTodaysScore(getTodaysLessonScore(history));
+          setTopScoreWeek(getTopScoreThisWeek(history));
+          setLevelLabel(getProgressionLevel(history));
         } finally {
-          setStreakHydrated(true);
+          if (!cancelled) {
+            setStreakHydrated(true);
+            setStatsHydrated(true);
+          }
         }
       };
-      loadStreak();
+
+      void loadHomeData();
+      return () => {
+        cancelled = true;
+      };
     }, []),
   );
 
@@ -142,9 +167,23 @@ export default function HomeScreen() {
         </View>
 
         <View style={styles.statsRow}>
-          <StatCard label="Today's score" value="85" />
-          <StatCard label="Top Score This Week" value="92" />
-          <StatCard label="Level" value="3" />
+          <StatCard
+            label="Today's score"
+            value={
+              !statsHydrated ? '—' : todaysScore != null ? `${todaysScore}%` : '--'
+            }
+          />
+          <StatCard
+            label="Top Score This Week"
+            value={
+              !statsHydrated ? '—' : topScoreWeek != null ? `${topScoreWeek}%` : '--'
+            }
+          />
+          <StatCard
+            label="Level"
+            value={!statsHydrated ? '—' : levelLabel ?? '--'}
+            compact
+          />
         </View>
 
         <Pressable
@@ -161,10 +200,20 @@ export default function HomeScreen() {
   );
 }
 
-function StatCard({ label, value }: { label: string; value: string }) {
+function StatCard({
+  label,
+  value,
+  compact = false,
+}: {
+  label: string;
+  value: string;
+  compact?: boolean;
+}) {
   return (
     <View style={styles.statCard}>
-      <Text style={styles.statValue}>{value}</Text>
+      <Text style={[styles.statValue, compact && styles.statValueCompact]} numberOfLines={2}>
+        {value}
+      </Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -343,6 +392,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.text,
     marginBottom: 6,
+    textAlign: 'center',
+  },
+  statValueCompact: {
+    fontSize: 13,
+    lineHeight: 16,
+    fontWeight: '800',
   },
   statLabel: {
     fontSize: 11,

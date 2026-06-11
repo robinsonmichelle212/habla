@@ -1,5 +1,6 @@
 import { checkDrillAnswer, generateDrills } from '@/lib/claude';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
+import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { appendLessonHistory } from '@/lib/practice-storage';
 import { useRouter } from 'expo-router';
@@ -86,6 +87,10 @@ export default function SummaryScreen() {
             // Non-blocking: summary should not fail if lesson history cannot be saved.
           });
         }
+
+        void syncStreakReminder().catch(() => {
+          // Non-blocking: reschedule tomorrow's reminder after today's lesson.
+        });
       })
       .catch(() => {
         // no-op: streak should not block summary UI

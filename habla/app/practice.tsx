@@ -7,6 +7,7 @@ import {
   type PracticeDrillType,
 } from '@/lib/claude';
 import { buildPriorityWeakAreas, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
+import { syncStreakReminder } from '@/lib/streak-notifications';
 import { recordPracticeCompleted } from '@/lib/streak';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -199,6 +200,13 @@ export default function PracticeScreen() {
     // Award stars + keep today's streak alive in AsyncStorage.
     setSavingStreak(true);
     recordPracticeCompleted(completedCount)
+      .then((res) => {
+        if (res.starsAwarded > 0) {
+          void syncStreakReminder().catch(() => {
+            // Non-blocking: reschedule tomorrow's reminder after practice.
+          });
+        }
+      })
       .catch(() => {
         // Non-blocking: summary should still render even if storage/update fails.
       })

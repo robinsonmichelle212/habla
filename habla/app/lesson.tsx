@@ -1,5 +1,10 @@
 import { askJavi, lessonKindToLessonType, type JaviMessage } from '@/lib/claude';
 import {
+  buildLessonOpening,
+  prepareLessonFocus,
+  type LessonFocusContext,
+} from '@/lib/lesson-focus';
+import {
   setLessonSession,
   type LessonConversationTurn,
 } from '@/lib/lesson-session';
@@ -50,13 +55,6 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'vocabulary', label: 'Vocabulary' },
   { id: 'your-day', label: 'Your day' },
 ];
-
-const INITIAL_MESSAGE: ChatMessage = {
-  id: 'welcome',
-  role: 'assistant',
-  spanish: '¡Hola! ¿Cómo estás?',
-  translation: 'Hello! How are you?',
-};
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -158,10 +156,62 @@ export default function LessonScreen() {
   const scrollViewRef = useRef<any>(null);
   const replyInputRef = useRef<TextInput>(null);
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
-  const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
+  const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
+  const [loadingFocus, setLoadingFocus] = useState(true);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [endingLesson, setEndingLesson] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingFocus(true);
+
+    prepareLessonFocus(lessonKind)
+      .then((focus) => {
+        if (cancelled) return;
+        const opening = buildLessonOpening(focus);
+        const lessonType = lessonKindToLessonType(lessonKind);
+        setLessonFocus(focus);
+        setMessages([
+          {
+            id: 'welcome',
+            role: 'assistant',
+            spanish: opening.spanish,
+            translation: opening.translation,
+          },
+        ]);
+        setReply('');
+        setLessonSession({
+          lessonType,
+          lessonFocus: focus,
+          conversation: [],
+          analysis: undefined,
+          drills: undefined,
+          writingTask: undefined,
+          writingEvaluation: undefined,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setLessonFocus(null);
+        setMessages([
+          {
+            id: 'welcome',
+            role: 'assistant',
+            spanish: '¡Hola! ¿Cómo estás?',
+            translation: 'Hello! How are you?',
+          },
+        ]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingFocus(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lessonKind]);
 
   useEffect(() => {
     setTimeout(() => {
@@ -196,6 +246,7 @@ export default function LessonScreen() {
     try {
       setLessonSession({
         lessonType,
+        lessonFocus: lessonFocus ?? undefined,
         conversation,
         analysis: undefined,
         drills: undefined,
@@ -210,7 +261,7 @@ export default function LessonScreen() {
 
   const sendMessage = async () => {
     const trimmed = reply.trim();
-    if (!trimmed || sending) return;
+    if (!trimmed || sending || !lessonFocus || loadingFocus) return;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -230,7 +281,7 @@ export default function LessonScreen() {
     ]);
 
     try {
-      const javiText = await askJavi(lessonType, trimmed, priorForApi);
+      const javiText = await askJavi(lessonType, trimmed, priorForApi, lessonFocus);
       const parsed = parseJaviResponse(javiText);
       setMessages((prev) => [
         ...prev,
@@ -341,7 +392,7 @@ export default function LessonScreen() {
                 multiline
                 maxLength={2000}
                 textAlignVertical="top"
-                editable={!sending}
+                editable={!sending && !loadingFocus}
                 onFocus={() => {
                   setTimeout(() => {
                     scrollViewRef.current?.scrollToEnd({ animated: true });
@@ -350,7 +401,7 @@ export default function LessonScreen() {
               />
               <Pressable
                 onPress={sendMessage}
-                disabled={sending || !reply.trim()}
+                disabled={sending || loadingFocus || !reply.trim() || !lessonFocus}
                 style={({ pressed }) => [
                   styles.sendButton,
                   (sending || !reply.trim()) && styles.sendButtonDisabled,

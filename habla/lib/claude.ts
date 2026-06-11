@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+import type { LessonFocusContext } from '@/lib/lesson-focus';
+
 /** Matches the lesson chips on the lesson screen. */
 export type LessonType = 'Grammar' | 'Vocab' | 'Your Day';
 
@@ -19,15 +21,6 @@ export function lessonKindToLessonType(kind: LessonKindId): LessonType {
 export type PracticeDrillType = 'grammar' | 'vocabulary' | 'fluency';
 
 export type JaviMessage = { role: 'user' | 'assistant'; content: string };
-
-const LESSON_FOCUS: Record<LessonType, string> = {
-  Grammar:
-    'Focus on one grammar point at a time (e.g. one tense, one structure). Drill it clearly before moving on.',
-  Vocab:
-    'Introduce 2–3 new words per message, used naturally in context; briefly reinforce meaning.',
-  'Your Day':
-    'Ask simple, natural questions about daily life (routines, plans, how things went).',
-};
 
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -53,11 +46,32 @@ function getModel(): string {
   return process.env.EXPO_PUBLIC_ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL;
 }
 
-function buildSystemPrompt(lessonType: LessonType): string {
+function buildFocusInstructions(focus: LessonFocusContext): string {
+  switch (focus.kind) {
+    case 'grammar':
+      return `GRAMMAR FOCUS (this week — same for all Grammar lessons this week):
+- Topic: ${focus.topic}
+- Every Grammar lesson this week practises ONLY this grammar point.
+- Approach the topic from a fresh angle each session: different sentences, contexts, and mini-exercises — but never switch to a different grammar topic.
+- Drill the point clearly; correct mistakes gently and keep the learner using this structure.`;
+    case 'vocabulary':
+      return `VOCABULARY THEME (this session only):
+- Theme: ${focus.theme}
+- Introduce 2–3 new words per message from this theme, used naturally in context; briefly reinforce meaning.
+- Stay within this theme for the whole conversation.`;
+    case 'your-day':
+      return `CONVERSATION STARTER (this session only):
+- Angle: ${focus.starter}
+- Open and follow up with natural questions about the learner's life along this angle.
+- Keep the chat personal, warm, and conversational.`;
+  }
+}
+
+function buildSystemPrompt(lessonType: LessonType, focus: LessonFocusContext): string {
   return `You are Javi, a warm, encouraging Spanish tutor in a mobile app.
 
 This session's lesson type: ${lessonType}
-Apply this focus: ${LESSON_FOCUS[lessonType]}
+${buildFocusInstructions(focus)}
 
 Voice and level:
 - Speak at B1 Spanish (CEFR): not too easy, not too hard—clear, natural, learner-appropriate.
@@ -184,6 +198,7 @@ export async function askJavi(
   lessonType: LessonType,
   userMessage: string,
   priorExchanges: JaviMessage[] = [],
+  focus: LessonFocusContext,
 ): Promise<string> {
   const trimmed = userMessage.trim();
   if (!trimmed) {
@@ -204,7 +219,7 @@ export async function askJavi(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 512,
-    system: buildSystemPrompt(lessonType),
+    system: buildSystemPrompt(lessonType, focus),
     messages,
   });
 
@@ -255,9 +270,21 @@ ${JSON.stringify(conversation, null, 2)}`;
   return parsed;
 }
 
+function writingTaskFocusLine(focus: LessonFocusContext): string {
+  switch (focus.kind) {
+    case 'grammar':
+      return `This week's grammar focus: ${focus.topic}. Ask the learner to write 3 sentences using this grammar point.`;
+    case 'vocabulary':
+      return `Vocabulary theme: ${focus.theme}. Ask the learner to write a short paragraph using 5 words from this theme that came up in the conversation.`;
+    case 'your-day':
+      return `Conversation angle: ${focus.starter}. Ask the learner to write 4–5 sentences in Spanish about this topic.`;
+  }
+}
+
 export async function generateWritingTask(
   lessonType: LessonType,
   conversation: JaviMessage[],
+  focus: LessonFocusContext,
 ): Promise<WritingTaskJson> {
   const anthropic = getClient();
   const model = getModel();
@@ -265,17 +292,8 @@ export async function generateWritingTask(
   const system = `You are Javi, a Spanish tutor.
 Return ONLY valid JSON. No markdown.`;
 
-  const instructionsByType: Record<LessonType, string> = {
-    Grammar:
-      'Write a writing task: ask the learner to write 3 sentences using today\'s grammar focus.',
-    Vocab:
-      'Write a writing task: ask the learner to write a short paragraph using 5 words that came up in the conversation.',
-    'Your Day':
-      'Write a writing task: ask the learner to write 4-5 sentences describing something from their day in Spanish.',
-  };
-
   const user = `Create a writing task prompt for a B1 learner.
-${instructionsByType[lessonType]}
+${writingTaskFocusLine(focus)}
 Keep it friendly, short, and clear.
 
 Return JSON exactly:

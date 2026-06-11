@@ -61,6 +61,7 @@ export default function WritingScreen() {
   const writingInputRef = useRef<TextInput>(null);
   const session = useMemo(() => getLessonSession(), []);
   const lessonType = session.lessonType;
+  const lessonFocus = session.lessonFocus;
   const conversation = session.conversation;
 
   const [taskPrompt, setTaskPrompt] = useState(session.writingTask?.prompt ?? '');
@@ -77,7 +78,7 @@ export default function WritingScreen() {
     if (didLoadRef.current) return;
     didLoadRef.current = true;
 
-    if (!lessonType || !conversation.length) {
+    if (!lessonType || !lessonFocus || !conversation.length) {
       Alert.alert('No lesson found', 'Go back and complete a lesson first.');
       return;
     }
@@ -85,7 +86,7 @@ export default function WritingScreen() {
     if (taskPrompt) return;
 
     setLoadingTask(true);
-    generateWritingTask(lessonType, conversationToJaviMessages(conversation))
+    generateWritingTask(lessonType, conversationToJaviMessages(conversation), lessonFocus)
       .then((t) => {
         setTaskPrompt(t.prompt);
         setLessonSession({ writingTask: { prompt: t.prompt } });
@@ -95,7 +96,7 @@ export default function WritingScreen() {
         Alert.alert('Could not load writing task', message);
       })
       .finally(() => setLoadingTask(false));
-  }, [conversation, lessonType, taskPrompt]);
+  }, [conversation, lessonFocus, lessonType, taskPrompt]);
 
   const submit = async () => {
     if (!lessonType) return;

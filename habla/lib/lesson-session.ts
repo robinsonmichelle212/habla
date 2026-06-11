@@ -1,4 +1,5 @@
 import type { LessonType, JaviMessage } from '@/lib/claude';
+import type { LessonFocusContext } from '@/lib/lesson-focus';
 
 export type LessonConversationTurn = {
   role: 'user' | 'assistant';
@@ -42,6 +43,7 @@ export type WritingEvaluation = {
 
 export type LessonSessionState = {
   lessonType?: LessonType;
+  lessonFocus?: LessonFocusContext;
   conversation: LessonConversationTurn[];
   analysis?: LessonAnalysis;
   drills?: DrillExercise[];
