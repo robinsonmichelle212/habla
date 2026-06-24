@@ -35,9 +35,16 @@ export function calculateLessonGems(overallScore: number, streakMilestoneDay?: n
   return total;
 }
 
-/** Practice drill: 5+/10 → +2, below 5 → +1, perfect round → +4. */
+/** Practice drill gems: 10 → 4, 5–9 → 2, below 5 → 1. */
 export function gemsForPracticeDrill(correctCount: number, totalQuestions = 10): number {
-  let total = correctCount >= 5 ? 2 : 1;
-  if (correctCount >= totalQuestions) total += 4;
-  return total;
+  if (correctCount >= totalQuestions) return 4;
+  if (correctCount >= 5) return 2;
+  return 1;
+}
+
+export function practiceDrillEncouragement(correctCount: number, totalQuestions = 10): string {
+  if (correctCount >= totalQuestions) return 'Perfect! 🌟 +4 💎';
+  if (correctCount >= 7) return 'Nice work! 💪 Keep it up';
+  if (correctCount >= 5) return 'Getting there! Practice makes perfect';
+  return "Don't worry — showing up is what counts. Javi will keep drilling these with you 🔥";
 }

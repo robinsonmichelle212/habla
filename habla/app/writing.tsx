@@ -23,7 +23,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -243,13 +242,6 @@ export default function WritingScreen() {
 
         <View style={styles.inputCard}>
           <Text style={styles.inputLabel}>Your writing</Text>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spanishRow}>
-            {['á','é','í','ó','ú','ü','ñ','¿','¡','Á','É','Í','Ó','Ú','Ñ'].map((char) => (
-              <TouchableOpacity key={char} onPress={() => setText((prev) => prev + char)} style={styles.spanishButton}>
-                <Text style={styles.spanishButtonText}>{char}</Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
           <TextInput
             ref={writingInputRef}
             style={styles.input}
@@ -375,26 +367,6 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   inputLabel: { fontSize: 14, fontWeight: '800', color: palette.text },
-  spanishRow: {
-    gap: 8,
-    paddingVertical: 6,
-  },
-  spanishButton: {
-    minWidth: 34,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#323C4D',
-    backgroundColor: '#0F141C',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  spanishButtonText: {
-    color: '#F4F6F8',
-    fontSize: 15,
-    fontWeight: '700',
-  },
   input: {
     minHeight: 120,
     maxHeight: 260,

@@ -24,7 +24,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -435,14 +434,6 @@ export default function LessonScreen() {
               <Text style={styles.saveConfirmation}>{saveConfirmation}</Text>
             ) : null}
 
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spanishRow}>
-              {['á','é','í','ó','ú','ü','ñ','¿','¡','Á','É','Í','Ó','Ú','Ñ'].map((char) => (
-                <TouchableOpacity key={char} onPress={() => setReply((prev) => prev + char)} style={styles.spanishButton}>
-                  <Text style={styles.spanishButtonText}>{char}</Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
             <View style={styles.composeRow}>
               <TextInput
                 ref={replyInputRef}
@@ -698,26 +689,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-end',
     gap: 10,
-  },
-  spanishRow: {
-    gap: 8,
-    paddingVertical: 6,
-  },
-  spanishButton: {
-    minWidth: 34,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: '#323C4D',
-    backgroundColor: '#0F141C',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  spanishButtonText: {
-    color: '#F4F6F8',
-    fontSize: 15,
-    fontWeight: '700',
   },
   input: {
     flex: 1,

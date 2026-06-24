@@ -260,23 +260,14 @@ export type QuickFirePracticeResult = {
 };
 
 /**
- * Quick-fire practice: streak maintained at 7+/10 correct; gems awarded separately via gems.ts.
+ * Quick-fire practice: completing any drill session maintains the streak (any score).
  */
 export async function recordQuickFirePractice(
-  correctCount: number,
+  _correctCount: number,
   gemsAwarded: number,
   today: string = formatLocalDate(),
 ): Promise<QuickFirePracticeResult> {
   const prev = await getStreakState();
-  const streakMaintained = correctCount >= 7;
-
-  if (!streakMaintained) {
-    return {
-      state: prev,
-      streakMaintained: false,
-      gemsAwarded,
-    };
-  }
 
   const next: StreakState = {
     ...prev,

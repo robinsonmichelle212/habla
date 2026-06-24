@@ -16,7 +16,7 @@ import {
   type PrioritizedWeakAreaInput,
 } from '@/lib/claude';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
-import { addGems, gemsForPracticeDrill } from '@/lib/gems';
+import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
 import { buildPriorityWeakAreas, appendDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
 import { syncStreakReminder } from '@/lib/streak-notifications';
@@ -93,10 +93,9 @@ export default function PracticeScreen() {
   const [score, setScore] = useState(0);
   const [gemsEarned, setGemsEarned] = useState(0);
   const [showGemToast, setShowGemToast] = useState(false);
-  const [streakMaintained, setStreakMaintained] = useState(false);
+  const [savingRewards, setSavingRewards] = useState(false);
   const [masteryEvent, setMasteryEvent] = useState<VocabMasteryEvent | null>(null);
   const [vocabExample, setVocabExample] = useState<string | null>(null);
-  const [savingRewards, setSavingRewards] = useState(false);
 
   const currentQuestion = questions[questionIdx];
   const correctCount = results.filter((r) => r.correct).length;
@@ -166,7 +165,6 @@ export default function PracticeScreen() {
     setScore(0);
     setGemsEarned(0);
     setShowGemToast(false);
-    setStreakMaintained(false);
     setMasteryEvent(null);
     setVocabExample(null);
     didAwardRef.current = false;
@@ -318,11 +316,8 @@ export default function PracticeScreen() {
           gemsEarned: gems,
           type: 'practice',
         });
-        const res = await recordQuickFirePractice(finalScore, gems);
-        setStreakMaintained(res.streakMaintained);
-        if (res.streakMaintained) {
-          await syncStreakReminder();
-        }
+        await recordQuickFirePractice(finalScore, gems);
+        await syncStreakReminder();
       } catch {
         // Non-blocking: still show end screen.
       } finally {
@@ -347,13 +342,6 @@ export default function PracticeScreen() {
           amount={gemsEarned}
           onDone={() => setShowGemToast(false)}
         />
-      ) : null}
-      {masteryEvent ? (
-        <View style={styles.masteryBanner}>
-          <Text style={styles.masteryText}>
-            🎉 You&apos;ve mastered &apos;{masteryEvent.spanish}&apos;! +{masteryEvent.gemsAwarded} 💎
-          </Text>
-        </View>
       ) : null}
       {masteryEvent ? (
         <View style={styles.masteryBanner}>
@@ -493,7 +481,7 @@ export default function PracticeScreen() {
           {stage === 'result' ? (
             <View style={styles.resultWrap}>
               <Text style={styles.resultTitle}>
-                {score >= 7 ? 'Nice work! 🎉' : 'Keep going 💪'}
+                {practiceDrillEncouragement(score, TOTAL_QUESTIONS)}
               </Text>
               <Text style={styles.scoreBig}>
                 {score}/{TOTAL_QUESTIONS}
@@ -502,16 +490,9 @@ export default function PracticeScreen() {
               <View style={styles.gemCard}>
                 <Text style={styles.gemLabel}>Gems earned</Text>
                 <Text style={styles.gemValue}>💎 {gemsEarned}</Text>
-                {score === TOTAL_QUESTIONS ? (
-                  <Text style={styles.gemBonus}>Perfect round bonus +4</Text>
-                ) : null}
               </View>
 
-              {streakMaintained ? (
-                <Text style={styles.streakNote}>🔥 Streak maintained for today</Text>
-              ) : (
-                <Text style={styles.streakNoteMuted}>Score 7+ to keep your streak</Text>
-              )}
+              <Text style={styles.streakNote}>🔥 Streak maintained!</Text>
 
               {wrongResults.length ? (
                 <View style={styles.reviewCard}>
@@ -535,12 +516,6 @@ export default function PracticeScreen() {
 
               {savingRewards ? (
                 <ActivityIndicator color={palette.muted} style={{ marginTop: 12 }} />
-              ) : score < 7 ? (
-                <Pressable
-                  onPress={() => void startQuickFire()}
-                  style={({ pressed }) => [styles.retryButton, pressed && styles.retryButtonPressed]}>
-                  <Text style={styles.retryButtonText}>Let&apos;s do that again</Text>
-                </Pressable>
               ) : (
                 <Pressable
                   onPress={goHome}
