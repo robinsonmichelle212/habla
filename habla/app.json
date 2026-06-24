@@ -9,10 +9,14 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Habla needs your microphone so you can practise speaking Spanish with Javi."
+      }
     },
     "android": {
       "package": "com.michelle.habla",
+      "permissions": ["RECORD_AUDIO"],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -30,6 +34,12 @@
       "expo-router",
       "expo-font",
       "expo-web-browser",
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Habla needs your microphone so you can practise speaking Spanish with Javi."
+        }
+      ],
       [
         "expo-notifications",
         {

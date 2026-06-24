@@ -1,5 +1,7 @@
+import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
+import { VoiceConversationLog } from '@/components/voice-conversation-log';
 import { askJavi, lessonKindToLessonType, type JaviMessage } from '@/lib/claude';
-import { saveVocabularyWord } from '@/lib/saved-vocabulary';
+import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
 import {
   buildLessonOpening,
   prepareLessonFocus,
@@ -9,15 +11,21 @@ import {
   setLessonSession,
   type LessonConversationTurn,
 } from '@/lib/lesson-session';
+import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
+import { saveVocabularyWord } from '@/lib/saved-vocabulary';
+import {
+  MIN_RECORDING_MS,
+  startVoiceRecording,
+  stopVoiceRecording,
+} from '@/lib/voice-recording';
+import { transcribeSpanishAudio } from '@/lib/whisper';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  Keyboard,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -32,13 +40,12 @@ const palette = {
   background: '#0B0F14',
   surface: '#151B24',
   surfaceBorder: '#252D3A',
-  bubbleAi: '#1E2633',
-  bubbleUser: '#2A1F2E',
   text: '#F4F6F8',
   muted: '#8B95A5',
   accent: '#FF7A59',
   accentPressed: '#E86242',
   accentMuted: 'rgba(255, 122, 89, 0.18)',
+  error: '#F87171',
 };
 
 type LessonKind = 'grammar' | 'vocabulary' | 'your-day';
@@ -56,6 +63,8 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'your-day', label: 'Your day' },
 ];
 
+const HEARD_TRANSCRIPT_MS = 5000;
+
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -64,7 +73,6 @@ function parseJaviResponse(fullText: string): { spanish: string; translation?: s
   const raw = fullText.trim();
   if (!raw) return { spanish: '(Sin respuesta)' };
 
-  // Extract at the first "Translate:" line so English never leaks into the Spanish part.
   const lines = raw.split(/\r?\n/);
   const translateIdx = lines.findIndex((l) => /^\s*(Translate|Translation)\s*:\s*/i.test(l));
 
@@ -73,7 +81,6 @@ function parseJaviResponse(fullText: string): { spanish: string; translation?: s
   }
 
   const spanish = lines.slice(0, translateIdx).join('\n').trim();
-
   const firstLine = lines[translateIdx] ?? '';
   const firstPart = firstLine.replace(/^\s*(Translate|Translation)\s*:\s*/i, '').trim();
   const rest = lines.slice(translateIdx + 1).join('\n').trim();
@@ -85,90 +92,80 @@ function parseJaviResponse(fullText: string): { spanish: string; translation?: s
   };
 }
 
-function MessageBubble({
-  role,
-  spanish,
-  translation,
-}: {
-  role: ChatMessage['role'];
-  spanish: string;
-  translation?: string;
-}) {
-  const [revealed, setRevealed] = useState(false);
-  const isAssistant = role === 'assistant';
-  const canReveal = isAssistant && !!translation;
-  // Safety: show only the Spanish part before any Translate label, even if formatting varies.
-  const safeSpanish = spanish
-    .split(/\r?\n\s*(Translate|Translation)\s*:/i)[0]
-    .trim();
-
-  return (
-    <View
-      style={[
-        styles.bubbleOuter,
-        isAssistant ? styles.bubbleOuterAi : styles.bubbleOuterUser,
-      ]}>
-      <View
-        style={[
-          styles.bubble,
-          isAssistant ? styles.bubbleAi : styles.bubbleUser,
-        ]}>
-        <Text style={styles.bubbleText}>{safeSpanish}</Text>
-      </View>
-
-      {canReveal ? (
-        <View style={styles.translationBlock}>
-          {revealed ? (
-            <>
-              <Pressable
-                onPress={() => setRevealed(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Hide translation"
-                style={({ pressed }) => [
-                  styles.revealTranslationButton,
-                  pressed && styles.revealTranslationButtonPressed,
-                ]}>
-                <Text style={styles.revealTranslationText}>Hide</Text>
-              </Pressable>
-              <Text style={styles.translationText}>{translation}</Text>
-            </>
-          ) : (
-            <Pressable
-              onPress={() => setRevealed(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Reveal translation"
-              style={({ pressed }) => [
-                styles.revealTranslationButton,
-                pressed && styles.revealTranslationButtonPressed,
-              ]}>
-              <Text style={styles.revealTranslationText}>👁️ Reveal</Text>
-            </Pressable>
-          )}
-        </View>
-      ) : null}
-    </View>
-  );
+function safeSpanish(spanish: string): string {
+  return spanish.split(/\r?\n\s*(Translate|Translation)\s*:/i)[0].trim();
 }
 
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const scrollViewRef = useRef<any>(null);
-  const replyInputRef = useRef<TextInput>(null);
+  const scrollViewRef = useRef<ScrollView>(null);
+  const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spokenOpeningForKind = useRef<LessonKind | null>(null);
+  const voiceStateRef = useRef<VoiceButtonState>('idle');
+
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
   const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
   const [loadingFocus, setLoadingFocus] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [reply, setReply] = useState('');
-  const [sending, setSending] = useState(false);
   const [endingLesson, setEndingLesson] = useState(false);
   const [saveWord, setSaveWord] = useState('');
   const [savingWord, setSavingWord] = useState(false);
   const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
 
+  const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
+  const [heardTranscript, setHeardTranscript] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
+  const [revealedJaviId, setRevealedJaviId] = useState<string | null>(null);
+
+  voiceStateRef.current = voiceState;
+
+  const latestJaviId = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      if (messages[i]?.role === 'assistant') return messages[i].id;
+    }
+    return null;
+  }, [messages]);
+
+  const setVoiceStateSafe = useCallback((next: VoiceButtonState) => {
+    voiceStateRef.current = next;
+    setVoiceState(next);
+  }, []);
+
+  const speakJaviMessage = useCallback(
+    async (text: string) => {
+      const spanish = safeSpanish(text);
+      if (!spanish) return;
+      setVoiceStateSafe('javi-speaking');
+      try {
+        await speakJavi(spanish);
+      } finally {
+        if (voiceStateRef.current === 'javi-speaking') {
+          setVoiceStateSafe('idle');
+        }
+      }
+    },
+    [setVoiceStateSafe],
+  );
+
+  const showHeardTranscript = useCallback((text: string) => {
+    setHeardTranscript(text);
+    if (heardTimerRef.current) clearTimeout(heardTimerRef.current);
+    heardTimerRef.current = setTimeout(() => {
+      setHeardTranscript(null);
+      heardTimerRef.current = null;
+    }, HEARD_TRANSCRIPT_MS);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     setLoadingFocus(true);
+    spokenOpeningForKind.current = null;
+    setRevealedJaviId(null);
+    setHeardTranscript(null);
+    setVoiceError(null);
+    stopJaviSpeech();
 
     prepareLessonFocus(lessonKind)
       .then((focus) => {
@@ -184,7 +181,6 @@ export default function LessonScreen() {
             translation: opening.translation,
           },
         ]);
-        setReply('');
         setLessonSession({
           lessonType,
           lessonFocus: focus,
@@ -217,19 +213,37 @@ export default function LessonScreen() {
   }, [lessonKind]);
 
   useEffect(() => {
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true })
-    }, 100)
-  }, [messages])
+    if (loadingFocus || Platform.OS === 'web') return;
+    const opening = messages.find((m) => m.role === 'assistant');
+    if (!opening) return;
+    if (spokenOpeningForKind.current === lessonKind) return;
+    spokenOpeningForKind.current = lessonKind;
+    void speakJaviMessage(opening.spanish);
+  }, [lessonKind, loadingFocus, messages, speakJaviMessage]);
 
   useEffect(() => {
-    const keyboardListener = Keyboard.addListener('keyboardDidShow', () => {
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true })
-      }, 100)
-    })
-    return () => keyboardListener.remove()
-  }, [])
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  }, [messages, heardTranscript, voiceError, revealedJaviId]);
+
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    void ensureMicPermission().then((result) => {
+      setMicGranted(result.granted);
+      if (!result.granted && result.status === 'denied') {
+        setVoiceError(MIC_DENIED_MESSAGE);
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (heardTimerRef.current) clearTimeout(heardTimerRef.current);
+      stopJaviSpeech();
+      void stopVoiceRecording();
+    };
+  }, []);
 
   const saveWordToList = async () => {
     const trimmed = saveWord.trim();
@@ -259,6 +273,7 @@ export default function LessonScreen() {
 
   const endLesson = async () => {
     if (endingLesson) return;
+    stopJaviSpeech();
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
@@ -270,7 +285,6 @@ export default function LessonScreen() {
       translation: m.translation,
     }));
 
-    // Persist lesson context for the writing screen.
     setEndingLesson(true);
     try {
       setLessonSession({
@@ -288,13 +302,8 @@ export default function LessonScreen() {
     }
   };
 
-  const sendMessage = async () => {
-    const trimmed = reply.trim();
-    if (!trimmed || sending || !lessonFocus || loadingFocus) return;
-
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    }
+  const sendTranscription = async (trimmed: string) => {
+    if (!trimmed || !lessonFocus || loadingFocus) return;
 
     const priorForApi: JaviMessage[] = messages.map((m) => ({
       role: m.role,
@@ -302,40 +311,102 @@ export default function LessonScreen() {
     }));
 
     const lessonType = lessonKindToLessonType(lessonKind);
-    setReply('');
-    setSending(true);
-    setMessages((prev) => [
-      ...prev,
-      { id: newId(), role: 'user', spanish: trimmed },
-    ]);
+    setMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
+    setRevealedJaviId(null);
 
     try {
       const javiText = await askJavi(lessonType, trimmed, priorForApi, lessonFocus);
       const parsed = parseJaviResponse(javiText);
+      const assistantId = newId();
       setMessages((prev) => [
         ...prev,
         {
-          id: newId(),
+          id: assistantId,
           role: 'assistant',
           spanish: parsed.spanish,
           translation: parsed.translation,
         },
       ]);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Something went wrong.';
-      Alert.alert('Could not reach Javi', message);
-      setReply(trimmed);
-    } finally {
-      setSending(false);
+      await speakJaviMessage(parsed.spanish);
+    } catch {
+      setVoiceError('Connection issue — check your internet');
+      setVoiceStateSafe('idle');
     }
   };
+
+  const handlePressIn = async () => {
+    if (voiceStateRef.current !== 'idle' || !lessonFocus || loadingFocus || endingLesson) return;
+
+    if (Platform.OS === 'web') {
+      setVoiceError('Voice mode works on iOS and Android. Use the mobile app to speak with Javi.');
+      return;
+    }
+
+    const permission = await ensureMicPermission();
+    setMicGranted(permission.granted);
+    if (!permission.granted) {
+      setVoiceError(MIC_DENIED_MESSAGE);
+      return;
+    }
+
+    setVoiceError(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    try {
+      await startVoiceRecording();
+      setVoiceStateSafe('recording');
+    } catch {
+      setVoiceError('Connection issue — check your internet');
+      setVoiceStateSafe('idle');
+    }
+  };
+
+  const handlePressOut = async () => {
+    if (voiceStateRef.current !== 'recording') return;
+
+    setVoiceStateSafe('processing');
+
+    try {
+      const { uri, durationMs } = await stopVoiceRecording();
+
+      if (!uri || durationMs < MIN_RECORDING_MS) {
+        setVoiceStateSafe('idle');
+        setVoiceError('Hold the button while you speak');
+        return;
+      }
+
+      const result = await transcribeSpanishAudio(uri);
+
+      if (!result.ok) {
+        setVoiceStateSafe('idle');
+        if (result.reason === 'api') {
+          setVoiceError('Connection issue — check your internet');
+        } else {
+          setVoiceError("Javi didn't catch that — try again 🎤");
+        }
+        return;
+      }
+
+      showHeardTranscript(result.text);
+      await sendTranscription(result.text);
+    } catch {
+      setVoiceStateSafe('idle');
+      setVoiceError('Connection issue — check your internet');
+    }
+  };
+
+  const micDisabled =
+    loadingFocus ||
+    endingLesson ||
+    !lessonFocus ||
+    !micGranted ||
+    voiceState === 'processing' ||
+    voiceState === 'javi-speaking';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}>
+      <View style={styles.flex}>
         <View style={styles.topBar}>
           <Pressable
             onPress={() => router.back()}
@@ -366,25 +437,29 @@ export default function LessonScreen() {
             })}
           </View>
           <Text style={styles.screenTitle}>{"Today's Lesson"}</Text>
-          <Text style={styles.screenSubtitle}>AI Conversation Practice</Text>
+          <Text style={styles.screenSubtitle}>Speak with Javi</Text>
         </View>
 
         <ScrollView
           ref={scrollViewRef}
           style={styles.chatScroll}
           contentContainerStyle={styles.chatScrollContent}
-          keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}>
-          {messages.map((m) => (
-            <MessageBubble
-              key={m.id}
-              role={m.role}
-              spanish={m.spanish}
-              translation={m.translation}
+          {loadingFocus ? (
+            <ActivityIndicator color={palette.muted} style={{ marginTop: 24 }} />
+          ) : (
+            <VoiceConversationLog
+              messages={messages}
+              latestJaviId={latestJaviId}
+              revealedJaviId={revealedJaviId}
+              onRevealLatestJavi={() => {
+                if (latestJaviId) setRevealedJaviId(latestJaviId);
+              }}
             />
-          ))}
-          <View style={[styles.inputWrap, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          )}
+
+          <View style={styles.toolsBlock}>
             <Pressable
               onPress={endLesson}
               disabled={endingLesson}
@@ -433,45 +508,33 @@ export default function LessonScreen() {
             {saveConfirmation ? (
               <Text style={styles.saveConfirmation}>{saveConfirmation}</Text>
             ) : null}
-
-            <View style={styles.composeRow}>
-              <TextInput
-                ref={replyInputRef}
-                style={styles.input}
-                value={reply}
-                onChangeText={setReply}
-                placeholder="Type your reply..."
-                placeholderTextColor={palette.muted}
-                multiline
-                maxLength={2000}
-                textAlignVertical="top"
-                editable={!sending && !loadingFocus}
-                onFocus={() => {
-                  setTimeout(() => {
-                    scrollViewRef.current?.scrollToEnd({ animated: true });
-                  }, 60);
-                }}
-              />
-              <Pressable
-                onPress={sendMessage}
-                disabled={sending || loadingFocus || !reply.trim() || !lessonFocus}
-                style={({ pressed }) => [
-                  styles.sendButton,
-                  (sending || !reply.trim()) && styles.sendButtonDisabled,
-                  pressed && !sending && reply.trim() && styles.sendButtonPressed,
-                ]}
-                accessibilityRole="button"
-                accessibilityLabel="Send message">
-                {sending ? (
-                  <ActivityIndicator color="#0B0F14" size="small" />
-                ) : (
-                  <Text style={styles.sendButtonText}>Send</Text>
-                )}
-              </Pressable>
-            </View>
           </View>
         </ScrollView>
-      </KeyboardAvoidingView>
+
+        <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          {heardTranscript ? (
+            <Text style={styles.heardText} numberOfLines={2}>
+              Javi heard: {heardTranscript}
+            </Text>
+          ) : null}
+          {voiceError ? <Text style={styles.errorText}>{voiceError}</Text> : null}
+          <PushToTalkButton
+            state={voiceState}
+            disabled={micDisabled}
+            onPressIn={() => void handlePressIn()}
+            onPressOut={() => void handlePressOut()}
+          />
+          <Text style={styles.voiceHint}>
+            {voiceState === 'javi-speaking'
+              ? 'Javi is speaking…'
+              : voiceState === 'processing'
+                ? 'Processing…'
+                : voiceState === 'recording'
+                  ? 'Release when finished'
+                  : 'Hold to speak'}
+          </Text>
+        </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -496,7 +559,7 @@ const styles = StyleSheet.create({
   },
   headerBlock: {
     paddingHorizontal: 20,
-    paddingBottom: 16,
+    paddingBottom: 12,
   },
   lessonRow: {
     flexDirection: 'row',
@@ -545,73 +608,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingTop: 8,
     paddingBottom: 12,
-    gap: 10,
   },
-  bubbleOuter: {
-    width: '100%',
-  },
-  bubbleOuterAi: {
-    alignItems: 'flex-start',
-  },
-  bubbleOuterUser: {
-    alignItems: 'flex-end',
-  },
-  bubble: {
-    maxWidth: '88%',
-    borderRadius: 18,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-  },
-  bubbleAi: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.bubbleAi,
-    borderColor: palette.surfaceBorder,
-    borderBottomLeftRadius: 6,
-  },
-  bubbleUser: {
-    alignSelf: 'flex-end',
-    backgroundColor: palette.bubbleUser,
-    borderColor: 'rgba(255, 122, 89, 0.35)',
-    borderBottomRightRadius: 6,
-  },
-  bubbleText: {
-    fontSize: 16,
-    lineHeight: 22,
-    color: palette.text,
-  },
-  translationBlock: {
-    alignSelf: 'flex-start',
-    marginTop: 6,
-    maxWidth: '88%',
-  },
-  revealTranslationButton: {
-    backgroundColor: 'transparent',
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 999,
-  },
-  revealTranslationButtonPressed: {
-    backgroundColor: 'rgba(139, 149, 165, 0.12)',
-  },
-  revealTranslationText: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: palette.muted,
-    letterSpacing: 0.2,
-  },
-  translationText: {
-    marginTop: 6,
-    fontSize: 13,
-    lineHeight: 18,
-    color: palette.muted,
-  },
-  inputWrap: {
-    paddingHorizontal: 20,
-    paddingTop: 8,
+  toolsBlock: {
+    marginTop: 16,
+    paddingTop: 16,
     borderTopWidth: 1,
     borderTopColor: palette.surfaceBorder,
-    backgroundColor: palette.background,
     gap: 12,
   },
   summaryButton: {
@@ -685,43 +687,33 @@ const styles = StyleSheet.create({
     color: palette.accent,
     marginTop: -4,
   },
-  composeRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    gap: 10,
-  },
-  input: {
-    flex: 1,
-    minHeight: 52,
-    maxHeight: 120,
-    backgroundColor: palette.surface,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: palette.text,
-  },
-  sendButton: {
-    backgroundColor: palette.accent,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 18,
-    minWidth: 76,
+  voiceDock: {
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 1,
+    paddingTop: 10,
+    paddingHorizontal: 20,
+    borderTopWidth: 1,
+    borderTopColor: palette.surfaceBorder,
+    backgroundColor: palette.background,
+    gap: 8,
   },
-  sendButtonDisabled: {
-    opacity: 0.45,
+  heardText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.muted,
+    textAlign: 'center',
+    maxWidth: '100%',
   },
-  sendButtonPressed: {
-    backgroundColor: palette.accentPressed,
+  errorText: {
+    fontSize: 13,
+    lineHeight: 18,
+    color: palette.error,
+    textAlign: 'center',
+    maxWidth: '100%',
   },
-  sendButtonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#0B0F14',
+  voiceHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 2,
   },
 });
