@@ -46,6 +46,7 @@ export default function SummaryScreen() {
   const analysis = session.analysis;
   const lessonType = session.lessonType;
   const writing = session.writingEvaluation;
+  const speaking = session.speakingEvaluation;
   const didRecordRef = useRef(false);
   const [milestone, setMilestone] = useState<{ day: number } | null>(null);
   const [gemsEarned, setGemsEarned] = useState(0);
@@ -266,6 +267,38 @@ export default function SummaryScreen() {
                   <Text style={styles.writingLabel}>Fluency</Text>
                   <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
                 </View>
+              </View>
+            ) : null}
+
+            {speaking ? (
+              <View style={styles.writingCard}>
+                <Text style={styles.writingTitle}>Speaking scores</Text>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Overall speaking</Text>
+                  <Text style={styles.writingValue}>{Math.round(speaking.score)}%</Text>
+                </View>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Accuracy vs written</Text>
+                  <Text style={styles.writingValue}>{Math.round(speaking.accuracyVsWritten)}%</Text>
+                </View>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Writing corrections applied</Text>
+                  <Text style={styles.writingValue}>{speaking.correctionsApplied ? 'Yes ✅' : 'Not yet'}</Text>
+                </View>
+                {speaking.pronunciationNotes?.length ? (
+                  <Text style={styles.speakingNotes}>
+                    {speaking.pronunciationNotes.join(' · ')}
+                  </Text>
+                ) : null}
+                <Text style={styles.speakingFeedback}>{speaking.feedback}</Text>
+              </View>
+            ) : null}
+
+            {analysis ? (
+              <View style={styles.scoreBlock}>
+                <Text style={styles.scoreLabel}>Overall lesson score</Text>
+                <Text style={styles.scoreValue}>{Math.round(analysis.overallScore)}%</Text>
+                <Text style={styles.scoreHint}>writing + speaking combined</Text>
               </View>
             ) : null}
 
@@ -517,6 +550,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '900',
     color: palette.text,
+  },
+  speakingNotes: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 8,
+    lineHeight: 18,
+  },
+  speakingFeedback: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.text,
+    marginTop: 8,
+    lineHeight: 20,
   },
   scoreBlock: {
     alignItems: 'center',

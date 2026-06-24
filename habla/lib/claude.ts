@@ -121,6 +121,7 @@ Response format (every message must follow this structure):
 General:
 - Stay on this lesson type; if the learner drifts, acknowledge briefly and steer back.
 - Your name is Javi; sign sparingly.
+- Never use any markdown formatting in your responses. No asterisks, no bold, no italics, no bullet points, no hyphens as list markers, no hashtags, no underscores. Write in plain natural sentences only as if speaking out loud.
 
 Vocabulary teaching (all lesson types):
 - Roughly once per conversation (not every message), naturally introduce 1–2 words slightly above B1 level.
@@ -290,6 +291,231 @@ export async function askJavi(
   });
 
   return extractText(response);
+}
+
+const WARMUP_PHASE_APPENDIX = `
+LESSON PHASE: WARM-UP (written exchange only).
+- Greet the learner and introduce today's topic and focus clearly.
+- Highlight key verbs, vocabulary, and/or structures they should use today.
+- Keep each message to 2 short Spanish sentences maximum, then Translate: line.
+- Be warm and practical — this prepares them for writing and speaking later.`;
+
+const SPEAKING_PHASE_APPENDIX = `
+LESSON PHASE: SPEAKING (voice only — learner listens to you).
+- Keep Spanish replies to 1–2 short sentences only. Plain spoken Spanish, no markdown.
+- Respond conversationally to what they said.
+- Gently correct one mistake if needed, then continue naturally.`;
+
+export async function generateWarmUpOpening(
+  lessonType: LessonType,
+  focus: LessonFocusContext,
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 400,
+    system: `${buildSystemPrompt(lessonType, focus)}${WARMUP_PHASE_APPENDIX}`,
+    messages: [
+      {
+        role: 'user',
+        content:
+          'Start the warm-up. Message 1 of 4. Introduce today\'s topic, focus area, and 2–3 verbs or structures to practise. End with Translate: line.',
+      },
+    ],
+  });
+
+  return extractText(response);
+}
+
+export async function askJaviWarmUp(
+  lessonType: LessonType,
+  userMessage: string,
+  priorExchanges: JaviMessage[],
+  focus: LessonFocusContext,
+  javiMessageNumber: number,
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+  const target = 4;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 400,
+    system: `${buildSystemPrompt(lessonType, focus)}${WARMUP_PHASE_APPENDIX}
+You have sent ${javiMessageNumber} message(s) so far. Send warm-up message ${javiMessageNumber + 1} of about ${target}. ${
+      javiMessageNumber >= target - 1
+        ? 'This should be your final warm-up message — summarise what to focus on and encourage them for the writing task.'
+        : 'Introduce another useful verb, structure, or vocabulary item for today.'
+    }`,
+    messages: [
+      ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: userMessage.trim() },
+    ],
+  });
+
+  return extractText(response);
+}
+
+export async function generateSpeakingIntro(
+  lessonType: LessonType,
+  taskPrompt: string,
+  focus: LessonFocusContext,
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 350,
+    system: `${buildSystemPrompt(lessonType, focus)}${SPEAKING_PHASE_APPENDIX}`,
+    messages: [
+      {
+        role: 'user',
+        content: `The learner completed a writing task. Now they must speak the same response aloud.
+Start with "Ahora dímelo." then repeat this scenario in Spanish (1–2 sentences), then Translate: line.
+
+Writing task prompt:
+${taskPrompt}`,
+      },
+    ],
+  });
+
+  return extractText(response);
+}
+
+export async function askJaviSpeaking(
+  lessonType: LessonType,
+  userMessage: string,
+  priorExchanges: JaviMessage[],
+  focus: LessonFocusContext,
+  writingContext: { originalText: string; correctedText: string; corrections: { mistake: string; correction: string }[] },
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 280,
+    system: `${buildSystemPrompt(lessonType, focus)}${SPEAKING_PHASE_APPENDIX}
+The learner's written version was:
+${writingContext.originalText}
+Corrected version:
+${writingContext.correctedText}
+Key corrections from writing:
+${JSON.stringify(writingContext.corrections.slice(0, 4))}`,
+    messages: [
+      ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
+      { role: 'user' as const, content: userMessage.trim() },
+    ],
+  });
+
+  return extractText(response);
+}
+
+export type SpeakingEvaluationJson = {
+  score: number;
+  accuracyVsWritten: number;
+  correctionsApplied: boolean;
+  pronunciationNotes: string[];
+  feedback: string;
+};
+
+export async function evaluateSpeakingPhase(
+  lessonType: LessonType,
+  taskPrompt: string,
+  writtenOriginal: string,
+  writtenCorrected: string,
+  writingCorrections: { mistake: string; correction: string; explanation: string }[],
+  speakingTranscripts: string[],
+  speakingConversation: JaviMessage[],
+): Promise<SpeakingEvaluationJson> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi evaluating spoken Spanish at B1 level.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Evaluate the learner's speaking phase.
+
+Return JSON exactly:
+{
+  "score": 0-100 integer (overall speaking: accuracy, flow, natural conversation),
+  "accuracyVsWritten": 0-100 integer (how closely spoken content matches their written/corrected version),
+  "correctionsApplied": boolean (did they apply writing corrections when speaking?),
+  "pronunciationNotes": array of up to 3 short notes if Whisper transcripts suggest unclear words or mispronunciation,
+  "feedback": 2 sentences encouraging feedback from Javi in English
+}
+
+Lesson type: ${lessonType}
+Writing task: ${taskPrompt}
+Written (original): ${writtenOriginal}
+Written (corrected): ${writtenCorrected}
+Writing corrections: ${JSON.stringify(writingCorrections)}
+Whisper transcripts (what they actually said): ${JSON.stringify(speakingTranscripts)}
+Speaking conversation: ${JSON.stringify(speakingConversation)}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 700,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  return extractFirstJsonObject(text) as SpeakingEvaluationJson;
+}
+
+export async function analyzeLessonPhases(
+  lessonType: LessonType,
+  warmUpConversation: JaviMessage[],
+  speakingConversation: JaviMessage[],
+  writingScores: { grammarScore: number; vocabularyScore: number; fluencyScore: number },
+  speakingEvaluation: SpeakingEvaluationJson,
+  lessonFocusLabel?: string,
+): Promise<LessonAnalysisJson> {
+  const combined = [...warmUpConversation, ...speakingConversation];
+  const analysis = await analyzeConversation(
+    lessonType,
+    combined,
+    writingScores,
+    lessonFocusLabel,
+  );
+
+  const speakingScore = Math.max(0, Math.min(100, Math.round(speakingEvaluation.score)));
+  const writingAvg = Math.round(
+    (writingScores.grammarScore + writingScores.vocabularyScore + writingScores.fluencyScore) / 3,
+  );
+  const overallScore = Math.round((writingAvg + speakingScore) / 2);
+
+  const weakFromSpeaking = speakingEvaluation.correctionsApplied
+    ? []
+    : ['Apply writing corrections when speaking'];
+  const weakAreas = [...(analysis.weakAreas ?? []), ...weakFromSpeaking].slice(0, 3);
+
+  return {
+    ...analysis,
+    overallScore,
+    correctnessScore: Math.round((analysis.correctnessScore + speakingEvaluation.accuracyVsWritten) / 2),
+    weakAreas,
+    breakdown: {
+      ...analysis.breakdown,
+      fluency: {
+        ...analysis.breakdown.fluency,
+        score: Math.round((analysis.breakdown.fluency.score + speakingScore) / 2),
+        details: [
+          ...(analysis.breakdown.fluency.details ?? []).slice(0, 1),
+          speakingEvaluation.correctionsApplied
+            ? 'Writing corrections carried into speech'
+            : 'Try to apply your writing corrections when you speak',
+        ].filter(Boolean),
+        description:
+          analysis.breakdown.fluency.description ??
+          `Speaking score ${speakingScore}% · accuracy vs written ${speakingEvaluation.accuracyVsWritten}%`,
+      },
+    },
+  };
 }
 
 export async function analyzeConversation(

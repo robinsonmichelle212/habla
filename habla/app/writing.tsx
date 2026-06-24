@@ -67,7 +67,10 @@ export default function WritingScreen() {
   const session = useMemo(() => getLessonSession(), []);
   const lessonType = session.lessonType;
   const lessonFocus = session.lessonFocus;
-  const conversation = session.conversation;
+  const conversation =
+    session.conversation.length > 0
+      ? session.conversation
+      : session.warmUpConversation ?? [];
   const focusLabel = lessonFocus ? lessonFocusLabel(lessonFocus) : undefined;
 
   const [taskPrompt, setTaskPrompt] = useState(session.writingTask?.prompt ?? '');

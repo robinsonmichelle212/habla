@@ -1,18 +1,31 @@
+import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
+import { TextMessageBubble } from '@/components/text-message-bubble';
 import { VoiceConversationLog } from '@/components/voice-conversation-log';
-import { askJavi, lessonKindToLessonType, type JaviMessage } from '@/lib/claude';
+import {
+  analyzeLessonPhases,
+  askJaviSpeaking,
+  askJaviWarmUp,
+  evaluateSpeakingPhase,
+  evaluateWriting,
+  generateSpeakingIntro,
+  generateWarmUpOpening,
+  generateWritingTask,
+  lessonKindToLessonType,
+  type JaviMessage,
+} from '@/lib/claude';
+import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
+import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
 import {
-  buildLessonOpening,
-  prepareLessonFocus,
-  type LessonFocusContext,
-} from '@/lib/lesson-focus';
-import {
+  conversationToJaviMessages,
   setLessonSession,
   type LessonConversationTurn,
+  type SpeakingEvaluation,
+  type WritingEvaluation,
 } from '@/lib/lesson-session';
+import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
-import { saveVocabularyWord } from '@/lib/saved-vocabulary';
 import {
   MIN_RECORDING_MS,
   startVoiceRecording,
@@ -26,6 +39,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -46,9 +60,11 @@ const palette = {
   accentPressed: '#E86242',
   accentMuted: 'rgba(255, 122, 89, 0.18)',
   error: '#F87171',
+  green: '#34D399',
 };
 
 type LessonKind = 'grammar' | 'vocabulary' | 'your-day';
+type LessonPhase = 'warmup' | 'writing' | 'speaking';
 
 type ChatMessage = {
   id: string;
@@ -63,70 +79,90 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'your-day', label: 'Your day' },
 ];
 
+const WARMUP_JAVI_TARGET = 4;
+const SPEAKING_END_TURNS = 3;
+const SPEAKING_AUTO_END_TURNS = 4;
 const HEARD_TRANSCRIPT_MS = 5000;
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
-function parseJaviResponse(fullText: string): { spanish: string; translation?: string } {
-  const raw = fullText.trim();
-  if (!raw) return { spanish: '(Sin respuesta)' };
-
-  const lines = raw.split(/\r?\n/);
-  const translateIdx = lines.findIndex((l) => /^\s*(Translate|Translation)\s*:\s*/i.test(l));
-
-  if (translateIdx === -1) {
-    return { spanish: raw };
-  }
-
-  const spanish = lines.slice(0, translateIdx).join('\n').trim();
-  const firstLine = lines[translateIdx] ?? '';
-  const firstPart = firstLine.replace(/^\s*(Translate|Translation)\s*:\s*/i, '').trim();
-  const rest = lines.slice(translateIdx + 1).join('\n').trim();
-  const translation = [firstPart, rest].filter(Boolean).join('\n').trim();
-
-  return {
-    spanish: spanish || '(Sin respuesta)',
-    translation: translation || undefined,
-  };
+function toTurns(messages: ChatMessage[]): LessonConversationTurn[] {
+  return messages.map((m) => ({
+    role: m.role,
+    spanish: m.spanish,
+    translation: m.translation,
+  }));
 }
 
-function safeSpanish(spanish: string): string {
-  return spanish.split(/\r?\n\s*(Translate|Translation)\s*:/i)[0].trim();
+function ProgressBar({ label, value }: { label: string; value: number }) {
+  const pct = Math.max(0, Math.min(100, Math.round(value)));
+  return (
+    <View style={styles.barRow}>
+      <View style={styles.barRowTop}>
+        <Text style={styles.barLabel}>{label}</Text>
+        <Text style={styles.barValue}>{pct}%</Text>
+      </View>
+      <View style={styles.barTrack}>
+        <View style={[styles.barFill, { width: `${pct}%` }]} />
+      </View>
+    </View>
+  );
 }
 
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const scrollViewRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const spokenOpeningForKind = useRef<LessonKind | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
 
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
   const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
   const [loadingFocus, setLoadingFocus] = useState(true);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [endingLesson, setEndingLesson] = useState(false);
-  const [saveWord, setSaveWord] = useState('');
-  const [savingWord, setSavingWord] = useState(false);
-  const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
+  const [phase, setPhase] = useState<LessonPhase>('warmup');
+
+  const [warmUpMessages, setWarmUpMessages] = useState<ChatMessage[]>([]);
+  const [warmUpInput, setWarmUpInput] = useState('');
+  const [warmUpSending, setWarmUpSending] = useState(false);
+
+  const [writingPrompt, setWritingPrompt] = useState('');
+  const [loadingWritingTask, setLoadingWritingTask] = useState(false);
+  const [writingText, setWritingText] = useState('');
+  const [writingSubmitting, setWritingSubmitting] = useState(false);
+  const [writingResult, setWritingResult] = useState<WritingEvaluation | null>(null);
+
+  const [speakingMessages, setSpeakingMessages] = useState<ChatMessage[]>([]);
+  const [speakingTranscripts, setSpeakingTranscripts] = useState<string[]>([]);
+  const [speakingUserTurns, setSpeakingUserTurns] = useState(0);
+  const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
+  const [revealedJaviId, setRevealedJaviId] = useState<string | null>(null);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
   const [heardTranscript, setHeardTranscript] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
-  const [revealedJaviId, setRevealedJaviId] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
 
   voiceStateRef.current = voiceState;
 
-  const latestJaviId = useMemo(() => {
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      if (messages[i]?.role === 'assistant') return messages[i].id;
+  const javiWarmUpCount = warmUpMessages.filter((m) => m.role === 'assistant').length;
+  const warmUpComplete = javiWarmUpCount >= WARMUP_JAVI_TARGET;
+  const lessonType = lessonKindToLessonType(lessonKind);
+
+  const indicatorStep = useMemo(() => {
+    if (phase === 'warmup' || phase === 'writing') return 0;
+    if (phase === 'speaking') return speakingUserTurns < 1 ? 1 : 2;
+    return 0;
+  }, [phase, speakingUserTurns]);
+
+  const latestSpeakingJaviId = useMemo(() => {
+    for (let i = speakingMessages.length - 1; i >= 0; i -= 1) {
+      if (speakingMessages[i]?.role === 'assistant') return speakingMessages[i].id;
     }
     return null;
-  }, [messages]);
+  }, [speakingMessages]);
 
   const setVoiceStateSafe = useCallback((next: VoiceButtonState) => {
     voiceStateRef.current = next;
@@ -158,43 +194,60 @@ export default function LessonScreen() {
     }, HEARD_TRANSCRIPT_MS);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingFocus(true);
-    spokenOpeningForKind.current = null;
+  const resetLessonState = useCallback(() => {
+    stopJaviSpeech();
+    setPhase('warmup');
+    setWarmUpMessages([]);
+    setWarmUpInput('');
+    setWritingPrompt('');
+    setWritingText('');
+    setWritingResult(null);
+    setSpeakingMessages([]);
+    setSpeakingTranscripts([]);
+    setSpeakingUserTurns(0);
+    setSpeakingIntroDone(false);
     setRevealedJaviId(null);
     setHeardTranscript(null);
     setVoiceError(null);
-    stopJaviSpeech();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingFocus(true);
+    resetLessonState();
 
     prepareLessonFocus(lessonKind)
-      .then((focus) => {
+      .then(async (focus) => {
         if (cancelled) return;
-        const opening = buildLessonOpening(focus);
-        const lessonType = lessonKindToLessonType(lessonKind);
         setLessonFocus(focus);
-        setMessages([
-          {
-            id: 'welcome',
-            role: 'assistant',
-            spanish: opening.spanish,
-            translation: opening.translation,
-          },
-        ]);
         setLessonSession({
-          lessonType,
+          lessonType: lessonKindToLessonType(lessonKind),
           lessonFocus: focus,
+          warmUpConversation: [],
+          speakingConversation: [],
           conversation: [],
           analysis: undefined,
           drills: undefined,
           writingTask: undefined,
           writingEvaluation: undefined,
+          speakingEvaluation: undefined,
         });
+
+        const openingText = await generateWarmUpOpening(lessonKindToLessonType(lessonKind), focus);
+        const parsed = parseJaviResponse(openingText);
+        setWarmUpMessages([
+          {
+            id: newId(),
+            role: 'assistant',
+            spanish: parsed.spanish,
+            translation: parsed.translation,
+          },
+        ]);
       })
       .catch(() => {
         if (cancelled) return;
         setLessonFocus(null);
-        setMessages([
+        setWarmUpMessages([
           {
             id: 'welcome',
             role: 'assistant',
@@ -210,30 +263,17 @@ export default function LessonScreen() {
     return () => {
       cancelled = true;
     };
-  }, [lessonKind]);
+  }, [lessonKind, resetLessonState]);
 
   useEffect(() => {
-    if (loadingFocus || Platform.OS === 'web') return;
-    const opening = messages.find((m) => m.role === 'assistant');
-    if (!opening) return;
-    if (spokenOpeningForKind.current === lessonKind) return;
-    spokenOpeningForKind.current = lessonKind;
-    void speakJaviMessage(opening.spanish);
-  }, [lessonKind, loadingFocus, messages, speakJaviMessage]);
-
-  useEffect(() => {
-    setTimeout(() => {
-      scrollViewRef.current?.scrollToEnd({ animated: true });
-    }, 100);
-  }, [messages, heardTranscript, voiceError, revealedJaviId]);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
+  }, [warmUpMessages, writingResult, speakingMessages, phase, heardTranscript]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
-    void ensureMicPermission().then((result) => {
-      setMicGranted(result.granted);
-      if (!result.granted && result.status === 'denied') {
-        setVoiceError(MIC_DENIED_MESSAGE);
-      }
+    void ensureMicPermission().then((r) => {
+      setMicGranted(r.granted);
+      if (!r.granted && r.status === 'denied') setVoiceError(MIC_DENIED_MESSAGE);
     });
   }, []);
 
@@ -245,100 +285,257 @@ export default function LessonScreen() {
     };
   }, []);
 
-  const saveWordToList = async () => {
-    const trimmed = saveWord.trim();
-    if (!trimmed || savingWord) return;
+  const sendWarmUpMessage = async () => {
+    const trimmed = warmUpInput.trim();
+    if (!trimmed || warmUpSending || !lessonFocus || warmUpComplete) return;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    setSavingWord(true);
+    const prior: JaviMessage[] = warmUpMessages.map((m) => ({
+      role: m.role,
+      content: m.spanish,
+    }));
+    const javiCount = warmUpMessages.filter((m) => m.role === 'assistant').length;
+
+    setWarmUpInput('');
+    setWarmUpSending(true);
+    setWarmUpMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
+
     try {
-      const result = await saveVocabularyWord(trimmed);
-      setSaveWord('');
-      setSaveConfirmation(
-        result.alreadyExists
-          ? '💾 Already in your list'
-          : '💾 Saved — Javi will drill you on this',
-      );
-      setTimeout(() => setSaveConfirmation(null), 2800);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : 'Could not save word.';
-      Alert.alert('Save failed', message);
+      const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount);
+      const parsed = parseJaviResponse(reply);
+      setWarmUpMessages((prev) => [
+        ...prev,
+        { id: newId(), role: 'assistant', spanish: parsed.spanish, translation: parsed.translation },
+      ]);
+    } catch {
+      Alert.alert('Connection issue', 'Check your internet and try again.');
     } finally {
-      setSavingWord(false);
+      setWarmUpSending(false);
     }
   };
 
-  const endLesson = async () => {
-    if (endingLesson) return;
-    stopJaviSpeech();
+  const startWritingPhase = async () => {
+    if (!lessonFocus) return;
+    setPhase('writing');
+    setLoadingWritingTask(true);
+
+    try {
+      const prior = conversationToJaviMessages(toTurns(warmUpMessages));
+      const task = await generateWritingTask(lessonType, prior, lessonFocus);
+      setWritingPrompt(task.prompt);
+      setLessonSession({
+        warmUpConversation: toTurns(warmUpMessages),
+        conversation: toTurns(warmUpMessages),
+        writingTask: { prompt: task.prompt },
+      });
+    } catch {
+      Alert.alert('Could not load writing task', 'Try again in a moment.');
+      setPhase('warmup');
+    } finally {
+      setLoadingWritingTask(false);
+    }
+  };
+
+  const submitWriting = async () => {
+    const trimmed = writingText.trim();
+    if (!trimmed || writingSubmitting || !writingPrompt) return;
+
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    const lessonType = lessonKindToLessonType(lessonKind);
-    const conversation: LessonConversationTurn[] = messages.map((m) => ({
-      role: m.role,
-      spanish: m.spanish,
-      translation: m.translation,
-    }));
-
-    setEndingLesson(true);
+    setWritingSubmitting(true);
     try {
-      setLessonSession({
+      const evalJson = await evaluateWriting(
         lessonType,
-        lessonFocus: lessonFocus ?? undefined,
-        conversation,
-        analysis: undefined,
-        drills: undefined,
-        writingTask: undefined,
-        writingEvaluation: undefined,
-      });
-      router.push('/writing');
+        writingPrompt,
+        conversationToJaviMessages(toTurns(warmUpMessages)),
+        trimmed,
+      );
+
+      const evaluation: WritingEvaluation = {
+        originalText: trimmed,
+        correctedText: evalJson.correctedText,
+        grammarScore: evalJson.grammarScore,
+        vocabularyScore: evalJson.vocabularyScore,
+        fluencyScore: evalJson.fluencyScore,
+        feedback: evalJson.feedback,
+        corrections: Array.isArray(evalJson.corrections) ? evalJson.corrections : [],
+        accentIssues: Array.isArray(evalJson.accentIssues) ? evalJson.accentIssues : [],
+        structuralFeedback: Array.isArray(evalJson.structuralFeedback)
+          ? evalJson.structuralFeedback
+          : [],
+      };
+
+      setWritingResult(evaluation);
+      setLessonSession({ writingEvaluation: evaluation });
+    } catch {
+      Alert.alert('Could not evaluate writing', 'Check your internet and try again.');
     } finally {
-      setEndingLesson(false);
+      setWritingSubmitting(false);
     }
   };
 
-  const sendTranscription = async (trimmed: string) => {
-    if (!trimmed || !lessonFocus || loadingFocus) return;
+  const startSpeakingPhase = async () => {
+    if (!lessonFocus || !writingResult || !writingPrompt) return;
 
-    const priorForApi: JaviMessage[] = messages.map((m) => ({
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    setPhase('speaking');
+    setSpeakingMessages([]);
+    setSpeakingTranscripts([]);
+    setSpeakingUserTurns(0);
+    setSpeakingIntroDone(false);
+    setRevealedJaviId(null);
+    setVoiceError(null);
+
+    try {
+      const introText = await generateSpeakingIntro(lessonType, writingPrompt, lessonFocus);
+      const parsed = parseJaviResponse(introText);
+      const introMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        spanish: parsed.spanish,
+        translation: parsed.translation,
+      };
+      setSpeakingMessages([introMsg]);
+      setSpeakingIntroDone(true);
+      if (Platform.OS !== 'web') {
+        await speakJaviMessage(parsed.spanish);
+      }
+    } catch {
+      Alert.alert('Connection issue', 'Check your internet and try again.');
+    }
+  };
+
+  const sendSpeakingTranscription = async (trimmed: string) => {
+    if (!lessonFocus || !writingResult) return;
+
+    const prior: JaviMessage[] = speakingMessages.map((m) => ({
       role: m.role,
-      content: m.spanish,
+      content: m.role === 'user' ? m.spanish : safeSpanish(m.spanish),
     }));
 
-    const lessonType = lessonKindToLessonType(lessonKind);
-    setMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
+    const nextTurn = speakingUserTurns + 1;
+    setSpeakingMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
+    setSpeakingTranscripts((prev) => [...prev, trimmed]);
+    setSpeakingUserTurns(nextTurn);
     setRevealedJaviId(null);
 
     try {
-      const javiText = await askJavi(lessonType, trimmed, priorForApi, lessonFocus);
+      const javiText = await askJaviSpeaking(lessonType, trimmed, prior, lessonFocus, {
+        originalText: writingResult.originalText,
+        correctedText: writingResult.correctedText,
+        corrections: writingResult.corrections,
+      });
       const parsed = parseJaviResponse(javiText);
-      const assistantId = newId();
-      setMessages((prev) => [
+      setSpeakingMessages((prev) => [
         ...prev,
-        {
-          id: assistantId,
-          role: 'assistant',
-          spanish: parsed.spanish,
-          translation: parsed.translation,
-        },
+        { id: newId(), role: 'assistant', spanish: parsed.spanish, translation: parsed.translation },
       ]);
       await speakJaviMessage(parsed.spanish);
+
+      if (nextTurn >= SPEAKING_AUTO_END_TURNS) {
+        void finishLesson();
+      }
     } catch {
       setVoiceError('Connection issue — check your internet');
       setVoiceStateSafe('idle');
     }
   };
 
-  const handlePressIn = async () => {
-    if (voiceStateRef.current !== 'idle' || !lessonFocus || loadingFocus || endingLesson) return;
+  const finishLesson = async () => {
+    if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
+    setFinishing(true);
+    stopJaviSpeech();
 
+    try {
+      const warmUpTurns = toTurns(warmUpMessages);
+      const speakingTurns = toTurns(speakingMessages);
+
+      const speakingEvalJson = await evaluateSpeakingPhase(
+        lessonType,
+        writingPrompt,
+        writingResult.originalText,
+        writingResult.correctedText,
+        writingResult.corrections,
+        speakingTranscripts,
+        conversationToJaviMessages(speakingTurns),
+      );
+
+      const speakingEvaluation: SpeakingEvaluation = {
+        score: speakingEvalJson.score,
+        accuracyVsWritten: speakingEvalJson.accuracyVsWritten,
+        correctionsApplied: speakingEvalJson.correctionsApplied,
+        pronunciationNotes: speakingEvalJson.pronunciationNotes ?? [],
+        feedback: speakingEvalJson.feedback,
+        exchangeCount: speakingUserTurns,
+      };
+
+      const writingScores = {
+        grammarScore: writingResult.grammarScore,
+        vocabularyScore: writingResult.vocabularyScore,
+        fluencyScore: writingResult.fluencyScore,
+      };
+
+      const analysisJson = await analyzeLessonPhases(
+        lessonType,
+        conversationToJaviMessages(warmUpTurns),
+        conversationToJaviMessages(speakingTurns),
+        writingScores,
+        speakingEvalJson,
+        lessonFocusLabel(lessonFocus),
+      );
+
+      const w = Math.round(
+        (writingScores.grammarScore + writingScores.vocabularyScore + writingScores.fluencyScore) / 3,
+      );
+      const baseBreakdown = analysisJson.breakdown ?? {
+        grammar: { score: writingScores.grammarScore, topic: lessonFocusLabel(lessonFocus), details: [], mistakes: [] },
+        vocabulary: { score: writingScores.vocabularyScore, topic: 'Vocabulary', details: [] },
+        fluency: { score: speakingEvaluation.score, details: [] },
+        writing: { score: w, details: [] },
+      };
+
+      const analysis = {
+        strongAreas: analysisJson.strongAreas ?? [],
+        weakAreas: analysisJson.weakAreas ?? [],
+        focusAreas: analysisJson.focusAreas ?? [],
+        correctnessScore: analysisJson.correctnessScore ?? 0,
+        overallScore: analysisJson.overallScore ?? 0,
+        encouragingMessage: analysisJson.encouragingMessage ?? '',
+        breakdown: mergeWritingIntoBreakdown(baseBreakdown, writingResult, writingPrompt),
+      };
+
+      setLessonSession({
+        lessonType,
+        lessonFocus,
+        warmUpConversation: warmUpTurns,
+        speakingConversation: speakingTurns,
+        conversation: [...warmUpTurns, ...speakingTurns],
+        writingTask: { prompt: writingPrompt },
+        writingEvaluation: writingResult,
+        speakingEvaluation,
+        analysis,
+      });
+
+      router.push('/summary');
+    } catch {
+      Alert.alert('Could not finish lesson', 'Check your internet and try again.');
+    } finally {
+      setFinishing(false);
+    }
+  };
+
+  const handlePressIn = async () => {
+    if (phase !== 'speaking' || voiceStateRef.current !== 'idle' || !lessonFocus || finishing) return;
     if (Platform.OS === 'web') {
-      setVoiceError('Voice mode works on iOS and Android. Use the mobile app to speak with Javi.');
+      setVoiceError('Voice works on iOS and Android.');
       return;
     }
 
@@ -363,12 +560,10 @@ export default function LessonScreen() {
 
   const handlePressOut = async () => {
     if (voiceStateRef.current !== 'recording') return;
-
     setVoiceStateSafe('processing');
 
     try {
       const { uri, durationMs } = await stopVoiceRecording();
-
       if (!uri || durationMs < MIN_RECORDING_MS) {
         setVoiceStateSafe('idle');
         setVoiceError('Hold the button while you speak');
@@ -376,19 +571,18 @@ export default function LessonScreen() {
       }
 
       const result = await transcribeSpanishAudio(uri);
-
       if (!result.ok) {
         setVoiceStateSafe('idle');
-        if (result.reason === 'api') {
-          setVoiceError('Connection issue — check your internet');
-        } else {
-          setVoiceError("Javi didn't catch that — try again 🎤");
-        }
+        setVoiceError(
+          result.reason === 'api'
+            ? 'Connection issue — check your internet'
+            : "Javi didn't catch that — try again 🎤",
+        );
         return;
       }
 
       showHeardTranscript(result.text);
-      await sendTranscription(result.text);
+      await sendSpeakingTranscription(result.text);
     } catch {
       setVoiceStateSafe('idle');
       setVoiceError('Connection issue — check your internet');
@@ -396,23 +590,25 @@ export default function LessonScreen() {
   };
 
   const micDisabled =
-    loadingFocus ||
-    endingLesson ||
+    phase !== 'speaking' ||
+    !speakingIntroDone ||
+    finishing ||
     !lessonFocus ||
     !micGranted ||
     voiceState === 'processing' ||
     voiceState === 'javi-speaking';
 
+  const canEndSpeaking =
+    phase === 'speaking' && speakingUserTurns >= SPEAKING_END_TURNS && !finishing;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      <View style={styles.flex}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}>
         <View style={styles.topBar}>
-          <Pressable
-            onPress={() => router.back()}
-            hitSlop={12}
-            accessibilityRole="button"
-            accessibilityLabel="Go back to home">
+          <Pressable onPress={() => router.back()} hitSlop={12}>
             <Text style={styles.backLink}>← Home</Text>
           </Pressable>
         </View>
@@ -425,10 +621,8 @@ export default function LessonScreen() {
                 <Pressable
                   key={opt.id}
                   onPress={() => setLessonKind(opt.id)}
-                  style={[styles.lessonChip, selected && styles.lessonChipSelected]}
-                  accessibilityRole="button"
-                  accessibilityState={{ selected }}
-                  accessibilityLabel={opt.label}>
+                  disabled={phase !== 'warmup' || warmUpMessages.length > 1}
+                  style={[styles.lessonChip, selected && styles.lessonChipSelected]}>
                   <Text style={[styles.lessonChipText, selected && styles.lessonChipTextSelected]}>
                     {opt.label}
                   </Text>
@@ -437,136 +631,209 @@ export default function LessonScreen() {
             })}
           </View>
           <Text style={styles.screenTitle}>{"Today's Lesson"}</Text>
-          <Text style={styles.screenSubtitle}>Speak with Javi</Text>
+          <LessonPhaseIndicator activeStep={indicatorStep} />
         </View>
 
         <ScrollView
-          ref={scrollViewRef}
-          style={styles.chatScroll}
-          contentContainerStyle={styles.chatScrollContent}
-          showsVerticalScrollIndicator={false}
-          onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}>
+          ref={scrollRef}
+          style={styles.scroll}
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}>
           {loadingFocus ? (
             <ActivityIndicator color={palette.muted} style={{ marginTop: 24 }} />
-          ) : (
-            <VoiceConversationLog
-              messages={messages}
-              latestJaviId={latestJaviId}
-              revealedJaviId={revealedJaviId}
-              onRevealLatestJavi={() => {
-                if (latestJaviId) setRevealedJaviId(latestJaviId);
-              }}
-            />
-          )}
+          ) : null}
 
-          <View style={styles.toolsBlock}>
-            <Pressable
-              onPress={endLesson}
-              disabled={endingLesson}
-              style={({ pressed }) => [
-                styles.summaryButton,
-                endingLesson && styles.summaryButtonDisabled,
-                pressed && styles.summaryButtonPressed,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="End lesson and continue to writing">
-              {endingLesson ? (
-                <ActivityIndicator color="#0B0F14" size="small" />
+          {phase === 'warmup' ? (
+            <>
+              {warmUpMessages.map((m) => (
+                <TextMessageBubble
+                  key={m.id}
+                  role={m.role}
+                  spanish={m.spanish}
+                  translation={m.translation}
+                />
+              ))}
+              {warmUpComplete ? (
+                <Pressable
+                  onPress={() => void startWritingPhase()}
+                  style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
+                  <Text style={styles.primaryButtonText}>Ready</Text>
+                </Pressable>
+              ) : null}
+            </>
+          ) : null}
+
+          {phase === 'writing' ? (
+            <View style={styles.writingBlock}>
+              {loadingWritingTask ? (
+                <ActivityIndicator color={palette.muted} />
               ) : (
-                <Text style={styles.summaryButtonText}>End Lesson</Text>
-              )}
-            </Pressable>
+                <>
+                  <Text style={styles.phaseTitle}>Writing task</Text>
+                  <View style={styles.taskCard}>
+                    <Text style={styles.taskText}>{writingPrompt || '—'}</Text>
+                  </View>
 
-            <View style={styles.saveWordRow}>
-              <Text style={styles.saveWordLabel}>Save a word 📝</Text>
+                  {!writingResult ? (
+                    <>
+                      <Text style={styles.inputLabel}>Your writing</Text>
+                      <TextInput
+                        style={styles.writingInput}
+                        value={writingText}
+                        onChangeText={setWritingText}
+                        placeholder="Write your response in Spanish..."
+                        placeholderTextColor={palette.muted}
+                        multiline
+                        editable={!writingSubmitting}
+                      />
+                      <Pressable
+                        onPress={() => void submitWriting()}
+                        disabled={writingSubmitting || !writingText.trim()}
+                        style={({ pressed }) => [
+                          styles.primaryButton,
+                          (writingSubmitting || !writingText.trim()) && styles.primaryButtonDisabled,
+                          pressed && styles.primaryButtonPressed,
+                        ]}>
+                        {writingSubmitting ? (
+                          <ActivityIndicator color="#0B0F14" />
+                        ) : (
+                          <Text style={styles.primaryButtonText}>Submit writing</Text>
+                        )}
+                      </Pressable>
+                    </>
+                  ) : (
+                    <>
+                      <Text style={styles.phaseTitle}>Javi&apos;s feedback</Text>
+                      <ProgressBar label="Grammar" value={writingResult.grammarScore} />
+                      <ProgressBar label="Vocabulary" value={writingResult.vocabularyScore} />
+                      <View style={styles.feedbackCard}>
+                        <Text style={styles.feedbackLabel}>Corrected version</Text>
+                        <Text style={styles.feedbackText}>{writingResult.correctedText}</Text>
+                      </View>
+                      <Text style={styles.feedbackBody}>{writingResult.feedback}</Text>
+                      {writingResult.corrections.length ? (
+                        <View style={styles.correctionsCard}>
+                          {writingResult.corrections.map((c, i) => (
+                            <View key={i} style={styles.correctionRow}>
+                              <Text style={styles.correctionWrong}>{c.mistake}</Text>
+                              <Text style={styles.correctionRight}>→ {c.correction}</Text>
+                              <Text style={styles.correctionNote}>{c.explanation}</Text>
+                            </View>
+                          ))}
+                        </View>
+                      ) : null}
+                      <Pressable
+                        onPress={() => void startSpeakingPhase()}
+                        style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
+                        <Text style={styles.primaryButtonText}>Now say it</Text>
+                      </Pressable>
+                    </>
+                  )}
+                </>
+              )}
+            </View>
+          ) : null}
+
+          {phase === 'speaking' ? (
+            <>
+              <VoiceConversationLog
+                messages={speakingMessages}
+                latestJaviId={latestSpeakingJaviId}
+                revealedJaviId={revealedJaviId}
+                onRevealLatestJavi={() => {
+                  if (latestSpeakingJaviId) setRevealedJaviId(latestSpeakingJaviId);
+                }}
+              />
+              {canEndSpeaking ? (
+                <Pressable
+                  onPress={() => void finishLesson()}
+                  disabled={finishing}
+                  style={({ pressed }) => [
+                    styles.secondaryButton,
+                    finishing && styles.primaryButtonDisabled,
+                    pressed && styles.primaryButtonPressed,
+                  ]}>
+                  {finishing ? (
+                    <ActivityIndicator color={palette.text} />
+                  ) : (
+                    <Text style={styles.secondaryButtonText}>End lesson</Text>
+                  )}
+                </Pressable>
+              ) : null}
+            </>
+          ) : null}
+        </ScrollView>
+
+        {phase === 'warmup' && !warmUpComplete ? (
+          <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.composeRow}>
               <TextInput
-                style={styles.saveWordInput}
-                value={saveWord}
-                onChangeText={setSaveWord}
-                placeholder="Spanish word…"
+                style={styles.textInput}
+                value={warmUpInput}
+                onChangeText={setWarmUpInput}
+                placeholder="Type your reply..."
                 placeholderTextColor={palette.muted}
-                editable={!savingWord}
-                autoCapitalize="none"
-                autoCorrect={false}
-                onSubmitEditing={() => void saveWordToList()}
+                multiline
+                editable={!warmUpSending}
               />
               <Pressable
-                onPress={() => void saveWordToList()}
-                disabled={savingWord || !saveWord.trim()}
+                onPress={() => void sendWarmUpMessage()}
+                disabled={warmUpSending || !warmUpInput.trim()}
                 style={({ pressed }) => [
-                  styles.saveWordButton,
-                  (savingWord || !saveWord.trim()) && styles.saveWordButtonDisabled,
-                  pressed && saveWord.trim() && !savingWord && styles.saveWordButtonPressed,
+                  styles.sendButton,
+                  (!warmUpInput.trim() || warmUpSending) && styles.primaryButtonDisabled,
+                  pressed && styles.primaryButtonPressed,
                 ]}>
-                {savingWord ? (
+                {warmUpSending ? (
                   <ActivityIndicator color="#0B0F14" size="small" />
                 ) : (
-                  <Text style={styles.saveWordButtonText}>Save</Text>
+                  <Text style={styles.sendButtonText}>Send</Text>
                 )}
               </Pressable>
             </View>
-            {saveConfirmation ? (
-              <Text style={styles.saveConfirmation}>{saveConfirmation}</Text>
-            ) : null}
           </View>
-        </ScrollView>
+        ) : null}
 
-        <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-          {heardTranscript ? (
-            <Text style={styles.heardText} numberOfLines={2}>
-              Javi heard: {heardTranscript}
-            </Text>
-          ) : null}
-          {voiceError ? <Text style={styles.errorText}>{voiceError}</Text> : null}
-          <PushToTalkButton
-            state={voiceState}
-            disabled={micDisabled}
-            onPressIn={() => void handlePressIn()}
-            onPressOut={() => void handlePressOut()}
-          />
-          <Text style={styles.voiceHint}>
-            {voiceState === 'javi-speaking'
-              ? 'Javi is speaking…'
-              : voiceState === 'processing'
-                ? 'Processing…'
+        {phase === 'speaking' ? (
+          <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            {heardTranscript ? (
+              <Text style={styles.heardText} numberOfLines={2}>
+                Javi heard: {heardTranscript}
+              </Text>
+            ) : null}
+            {voiceError ? <Text style={styles.errorText}>{voiceError}</Text> : null}
+            <PushToTalkButton
+              state={voiceState}
+              disabled={micDisabled}
+              onPressIn={() => void handlePressIn()}
+              onPressOut={() => void handlePressOut()}
+            />
+            <Text style={styles.voiceHint}>
+              {!speakingIntroDone
+                ? 'Javi is speaking…'
                 : voiceState === 'recording'
                   ? 'Release when finished'
-                  : 'Hold to speak'}
-          </Text>
-        </View>
-      </View>
+                  : voiceState === 'processing'
+                    ? 'Processing…'
+                    : voiceState === 'javi-speaking'
+                      ? 'Listen to Javi…'
+                      : `Hold to speak (${speakingUserTurns}/${SPEAKING_AUTO_END_TURNS})`}
+            </Text>
+          </View>
+        ) : null}
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: palette.background,
-  },
-  flex: {
-    flex: 1,
-  },
-  topBar: {
-    paddingHorizontal: 20,
-    paddingTop: 4,
-    paddingBottom: 8,
-  },
-  backLink: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: palette.accent,
-  },
-  headerBlock: {
-    paddingHorizontal: 20,
-    paddingBottom: 12,
-  },
-  lessonRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-    marginBottom: 20,
-  },
+  safeArea: { flex: 1, backgroundColor: palette.background },
+  flex: { flex: 1 },
+  topBar: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4 },
+  backLink: { fontSize: 16, fontWeight: '600', color: palette.accent },
+  headerBlock: { paddingHorizontal: 20, paddingBottom: 8 },
+  lessonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
   lessonChip: {
     paddingVertical: 8,
     paddingHorizontal: 14,
@@ -575,145 +842,130 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
   },
-  lessonChipSelected: {
-    backgroundColor: palette.accentMuted,
-    borderColor: palette.accent,
-  },
-  lessonChipText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: palette.muted,
-  },
-  lessonChipTextSelected: {
-    color: palette.text,
-  },
+  lessonChipSelected: { backgroundColor: palette.accentMuted, borderColor: palette.accent },
+  lessonChipText: { fontSize: 14, fontWeight: '600', color: palette.muted },
+  lessonChipTextSelected: { color: palette.text },
   screenTitle: {
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: '800',
-    letterSpacing: -0.5,
     color: palette.text,
-    marginBottom: 6,
+    marginBottom: 4,
   },
-  screenSubtitle: {
-    fontSize: 15,
-    fontWeight: '500',
-    color: palette.muted,
+  scroll: { flex: 1 },
+  scrollContent: { paddingHorizontal: 20, paddingBottom: 16, flexGrow: 1 },
+  writingBlock: { gap: 12 },
+  phaseTitle: { fontSize: 16, fontWeight: '800', color: palette.text },
+  taskCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 14,
   },
-  chatScroll: {
-    flex: 1,
+  taskText: { fontSize: 16, lineHeight: 22, color: palette.text },
+  inputLabel: { fontSize: 14, fontWeight: '800', color: palette.muted },
+  writingInput: {
     minHeight: 120,
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 14,
+    fontSize: 16,
+    color: palette.text,
+    textAlignVertical: 'top',
   },
-  chatScrollContent: {
-    flexGrow: 1,
-    paddingHorizontal: 20,
-    paddingTop: 8,
-    paddingBottom: 12,
-  },
-  toolsBlock: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    borderTopColor: palette.surfaceBorder,
-    gap: 12,
-  },
-  summaryButton: {
-    alignSelf: 'flex-start',
+  feedbackCard: {
     backgroundColor: palette.surface,
     borderRadius: 12,
+    padding: 12,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
-  summaryButtonPressed: {
-    opacity: 0.88,
-  },
-  summaryButtonDisabled: {
-    opacity: 0.5,
-  },
-  summaryButtonText: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: palette.muted,
-    letterSpacing: 0.1,
-  },
-  saveWordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  saveWordLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: palette.muted,
-    flexShrink: 0,
-  },
-  saveWordInput: {
-    flex: 1,
-    minHeight: 36,
+  feedbackLabel: { fontSize: 12, fontWeight: '800', color: palette.muted, marginBottom: 6 },
+  feedbackText: { fontSize: 15, lineHeight: 21, color: palette.text },
+  feedbackBody: { fontSize: 14, lineHeight: 20, color: palette.muted },
+  correctionsCard: {
     backgroundColor: palette.surface,
-    borderRadius: 10,
+    borderRadius: 12,
+    padding: 12,
+    gap: 10,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    fontSize: 14,
+  },
+  correctionRow: { gap: 4 },
+  correctionWrong: { fontSize: 14, color: palette.error, fontWeight: '600' },
+  correctionRight: { fontSize: 14, color: palette.green, fontWeight: '700' },
+  correctionNote: { fontSize: 13, color: palette.muted, lineHeight: 18 },
+  barRow: { marginBottom: 8 },
+  barRowTop: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 4 },
+  barLabel: { fontSize: 13, fontWeight: '700', color: palette.muted },
+  barValue: { fontSize: 13, fontWeight: '900', color: palette.text },
+  barTrack: {
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: palette.surfaceBorder,
+    overflow: 'hidden',
+  },
+  barFill: { height: 8, borderRadius: 999, backgroundColor: palette.accent },
+  primaryButton: {
+    backgroundColor: palette.accent,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  primaryButtonPressed: { backgroundColor: palette.accentPressed },
+  primaryButtonDisabled: { opacity: 0.45 },
+  primaryButtonText: { fontSize: 16, fontWeight: '800', color: '#0B0F14' },
+  secondaryButton: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  secondaryButtonText: { fontSize: 15, fontWeight: '800', color: palette.text },
+  inputDock: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: palette.surfaceBorder,
+  },
+  composeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
+  textInput: {
+    flex: 1,
+    minHeight: 44,
+    maxHeight: 100,
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 16,
     color: palette.text,
   },
-  saveWordButton: {
-    backgroundColor: palette.surfaceBorder,
-    borderRadius: 10,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    minWidth: 56,
+  sendButton: {
+    backgroundColor: palette.accent,
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    minWidth: 72,
     alignItems: 'center',
   },
-  saveWordButtonPressed: {
-    opacity: 0.9,
-  },
-  saveWordButtonDisabled: {
-    opacity: 0.45,
-  },
-  saveWordButtonText: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: palette.text,
-  },
-  saveConfirmation: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: palette.accent,
-    marginTop: -4,
-  },
+  sendButtonText: { fontSize: 15, fontWeight: '800', color: '#0B0F14' },
   voiceDock: {
     alignItems: 'center',
     paddingTop: 10,
     paddingHorizontal: 20,
     borderTopWidth: 1,
     borderTopColor: palette.surfaceBorder,
-    backgroundColor: palette.background,
     gap: 8,
   },
-  heardText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: palette.muted,
-    textAlign: 'center',
-    maxWidth: '100%',
-  },
-  errorText: {
-    fontSize: 13,
-    lineHeight: 18,
-    color: palette.error,
-    textAlign: 'center',
-    maxWidth: '100%',
-  },
-  voiceHint: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.muted,
-    marginTop: 2,
-  },
+  heardText: { fontSize: 13, color: palette.muted, textAlign: 'center' },
+  errorText: { fontSize: 13, color: palette.error, textAlign: 'center' },
+  voiceHint: { fontSize: 13, fontWeight: '600', color: palette.muted },
 });

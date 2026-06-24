@@ -81,17 +81,32 @@ export type WritingEvaluation = {
   structuralFeedback?: string[];
 };
 
+export type SpeakingEvaluation = {
+  score: number;
+  accuracyVsWritten: number;
+  correctionsApplied: boolean;
+  pronunciationNotes: string[];
+  feedback: string;
+  exchangeCount: number;
+};
+
 export type LessonSessionState = {
   lessonType?: LessonType;
   lessonFocus?: LessonFocusContext;
+  warmUpConversation: LessonConversationTurn[];
+  speakingConversation: LessonConversationTurn[];
+  /** @deprecated use warmUpConversation + speakingConversation */
   conversation: LessonConversationTurn[];
   analysis?: LessonAnalysis;
   drills?: DrillExercise[];
   writingTask?: WritingTask;
   writingEvaluation?: WritingEvaluation;
+  speakingEvaluation?: SpeakingEvaluation;
 };
 
 let state: LessonSessionState = {
+  warmUpConversation: [],
+  speakingConversation: [],
   conversation: [],
 };
 
@@ -99,6 +114,9 @@ export function setLessonSession(next: Partial<LessonSessionState>) {
   state = {
     ...state,
     ...next,
+    warmUpConversation: next.warmUpConversation ?? state.warmUpConversation ?? [],
+    speakingConversation: next.speakingConversation ?? state.speakingConversation ?? [],
+    conversation: next.conversation ?? state.conversation ?? [],
   };
 }
 
@@ -107,7 +125,7 @@ export function getLessonSession(): LessonSessionState {
 }
 
 export function resetLessonSession() {
-  state = { conversation: [] };
+  state = { warmUpConversation: [], speakingConversation: [], conversation: [] };
 }
 
 export function conversationToJaviMessages(conversation: LessonConversationTurn[]): JaviMessage[] {

@@ -1,3 +1,4 @@
+import { cleanForSpeech } from '@/lib/clean-for-speech';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 
@@ -25,8 +26,8 @@ export function stopJaviSpeech(): void {
 }
 
 export async function speakJavi(text: string): Promise<void> {
-  const trimmed = text.trim();
-  if (!trimmed) return;
+  const cleaned = cleanForSpeech(text);
+  if (!cleaned) return;
 
   stopJaviSpeech();
   await prepareAudioForPlayback();
@@ -40,7 +41,7 @@ export async function speakJavi(text: string): Promise<void> {
       resolve();
     };
 
-    Speech.speak(trimmed, {
+    Speech.speak(cleaned, {
       ...JAVI_SPEECH_OPTIONS,
       onDone: finish,
       onStopped: finish,
