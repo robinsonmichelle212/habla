@@ -93,7 +93,12 @@ Response format (every message must follow this structure):
 
 General:
 - Stay on this lesson type; if the learner drifts, acknowledge briefly and steer back.
-- Your name is Javi; sign sparingly.`;
+- Your name is Javi; sign sparingly.
+
+Vocabulary teaching (all lesson types):
+- Roughly once per conversation (not every message), naturally introduce 1–2 words slightly above B1 level.
+- Use each new word in a natural Spanish sentence first, then briefly explain in Spanish on a new line starting with "Por cierto —" e.g. "Por cierto — 'conseguir' means to achieve or to get. You might want to save that one."
+- Keep it conversational — never turn into a vocabulary list. The learner can save words with the app's Save a word feature.`;
 }
 
 function extractText(response: Anthropic.Messages.Message): string {
@@ -511,6 +516,50 @@ export type QuickFireQuestion = {
   acceptableAnswers?: string[];
 };
 
+export type VocabLookupJson = {
+  spanish: string;
+  english: string;
+  exampleSpanish: string;
+  exampleEnglish: string;
+  difficulty: 'B1' | 'B2';
+};
+
+export async function lookupVocabularyWord(spanishWord: string): Promise<VocabLookupJson> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are a Spanish lexicographer for B1–B2 learners.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Look up this Spanish word or short phrase for a learner saving it to their vocabulary list: "${spanishWord.trim()}"
+
+Return JSON exactly:
+{
+  "spanish": "canonical Spanish form",
+  "english": "English translation (use / for multiple meanings)",
+  "exampleSpanish": "one natural B1 example sentence using the word",
+  "exampleEnglish": "English translation of the example",
+  "difficulty": "B1" or "B2"
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 400,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as VocabLookupJson;
+  return {
+    spanish: String(parsed.spanish ?? spanishWord).trim(),
+    english: String(parsed.english ?? '').trim(),
+    exampleSpanish: String(parsed.exampleSpanish ?? '').trim(),
+    exampleEnglish: String(parsed.exampleEnglish ?? '').trim(),
+    difficulty: parsed.difficulty === 'B2' ? 'B2' : 'B1',
+  };
+}
+
 const QUICK_FIRE_TYPES: QuickFireQuestionType[] = [
   'fill_blank',
   'translate_word',
@@ -521,6 +570,7 @@ const QUICK_FIRE_TYPES: QuickFireQuestionType[] = [
 
 export async function generateQuickFireQuestions(
   prioritizedWeakAreas: PrioritizedWeakAreaInput[],
+  count = 10,
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
@@ -528,11 +578,11 @@ export async function generateQuickFireQuestions(
   const system = `You are Javi, a Spanish tutor creating quick-fire B1 drill questions.
 Return ONLY valid JSON. No markdown. No extra keys.`;
 
-  const user = `Generate exactly 10 quick-fire Spanish practice questions for a B1 learner.
+  const user = `Generate exactly ${count} quick-fire Spanish practice questions for a B1 learner.
 
 Target these prioritised weak areas (focus most on highest priority): ${JSON.stringify(prioritizedWeakAreas)}
 
-Use exactly 2 questions of each type (10 total):
+Use exactly 2 questions of each type when count is 10; for ${count} questions vary types evenly.
 - fill_blank: e.g. "Yo ___ (ir) al mercado ayer" → answer: "fui"
 - translate_word: e.g. "How do you say 'yesterday' in Spanish?" → answer: "ayer"
 - correct_mistake: e.g. "Yo soy hambre" → answer: "Yo tengo hambre"
@@ -574,7 +624,7 @@ Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
 
   return parsed.questions
     .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
-    .slice(0, 10)
+    .slice(0, count)
     .map((q, i) => ({
       id: String(q.id ?? i + 1),
       type: QUICK_FIRE_TYPES.includes(q.type as QuickFireQuestionType)

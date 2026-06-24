@@ -1,7 +1,19 @@
 import {
+  buildSavedVocabQuestions,
+  checkSavedVocabAnswer,
+  getActiveVocabulary,
+  getSavedVocabulary,
+  mixPracticeQuestions,
+  practiceQuestionId,
+  practiceQuestionPrompt,
+  recordVocabDrillAnswer,
+  VOCAB_DRILL_SLOTS,
+  type PracticeQuestion,
+  type VocabMasteryEvent,
+} from '@/lib/saved-vocabulary';
+import {
   generateQuickFireQuestions,
   type PrioritizedWeakAreaInput,
-  type QuickFireQuestion,
 } from '@/lib/claude';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { addGems, gemsForPracticeDrill } from '@/lib/gems';
@@ -49,7 +61,7 @@ const AUTO_ADVANCE_MS = 2000;
 type ScreenStage = 'choose' | 'loading' | 'drill' | 'result';
 
 type AnswerRecord = {
-  question: QuickFireQuestion;
+  practiceQuestion: PracticeQuestion;
   userAnswer: string;
   correct: boolean;
 };
@@ -70,7 +82,7 @@ export default function PracticeScreen() {
   const [weakAreasError, setWeakAreasError] = useState<string | null>(null);
 
   const [stage, setStage] = useState<ScreenStage>('choose');
-  const [questions, setQuestions] = useState<QuickFireQuestion[]>([]);
+  const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
   const [questionIdx, setQuestionIdx] = useState(0);
   const [answer, setAnswer] = useState('');
   const [flash, setFlash] = useState<FlashState>(null);
@@ -82,6 +94,8 @@ export default function PracticeScreen() {
   const [gemsEarned, setGemsEarned] = useState(0);
   const [showGemToast, setShowGemToast] = useState(false);
   const [streakMaintained, setStreakMaintained] = useState(false);
+  const [masteryEvent, setMasteryEvent] = useState<VocabMasteryEvent | null>(null);
+  const [vocabExample, setVocabExample] = useState<string | null>(null);
   const [savingRewards, setSavingRewards] = useState(false);
 
   const currentQuestion = questions[questionIdx];
@@ -153,6 +167,8 @@ export default function PracticeScreen() {
     setGemsEarned(0);
     setShowGemToast(false);
     setStreakMaintained(false);
+    setMasteryEvent(null);
+    setVocabExample(null);
     didAwardRef.current = false;
   };
 
@@ -170,13 +186,20 @@ export default function PracticeScreen() {
     setStage('loading');
 
     try {
-      const batch = await generateQuickFireQuestions(prioritizedForPrompt);
-      if (batch.length < TOTAL_QUESTIONS) {
+      const savedWords = await getSavedVocabulary();
+      const activeWords = getActiveVocabulary(savedWords);
+      const vocabCount = Math.min(VOCAB_DRILL_SLOTS, activeWords.length);
+      const weakCount = TOTAL_QUESTIONS - vocabCount;
+      const weakBatch = await generateQuickFireQuestions(prioritizedForPrompt, weakCount);
+      const vocabBatch = buildSavedVocabQuestions(activeWords, vocabCount);
+      const mixed = mixPracticeQuestions(weakBatch, vocabBatch);
+
+      if (mixed.length < 1) {
         Alert.alert('Could not load questions', 'Try again in a moment.');
         setStage('choose');
         return;
       }
-      setQuestions(batch.slice(0, TOTAL_QUESTIONS));
+      setQuestions(mixed.slice(0, TOTAL_QUESTIONS));
       setStage('drill');
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
@@ -204,6 +227,7 @@ export default function PracticeScreen() {
       clearAdvanceTimer();
       setFlash(null);
       setShowCorrectAnswer(null);
+      setVocabExample(null);
       setLocked(false);
       setAnswer('');
 
@@ -217,13 +241,27 @@ export default function PracticeScreen() {
     [finishDrill, questionIdx],
   );
 
-  const submitAnswer = () => {
+  const submitAnswer = async () => {
     if (!currentQuestion || locked || !answer.trim()) return;
 
     const trimmed = answer.trim();
-    const correct = checkQuickFireAnswer(currentQuestion, trimmed);
+    let correct = false;
+
+    if (currentQuestion.kind === 'quick') {
+      correct = checkQuickFireAnswer(currentQuestion.question, trimmed);
+    } else {
+      correct = checkSavedVocabAnswer(currentQuestion.question, trimmed);
+      const mastery = await recordVocabDrillAnswer(currentQuestion.question.spanish, correct);
+      if (mastery) {
+        setMasteryEvent(mastery);
+        if (Platform.OS !== 'web') {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }
+      }
+    }
+
     const record: AnswerRecord = {
-      question: currentQuestion,
+      practiceQuestion: currentQuestion,
       userAnswer: trimmed,
       correct,
     };
@@ -241,7 +279,15 @@ export default function PracticeScreen() {
     setLocked(true);
     setFlash(correct ? 'correct' : 'incorrect');
     if (!correct) {
-      setShowCorrectAnswer(currentQuestion.expectedAnswer);
+      const reveal =
+        currentQuestion.kind === 'quick'
+          ? currentQuestion.question.expectedAnswer
+          : currentQuestion.question.expectedAnswer;
+      setShowCorrectAnswer(reveal);
+    }
+    if (currentQuestion.kind === 'vocab') {
+      const q = currentQuestion.question;
+      setVocabExample(`${q.exampleSpanish}\n${q.exampleEnglish}`);
     }
 
     advanceTimerRef.current = setTimeout(() => {
@@ -285,6 +331,12 @@ export default function PracticeScreen() {
     })();
   }, [stage, results, priorityWeakAreas]);
 
+  useEffect(() => {
+    if (!masteryEvent) return;
+    const t = setTimeout(() => setMasteryEvent(null), 3500);
+    return () => clearTimeout(t);
+  }, [masteryEvent]);
+
   const progress = stage === 'drill' ? (questionIdx + (locked ? 1 : 0)) / TOTAL_QUESTIONS : 0;
 
   return (
@@ -295,6 +347,20 @@ export default function PracticeScreen() {
           amount={gemsEarned}
           onDone={() => setShowGemToast(false)}
         />
+      ) : null}
+      {masteryEvent ? (
+        <View style={styles.masteryBanner}>
+          <Text style={styles.masteryText}>
+            🎉 You&apos;ve mastered &apos;{masteryEvent.spanish}&apos;! +{masteryEvent.gemsAwarded} 💎
+          </Text>
+        </View>
+      ) : null}
+      {masteryEvent ? (
+        <View style={styles.masteryBanner}>
+          <Text style={styles.masteryText}>
+            🎉 You&apos;ve mastered &apos;{masteryEvent.spanish}&apos;! +{masteryEvent.gemsAwarded} 💎
+          </Text>
+        </View>
       ) : null}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -377,8 +443,8 @@ export default function PracticeScreen() {
               </Text>
 
               <View style={[styles.questionCard, flash === 'correct' && styles.flashGreenCard, flash === 'incorrect' && styles.flashRedCard]}>
-                <Text style={styles.questionType}>{formatQuestionType(currentQuestion.type)}</Text>
-                <Text style={styles.questionPrompt}>{currentQuestion.prompt}</Text>
+                <Text style={styles.questionType}>{formatPracticeQuestionType(currentQuestion)}</Text>
+                <Text style={styles.questionPrompt}>{practiceQuestionPrompt(currentQuestion)}</Text>
 
                 {flash ? (
                   <View style={styles.flashRow}>
@@ -386,6 +452,12 @@ export default function PracticeScreen() {
                     {showCorrectAnswer ? (
                       <Text style={styles.correctReveal}>{showCorrectAnswer}</Text>
                     ) : null}
+                  </View>
+                ) : null}
+                {flash && vocabExample ? (
+                  <View style={styles.exampleBlock}>
+                    <Text style={styles.exampleLabel}>Example</Text>
+                    <Text style={styles.exampleText}>{vocabExample}</Text>
                   </View>
                 ) : null}
               </View>
@@ -444,13 +516,20 @@ export default function PracticeScreen() {
               {wrongResults.length ? (
                 <View style={styles.reviewCard}>
                   <Text style={styles.reviewTitle}>Review mistakes</Text>
-                  {wrongResults.map((r, i) => (
-                    <View key={`${r.question.id}-${i}`} style={styles.reviewRow}>
-                      <Text style={styles.reviewPrompt}>{r.question.prompt}</Text>
+                  {wrongResults.map((r, i) => {
+                    const prompt = practiceQuestionPrompt(r.practiceQuestion);
+                    const expected =
+                      r.practiceQuestion.kind === 'quick'
+                        ? r.practiceQuestion.question.expectedAnswer
+                        : r.practiceQuestion.question.expectedAnswer;
+                    return (
+                    <View key={`${practiceQuestionId(r.practiceQuestion)}-${i}`} style={styles.reviewRow}>
+                      <Text style={styles.reviewPrompt}>{prompt}</Text>
                       <Text style={styles.reviewWrong}>You: {r.userAnswer}</Text>
-                      <Text style={styles.reviewRight}>✓ {r.question.expectedAnswer}</Text>
+                      <Text style={styles.reviewRight}>✓ {expected}</Text>
                     </View>
-                  ))}
+                    );
+                  })}
                 </View>
               ) : null}
 
@@ -477,8 +556,18 @@ export default function PracticeScreen() {
   );
 }
 
-function formatQuestionType(type: QuickFireQuestion['type']): string {
-  switch (type) {
+function formatPracticeQuestionType(q: PracticeQuestion): string {
+  if (q.kind === 'vocab') {
+    switch (q.question.type) {
+      case 'vocab_meaning':
+        return 'Saved vocabulary';
+      case 'vocab_translate':
+        return 'Saved vocabulary';
+      case 'vocab_fill_blank':
+        return 'Saved vocabulary · fill blank';
+    }
+  }
+  switch (q.question.type) {
     case 'fill_blank':
       return 'Fill in the blank';
     case 'translate_word':
@@ -658,6 +747,45 @@ const styles = StyleSheet.create({
   gemLabel: { fontSize: 13, fontWeight: '800', color: palette.muted, marginBottom: 6 },
   gemValue: { fontSize: 28, fontWeight: '900', color: palette.gem },
   gemBonus: { fontSize: 13, fontWeight: '700', color: palette.muted, marginTop: 6 },
+  masteryBanner: {
+    position: 'absolute',
+    top: 56,
+    left: 20,
+    right: 20,
+    zIndex: 50,
+    backgroundColor: 'rgba(52, 211, 153, 0.15)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.45)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  masteryText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.green,
+    textAlign: 'center',
+  },
+  exampleBlock: {
+    marginTop: 14,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(37, 45, 58, 0.8)',
+  },
+  exampleLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 6,
+  },
+  exampleText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.text,
+    lineHeight: 20,
+  },
   streakNote: {
     fontSize: 14,
     fontWeight: '800',

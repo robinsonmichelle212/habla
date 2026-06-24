@@ -9,6 +9,14 @@ import {
   type GrammarTopic,
 } from '@/lib/lesson-focus';
 import {
+  getActiveVocabulary,
+  getMasteredVocabulary,
+  getSavedVocabulary,
+  getVocabStats,
+  type SavedVocabWord,
+  type VocabStats,
+} from '@/lib/saved-vocabulary';
+import {
   LEVEL_BANDS,
   averageScoreForTopic,
   getLevelBarometer,
@@ -76,6 +84,8 @@ export default function LevelScreen() {
   const [vocabCovered, setVocabCovered] = useState<Set<string>>(new Set());
   const [yourDayCovered, setYourDayCovered] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
+  const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
+  const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -90,12 +100,16 @@ export default function LevelScreen() {
             vocabStorage,
             yourDayStorage,
             grammarTopic,
+            stats,
+            words,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredGrammarTopicsFromStorage(),
             getCoveredVocabThemesFromStorage(),
             getCoveredYourDayTopicsFromStorage(),
             getCurrentGrammarTopic(),
+            getVocabStats(),
+            getSavedVocabulary(),
           ]);
           if (cancelled) return;
 
@@ -117,6 +131,8 @@ export default function LevelScreen() {
           setCurrentGrammarTopic(grammarTopic);
           setBarometer(getLevelBarometer(lessonHistory));
           setNextReq(getNextLevelRequirements(lessonHistory));
+          setVocabStats(stats);
+          setSavedWords(words);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -147,11 +163,6 @@ export default function LevelScreen() {
         <View style={styles.loadingWrap}>
           <ActivityIndicator color={palette.accent} size="large" />
         </View>
-      ) : !barometer ? (
-        <View style={styles.emptyWrap}>
-          <Text style={styles.emptyTitle}>No level data yet</Text>
-          <Text style={styles.emptyText}>Complete a few lessons to see your progression.</Text>
-        </View>
       ) : (
         <ScrollView
           contentContainerStyle={[
@@ -159,16 +170,28 @@ export default function LevelScreen() {
             { paddingBottom: Math.max(insets.bottom, 24) },
           ]}
           showsVerticalScrollIndicator={false}>
-          <LevelBarometerSection barometer={barometer} />
-          <GrammarSection
-            covered={grammarCovered}
-            coveredCount={grammarCoveredCount}
-            currentTopic={currentGrammarTopic}
-            history={history}
-          />
-          <VocabSection covered={vocabCovered} coveredCount={vocabCoveredCount} history={history} />
-          <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} />
-          {nextReq ? <NextLevelSection requirements={nextReq} /> : null}
+          {barometer ? <LevelBarometerSection barometer={barometer} /> : null}
+          {barometer ? (
+            <>
+              <GrammarSection
+                covered={grammarCovered}
+                coveredCount={grammarCoveredCount}
+                currentTopic={currentGrammarTopic}
+                history={history}
+              />
+              <VocabSection covered={vocabCovered} coveredCount={vocabCoveredCount} history={history} />
+              <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} />
+              {nextReq ? <NextLevelSection requirements={nextReq} /> : null}
+            </>
+          ) : (
+            <View style={styles.emptyWrapInline}>
+              <Text style={styles.emptyTitle}>No level data yet</Text>
+              <Text style={styles.emptyText}>Complete a few lessons to see your progression.</Text>
+            </View>
+          )}
+          {vocabStats ? (
+            <SavedVocabularySection stats={vocabStats} words={savedWords} />
+          ) : null}
         </ScrollView>
       )}
     </SafeAreaView>
@@ -410,6 +433,77 @@ function NextLevelSection({
   );
 }
 
+function SavedVocabularySection({
+  stats,
+  words,
+}: {
+  stats: VocabStats;
+  words: SavedVocabWord[];
+}) {
+  const active = getActiveVocabulary(words);
+  const mastered = getMasteredVocabulary(words);
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Saved vocabulary</Text>
+      <View style={styles.card}>
+        <View style={styles.statGrid}>
+          <StatBox label="Words saved" value={String(stats.saved)} />
+          <StatBox label="Mastered" value={String(stats.mastered)} valueColor={palette.green} />
+          <StatBox label="In progress" value={String(stats.inProgress)} valueColor={palette.amber} />
+        </View>
+        <Text style={styles.vocabStreakLine}>
+          Longest mastery streak: {stats.longestMasteryStreak} word
+          {stats.longestMasteryStreak === 1 ? '' : 's'} in a row
+        </Text>
+
+        {active.length ? (
+          <>
+            <Text style={styles.listHeader}>Active words</Text>
+            {active.map((w) => (
+              <VocabWordRow key={w.spanish} word={w} />
+            ))}
+          </>
+        ) : (
+          <Text style={styles.mutedListText}>
+            Save words during a lesson to drill them in practice.
+          </Text>
+        )}
+
+        {mastered.length ? (
+          <>
+            <Text style={[styles.listHeader, { marginTop: 16 }]}>Mastered</Text>
+            {mastered.map((w) => (
+              <VocabWordRow key={`m-${w.spanish}`} word={w} mastered />
+            ))}
+          </>
+        ) : null}
+      </View>
+    </View>
+  );
+}
+
+function VocabWordRow({ word, mastered = false }: { word: SavedVocabWord; mastered?: boolean }) {
+  const progress = mastered ? 5 : word.consecutiveCorrect;
+  return (
+    <View style={styles.vocabWordRow}>
+      <View style={styles.vocabWordTop}>
+        <Text style={styles.vocabSpanish}>{word.spanish}</Text>
+        <Text style={[styles.vocabBadge, mastered ? styles.vocabBadgeMastered : styles.vocabBadgeActive]}>
+          {mastered ? '✅ Mastered' : `${progress}/5`}
+        </Text>
+      </View>
+      <Text style={styles.vocabEnglish}>{word.english}</Text>
+      {word.exampleSpanish ? (
+        <Text style={styles.vocabExample}>{word.exampleSpanish}</Text>
+      ) : null}
+      <Text style={styles.vocabMeta}>
+        {word.difficulty} · seen {word.timesSeen}× · {word.timesCorrect} correct
+      </Text>
+    </View>
+  );
+}
+
 function ProgressBarLabel({ count, total, label }: { count: number; total: number; label: string }) {
   return (
     <Text style={styles.progressLabel}>
@@ -451,6 +545,7 @@ const styles = StyleSheet.create({
   headerSpacer: { minWidth: 72 },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyWrap: { flex: 1, padding: 32, alignItems: 'center', justifyContent: 'center' },
+  emptyWrapInline: { paddingVertical: 24, alignItems: 'center' },
   emptyTitle: { fontSize: 20, fontWeight: '900', color: palette.text, marginBottom: 8 },
   emptyText: { fontSize: 15, fontWeight: '600', color: palette.muted, textAlign: 'center' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 16 },
@@ -560,4 +655,57 @@ const styles = StyleSheet.create({
   },
   skillName: { fontSize: 15, fontWeight: '800' },
   skillAvg: { fontSize: 15, fontWeight: '900' },
+  vocabStreakLine: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    marginBottom: 14,
+    textAlign: 'center',
+  },
+  listHeader: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  mutedListText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 20,
+  },
+  vocabWordRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(37, 45, 58, 0.6)',
+  },
+  vocabWordTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  vocabSpanish: { fontSize: 16, fontWeight: '900', color: palette.text, flex: 1 },
+  vocabEnglish: { fontSize: 14, fontWeight: '600', color: palette.muted, marginBottom: 4 },
+  vocabExample: { fontSize: 13, fontWeight: '600', color: palette.text, fontStyle: 'italic', marginBottom: 4 },
+  vocabMeta: { fontSize: 11, fontWeight: '700', color: palette.muted },
+  vocabBadge: {
+    fontSize: 11,
+    fontWeight: '800',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  vocabBadgeActive: {
+    color: palette.amber,
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+  },
+  vocabBadgeMastered: {
+    color: palette.green,
+    backgroundColor: 'rgba(52, 211, 153, 0.12)',
+  },
 });

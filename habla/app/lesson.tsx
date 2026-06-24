@@ -1,4 +1,5 @@
 import { askJavi, lessonKindToLessonType, type JaviMessage } from '@/lib/claude';
+import { saveVocabularyWord } from '@/lib/saved-vocabulary';
 import {
   buildLessonOpening,
   prepareLessonFocus,
@@ -162,6 +163,9 @@ export default function LessonScreen() {
   const [reply, setReply] = useState('');
   const [sending, setSending] = useState(false);
   const [endingLesson, setEndingLesson] = useState(false);
+  const [saveWord, setSaveWord] = useState('');
+  const [savingWord, setSavingWord] = useState(false);
+  const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,6 +231,32 @@ export default function LessonScreen() {
     })
     return () => keyboardListener.remove()
   }, [])
+
+  const saveWordToList = async () => {
+    const trimmed = saveWord.trim();
+    if (!trimmed || savingWord) return;
+
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+
+    setSavingWord(true);
+    try {
+      const result = await saveVocabularyWord(trimmed);
+      setSaveWord('');
+      setSaveConfirmation(
+        result.alreadyExists
+          ? '💾 Already in your list'
+          : '💾 Saved — Javi will drill you on this',
+      );
+      setTimeout(() => setSaveConfirmation(null), 2800);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Could not save word.';
+      Alert.alert('Save failed', message);
+    } finally {
+      setSavingWord(false);
+    }
+  };
 
   const endLesson = async () => {
     if (endingLesson) return;
@@ -372,6 +402,38 @@ export default function LessonScreen() {
                 <Text style={styles.summaryButtonText}>End Lesson</Text>
               )}
             </Pressable>
+
+            <View style={styles.saveWordRow}>
+              <Text style={styles.saveWordLabel}>Save a word 📝</Text>
+              <TextInput
+                style={styles.saveWordInput}
+                value={saveWord}
+                onChangeText={setSaveWord}
+                placeholder="Spanish word…"
+                placeholderTextColor={palette.muted}
+                editable={!savingWord}
+                autoCapitalize="none"
+                autoCorrect={false}
+                onSubmitEditing={() => void saveWordToList()}
+              />
+              <Pressable
+                onPress={() => void saveWordToList()}
+                disabled={savingWord || !saveWord.trim()}
+                style={({ pressed }) => [
+                  styles.saveWordButton,
+                  (savingWord || !saveWord.trim()) && styles.saveWordButtonDisabled,
+                  pressed && saveWord.trim() && !savingWord && styles.saveWordButtonPressed,
+                ]}>
+                {savingWord ? (
+                  <ActivityIndicator color="#0B0F14" size="small" />
+                ) : (
+                  <Text style={styles.saveWordButtonText}>Save</Text>
+                )}
+              </Pressable>
+            </View>
+            {saveConfirmation ? (
+              <Text style={styles.saveConfirmation}>{saveConfirmation}</Text>
+            ) : null}
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.spanishRow}>
               {['á','é','í','ó','ú','ü','ñ','¿','¡','Á','É','Í','Ó','Ú','Ñ'].map((char) => (
@@ -583,6 +645,54 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.muted,
     letterSpacing: 0.1,
+  },
+  saveWordRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  saveWordLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.muted,
+    flexShrink: 0,
+  },
+  saveWordInput: {
+    flex: 1,
+    minHeight: 36,
+    backgroundColor: palette.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 14,
+    color: palette.text,
+  },
+  saveWordButton: {
+    backgroundColor: palette.surfaceBorder,
+    borderRadius: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    minWidth: 56,
+    alignItems: 'center',
+  },
+  saveWordButtonPressed: {
+    opacity: 0.9,
+  },
+  saveWordButtonDisabled: {
+    opacity: 0.45,
+  },
+  saveWordButtonText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.text,
+  },
+  saveConfirmation: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.accent,
+    marginTop: -4,
   },
   composeRow: {
     flexDirection: 'row',
