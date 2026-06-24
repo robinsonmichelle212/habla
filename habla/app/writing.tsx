@@ -1,4 +1,5 @@
 import { analyzeConversation, evaluateWriting, generateWritingTask } from '@/lib/claude';
+import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import {
   conversationToJaviMessages,
@@ -6,7 +7,9 @@ import {
   setLessonSession,
   type WritingEvaluation,
 } from '@/lib/lesson-session';
-import { useRouter } from 'expo-router';
+import { WRITING_PRACTICE_KEY } from '@/components/score-detail-modals';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -57,6 +60,8 @@ function ProgressBar({ label, value }: { label: string; value: number }) {
 
 export default function WritingScreen() {
   const router = useRouter();
+  const { practice } = useLocalSearchParams<{ practice?: string }>();
+  const isPracticeReplay = practice === '1';
   const insets = useSafeAreaInsets();
   const scrollRef = useRef<ScrollView>(null);
   const writingInputRef = useRef<TextInput>(null);
@@ -81,6 +86,17 @@ export default function WritingScreen() {
     didLoadRef.current = true;
 
     if (!lessonType || !lessonFocus || !conversation.length) {
+      if (isPracticeReplay) {
+        void AsyncStorage.getItem(WRITING_PRACTICE_KEY).then((stored) => {
+          if (stored) {
+            setTaskPrompt(stored);
+            setLessonSession({ writingTask: { prompt: stored } });
+          } else {
+            Alert.alert('No writing task', 'Complete a lesson first to unlock writing practice.');
+          }
+        });
+        return;
+      }
       Alert.alert('No lesson found', 'Go back and complete a lesson first.');
       return;
     }
@@ -98,12 +114,12 @@ export default function WritingScreen() {
         Alert.alert('Could not load writing task', message);
       })
       .finally(() => setLoadingTask(false));
-  }, [conversation, lessonFocus, lessonType, taskPrompt]);
+  }, [conversation, isPracticeReplay, lessonFocus, lessonType, taskPrompt]);
 
   const submit = async () => {
-    if (!lessonType) return;
     const trimmed = text.trim();
     if (!trimmed || submitting || !taskPrompt) return;
+    const activeLessonType = lessonType ?? 'Grammar';
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -112,7 +128,7 @@ export default function WritingScreen() {
     setSubmitting(true);
     try {
       const evalJson = await evaluateWriting(
-        lessonType,
+        activeLessonType,
         taskPrompt,
         conversationToJaviMessages(conversation),
         trimmed,
@@ -126,6 +142,10 @@ export default function WritingScreen() {
         fluencyScore: evalJson.fluencyScore,
         feedback: evalJson.feedback,
         corrections: Array.isArray(evalJson.corrections) ? evalJson.corrections : [],
+        accentIssues: Array.isArray(evalJson.accentIssues) ? evalJson.accentIssues : [],
+        structuralFeedback: Array.isArray(evalJson.structuralFeedback)
+          ? evalJson.structuralFeedback
+          : [],
       };
 
       setResult(evaluation);
@@ -161,6 +181,20 @@ export default function WritingScreen() {
       const v = normalizedWritingScores.vocabularyScore;
       const f = normalizedWritingScores.fluencyScore;
       const w = Math.round((g + v + f) / 3);
+      const baseBreakdown = analysisJson.breakdown ?? {
+        grammar: { score: g, topic: focusLabel ?? 'Grammar', details: [], lessonDescription: '', mistakes: [] },
+        vocabulary: { score: v, topic: 'Vocabulary', details: [], wordsCorrect: [], wordsToRevisit: [] },
+        fluency: {
+          score: f,
+          details: [],
+          description: '',
+          positivePatterns: [],
+          negativePatterns: [],
+          sentenceNotes: [],
+          weeklyTips: [],
+        },
+        writing: { score: w, details: [] },
+      };
       const analysis = {
         strongAreas: analysisJson.strongAreas ?? [],
         weakAreas: analysisJson.weakAreas ?? [],
@@ -168,12 +202,7 @@ export default function WritingScreen() {
         correctnessScore: analysisJson.correctnessScore ?? 0,
         overallScore: analysisJson.overallScore ?? analysisJson.correctnessScore ?? 0,
         encouragingMessage: analysisJson.encouragingMessage ?? '',
-        breakdown: analysisJson.breakdown ?? {
-          grammar: { score: g, topic: focusLabel ?? 'Grammar', details: [] },
-          vocabulary: { score: v, topic: 'Vocabulary', details: [] },
-          fluency: { score: f, details: [] },
-          writing: { score: w, details: [] },
-        },
+        breakdown: mergeWritingIntoBreakdown(baseBreakdown, result, taskPrompt),
       };
       setLessonSession({ analysis });
       router.push('/summary');

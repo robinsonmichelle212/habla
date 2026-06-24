@@ -7,14 +7,16 @@ import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-n
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
 import {
-  getBestLessonThisWeek,
+  getBestDayThisWeek,
+  getDrillHistory,
   getLessonHistory,
   getProgressionLevel,
-  getTodaysLessonEntry,
-  getTodaysLessonScore,
+  getTodayScoreInfo,
   getTopScoreThisWeek,
   getWeekScoreChart,
+  type DrillHistoryEntry,
   type LessonHistoryEntry,
+  type TodayScoreInfo,
   type WeekChartDay,
 } from '@/lib/practice-storage';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
@@ -40,11 +42,16 @@ export default function HomeScreen() {
   const [totalGems, setTotalGems] = useState(0);
   const [last7Days, setLast7Days] = useState<{ date: string; completed: boolean }[]>([]);
   const [statsHydrated, setStatsHydrated] = useState(false);
-  const [todaysScore, setTodaysScore] = useState<number | null>(null);
+  const [todaysScoreInfo, setTodaysScoreInfo] = useState<TodayScoreInfo>({
+    score: null,
+    label: "Today's score",
+    lessonEntry: null,
+    drillEntry: null,
+  });
   const [topScoreWeek, setTopScoreWeek] = useState<number | null>(null);
   const [levelLabel, setLevelLabel] = useState<string | null>(null);
-  const [todaysEntry, setTodaysEntry] = useState<LessonHistoryEntry | null>(null);
-  const [bestWeekEntry, setBestWeekEntry] = useState<LessonHistoryEntry | null>(null);
+  const [bestWeekLessonEntry, setBestWeekLessonEntry] = useState<LessonHistoryEntry | null>(null);
+  const [bestWeekDrillEntry, setBestWeekDrillEntry] = useState<DrillHistoryEntry | null>(null);
   const [weekChart, setWeekChart] = useState<WeekChartDay[]>([]);
   const [showTodayModal, setShowTodayModal] = useState(false);
   const [showWeekModal, setShowWeekModal] = useState(false);
@@ -55,9 +62,10 @@ export default function HomeScreen() {
 
       const loadHomeData = async () => {
         try {
-          const [full, history, gems] = await Promise.all([
+          const [full, history, drills, gems] = await Promise.all([
             getStreakState(),
             getLessonHistory(),
+            getDrillHistory(),
             getTotalGems(),
           ]);
           if (cancelled) return;
@@ -70,12 +78,13 @@ export default function HomeScreen() {
           setTotalGems(gems);
           setLast7Days(full.last7Days);
 
-          setTodaysScore(getTodaysLessonScore(history));
-          setTopScoreWeek(getTopScoreThisWeek(history));
+          setTodaysScoreInfo(getTodayScoreInfo(history, drills));
+          setTopScoreWeek(getTopScoreThisWeek(history, drills));
           setLevelLabel(getProgressionLevel(history));
-          setTodaysEntry(getTodaysLessonEntry(history));
-          setBestWeekEntry(getBestLessonThisWeek(history));
-          setWeekChart(getWeekScoreChart(history));
+          const bestWeek = getBestDayThisWeek(history, drills);
+          setBestWeekLessonEntry(bestWeek?.lessonEntry ?? null);
+          setBestWeekDrillEntry(bestWeek?.drillEntry ?? null);
+          setWeekChart(getWeekScoreChart(history, drills));
         } finally {
           if (!cancelled) {
             setStreakHydrated(true);
@@ -187,14 +196,18 @@ export default function HomeScreen() {
 
         <View style={styles.statsRow}>
           <StatCard
-            label="Today's score"
+            label={todaysScoreInfo.label}
             value={
-              !statsHydrated ? '—' : todaysScore != null ? `${todaysScore}%` : '--'
+              !statsHydrated
+                ? '—'
+                : todaysScoreInfo.score != null
+                  ? `${todaysScoreInfo.score}%`
+                  : '--'
             }
             onPress={
-              statsHydrated && todaysScore != null
+              statsHydrated && todaysScoreInfo.score != null
                 ? () => {
-                    console.log("[Habla] Today's score tile tapped — entry passed to modal:", JSON.stringify(todaysEntry, null, 2));
+                    console.log("[Habla] Today's score tile tapped:", JSON.stringify(todaysScoreInfo, null, 2));
                     if (Platform.OS !== 'web') {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }
@@ -211,7 +224,7 @@ export default function HomeScreen() {
             onPress={
               statsHydrated && topScoreWeek != null
                 ? () => {
-                    console.log("[Habla] Top score this week tile tapped — entry passed to modal:", JSON.stringify(bestWeekEntry, null, 2));
+                    console.log('[Habla] Top score this week tile tapped:', JSON.stringify({ bestWeekLessonEntry, bestWeekDrillEntry }, null, 2));
                     if (Platform.OS !== 'web') {
                       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     }
@@ -241,14 +254,19 @@ export default function HomeScreen() {
       <LessonScoreBreakdownModal
         visible={showTodayModal}
         title="Today's Breakdown"
-        entry={todaysEntry}
+        entry={todaysScoreInfo.lessonEntry}
+        drillEntry={todaysScoreInfo.drillEntry}
+        displayScore={todaysScoreInfo.score}
         onClose={() => setShowTodayModal(false)}
         showPracticeButton
+        enableScoreDetails
       />
       <LessonScoreBreakdownModal
         visible={showWeekModal}
         title="This Week's Best"
-        entry={bestWeekEntry}
+        entry={bestWeekLessonEntry}
+        drillEntry={bestWeekDrillEntry}
+        displayScore={topScoreWeek}
         onClose={() => setShowWeekModal(false)}
         weekChart={weekChart}
       />

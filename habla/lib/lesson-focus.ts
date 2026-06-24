@@ -206,6 +206,37 @@ export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<Less
   }
 }
 
+/** Read the current weekly grammar topic from AsyncStorage (no rotation side effects). */
+export async function getCurrentGrammarTopic(): Promise<GrammarTopic | null> {
+  const stored = await AsyncStorage.getItem(KEY_CURRENT_GRAMMAR_TOPIC);
+  return isGrammarTopic(stored) ? stored : null;
+}
+
+export function grammarRotationProgress(
+  coveredTopics: string[],
+  currentTopic: GrammarTopic | null,
+): { covered: GrammarTopic[]; remaining: GrammarTopic[]; progress: number } {
+  const coveredSet = new Set(coveredTopics.map((t) => t.toLowerCase()));
+  const covered = GRAMMAR_TOPICS.filter((t) => coveredSet.has(t.toLowerCase()));
+  const remaining = GRAMMAR_TOPICS.filter((t) => !coveredSet.has(t.toLowerCase()));
+  const currentIdx = currentTopic ? GRAMMAR_TOPICS.indexOf(currentTopic) : -1;
+  const progress =
+    currentIdx >= 0
+      ? Math.round(((currentIdx + 1) / GRAMMAR_TOPICS.length) * 100)
+      : Math.round((covered.length / GRAMMAR_TOPICS.length) * 100);
+  return { covered, remaining, progress };
+}
+
+export function vocabThemeRotation(
+  coveredThemes: string[],
+): { covered: VocabTheme[]; remaining: VocabTheme[] } {
+  const coveredSet = new Set(coveredThemes.map((t) => t.toLowerCase()));
+  return {
+    covered: VOCAB_THEMES.filter((t) => coveredSet.has(t.toLowerCase())),
+    remaining: VOCAB_THEMES.filter((t) => !coveredSet.has(t.toLowerCase())),
+  };
+}
+
 export function lessonFocusLabel(focus: LessonFocusContext): string {
   switch (focus.kind) {
     case 'grammar':

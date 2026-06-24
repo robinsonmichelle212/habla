@@ -11,11 +11,54 @@ export type ScoreBreakdownSection = {
   details: string[];
 };
 
+export type VocabWord = { spanish: string; english: string };
+
+export type GrammarMistake = {
+  mistake: string;
+  correction: string;
+  explanation: string;
+};
+
+export type WritingCorrection = {
+  mistake: string;
+  correction: string;
+  explanation: string;
+};
+
+export type GrammarBreakdown = ScoreBreakdownSection & {
+  topic: string;
+  lessonDescription?: string;
+  mistakes?: GrammarMistake[];
+};
+
+export type VocabularyBreakdown = ScoreBreakdownSection & {
+  topic: string;
+  wordsCorrect?: VocabWord[];
+  wordsToRevisit?: VocabWord[];
+};
+
+export type FluencyBreakdown = ScoreBreakdownSection & {
+  description?: string;
+  positivePatterns?: string[];
+  negativePatterns?: string[];
+  sentenceNotes?: string[];
+  weeklyTips?: string[];
+};
+
+export type WritingBreakdown = ScoreBreakdownSection & {
+  originalText?: string;
+  correctedText?: string;
+  corrections?: WritingCorrection[];
+  accentIssues?: string[];
+  structuralFeedback?: string[];
+  writingPrompt?: string;
+};
+
 export type LessonBreakdown = {
-  grammar: ScoreBreakdownSection & { topic: string };
-  vocabulary: ScoreBreakdownSection & { topic: string };
-  fluency: ScoreBreakdownSection;
-  writing: ScoreBreakdownSection;
+  grammar: GrammarBreakdown;
+  vocabulary: VocabularyBreakdown;
+  fluency: FluencyBreakdown;
+  writing: WritingBreakdown;
 };
 
 export type LessonHistoryEntry = {
@@ -38,13 +81,42 @@ export type PriorityWeakArea = {
   frequency: number;
 };
 
+export type DrillHistoryEntry = {
+  date: string; // YYYY-MM-DD
+  score: number;
+  totalQuestions: number;
+  percentage: number;
+  weakAreasDrilled: string[];
+  gemsEarned: number;
+  type: 'practice';
+};
+
 export type WeekChartDay = {
   date: string;
   dayLabel: string;
   score: number | null;
+  activityType: 'none' | 'lesson' | 'drill' | 'both';
+};
+
+export type TodayScoreInfo = {
+  score: number | null;
+  label: string;
+  lessonEntry: LessonHistoryEntry | null;
+  drillEntry: DrillHistoryEntry | null;
+};
+
+export type BestWeekDayInfo = {
+  combinedScore: number;
+  lessonEntry: LessonHistoryEntry | null;
+  drillEntry: DrillHistoryEntry | null;
+  activityType: 'lesson' | 'drill' | 'both';
 };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DRILL_STORAGE_KEY = 'drillHistory';
+const MAX_DRILL_SESSIONS = 30;
+const LESSON_SCORE_WEIGHT = 0.7;
+const DRILL_SCORE_WEIGHT = 0.3;
 
 function toStringList(input: unknown): string[] {
   if (!Array.isArray(input)) return [];
@@ -69,27 +141,124 @@ function normalizeSection(
   };
 }
 
+function normalizeVocabWords(raw: unknown): VocabWord[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const o = item as Partial<VocabWord>;
+      const spanish = typeof o.spanish === 'string' ? o.spanish.trim() : '';
+      const english = typeof o.english === 'string' ? o.english.trim() : '';
+      if (!spanish) return null;
+      return { spanish, english: english || '—' };
+    })
+    .filter((w): w is VocabWord => w != null);
+}
+
+function normalizeMistakes(raw: unknown): GrammarMistake[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const o = item as Partial<GrammarMistake>;
+      const mistake = typeof o.mistake === 'string' ? o.mistake.trim() : '';
+      const correction = typeof o.correction === 'string' ? o.correction.trim() : '';
+      const explanation = typeof o.explanation === 'string' ? o.explanation.trim() : '';
+      if (!mistake && !correction) return null;
+      return { mistake, correction, explanation };
+    })
+    .filter((m): m is GrammarMistake => m != null);
+}
+
 function normalizeBreakdown(
   raw: unknown,
   legacyScores?: { grammar: number; vocabulary: number; fluency: number },
 ): LessonBreakdown {
-  const obj = (raw ?? {}) as Partial<LessonBreakdown>;
+  const obj = (raw ?? {}) as Record<string, unknown>;
   const g = legacyScores?.grammar ?? 0;
   const v = legacyScores?.vocabulary ?? 0;
   const f = legacyScores?.fluency ?? 0;
   const w = Math.round((g + v + f) / 3);
 
-  const grammar = normalizeSection(obj.grammar, g, 'Grammar');
-  const vocabulary = normalizeSection(obj.vocabulary, v, 'Vocabulary');
-  const fluency = normalizeSection(obj.fluency, f);
-  const writing = normalizeSection(obj.writing, w);
+  const grammarRaw = (obj.grammar ?? {}) as Partial<GrammarBreakdown>;
+  const vocabularyRaw = (obj.vocabulary ?? {}) as Partial<VocabularyBreakdown>;
+  const fluencyRaw = (obj.fluency ?? {}) as Partial<FluencyBreakdown>;
+  const writingRaw = (obj.writing ?? {}) as Partial<WritingBreakdown>;
+
+  const grammarBase = normalizeSection(grammarRaw, g, 'Grammar');
+  const vocabularyBase = normalizeSection(vocabularyRaw, v, 'Vocabulary');
+  const fluencyBase = normalizeSection(fluencyRaw, f);
+  const writingBase = normalizeSection(writingRaw, w);
 
   return {
-    grammar: { ...grammar, topic: grammar.topic ?? 'Grammar' },
-    vocabulary: { ...vocabulary, topic: vocabulary.topic ?? 'Vocabulary' },
-    fluency: { score: fluency.score, details: fluency.details },
-    writing: { score: writing.score, details: writing.details },
+    grammar: {
+      ...grammarBase,
+      topic: grammarBase.topic ?? 'Grammar',
+      lessonDescription:
+        typeof grammarRaw.lessonDescription === 'string' ? grammarRaw.lessonDescription : undefined,
+      mistakes: normalizeMistakes(grammarRaw.mistakes),
+    },
+    vocabulary: {
+      ...vocabularyBase,
+      topic: vocabularyBase.topic ?? 'Vocabulary',
+      wordsCorrect: normalizeVocabWords(vocabularyRaw.wordsCorrect),
+      wordsToRevisit: normalizeVocabWords(vocabularyRaw.wordsToRevisit),
+    },
+    fluency: {
+      score: fluencyBase.score,
+      details: fluencyBase.details,
+      description: typeof fluencyRaw.description === 'string' ? fluencyRaw.description : undefined,
+      positivePatterns: toStringList(fluencyRaw.positivePatterns),
+      negativePatterns: toStringList(fluencyRaw.negativePatterns),
+      sentenceNotes: toStringList(fluencyRaw.sentenceNotes),
+      weeklyTips: toStringList(fluencyRaw.weeklyTips),
+    },
+    writing: {
+      score: writingBase.score,
+      details: writingBase.details,
+      originalText: typeof writingRaw.originalText === 'string' ? writingRaw.originalText : undefined,
+      correctedText:
+        typeof writingRaw.correctedText === 'string' ? writingRaw.correctedText : undefined,
+      corrections: normalizeMistakes(writingRaw.corrections),
+      accentIssues: toStringList(writingRaw.accentIssues),
+      structuralFeedback: toStringList(writingRaw.structuralFeedback),
+      writingPrompt: typeof writingRaw.writingPrompt === 'string' ? writingRaw.writingPrompt : undefined,
+    },
   };
+}
+
+/** Previous lesson entry before a given date (for fluency comparison). */
+export function getPreviousLessonEntry(
+  history: LessonHistoryEntry[],
+  beforeDate: string,
+): LessonHistoryEntry | null {
+  const prior = history.filter((e) => e.date < beforeDate);
+  if (!prior.length) return null;
+  return prior[prior.length - 1];
+}
+
+/** Unique grammar topics covered in lesson history. */
+export function getCoveredGrammarTopics(history: LessonHistoryEntry[]): string[] {
+  const seen = new Set<string>();
+  const topics: string[] = [];
+  for (const entry of history) {
+    const topic = entry.breakdown.grammar.topic?.trim();
+    if (!topic || seen.has(topic.toLowerCase())) continue;
+    seen.add(topic.toLowerCase());
+    topics.push(topic);
+  }
+  return topics;
+}
+
+/** Unique vocabulary themes covered in lesson history. */
+export function getCoveredVocabThemes(history: LessonHistoryEntry[]): string[] {
+  const seen = new Set<string>();
+  const themes: string[] = [];
+  for (const entry of history) {
+    const theme = entry.breakdown.vocabulary.topic?.trim();
+    if (!theme || seen.has(theme.toLowerCase())) continue;
+    seen.add(theme.toLowerCase());
+    themes.push(theme);
+  }
+  return themes;
 }
 
 function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
@@ -168,6 +337,46 @@ export async function appendLessonHistory(entry: LessonHistoryEntry): Promise<vo
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }
 
+function normalizeDrillHistory(raw: unknown): DrillHistoryEntry[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const obj = item as Partial<DrillHistoryEntry>;
+      const totalQuestions = Math.max(1, Math.trunc(Number(obj.totalQuestions) || 10));
+      const score = Math.max(0, Math.min(totalQuestions, Math.trunc(Number(obj.score) || 0)));
+      const percentage =
+        obj.percentage != null
+          ? toScore(obj.percentage)
+          : Math.round((score / totalQuestions) * 100);
+      return {
+        date: typeof obj.date === 'string' ? obj.date : '',
+        score,
+        totalQuestions,
+        percentage,
+        weakAreasDrilled: toStringList(obj.weakAreasDrilled),
+        gemsEarned: Math.max(0, Math.trunc(Number(obj.gemsEarned) || 0)),
+        type: 'practice' as const,
+      };
+    })
+    .filter((entry) => !!entry.date);
+}
+
+export async function getDrillHistory(): Promise<DrillHistoryEntry[]> {
+  const raw = await AsyncStorage.getItem(DRILL_STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    return normalizeDrillHistory(JSON.parse(raw));
+  } catch {
+    return [];
+  }
+}
+
+export async function appendDrillHistory(entry: DrillHistoryEntry): Promise<void> {
+  const current = await getDrillHistory();
+  const next = [...current, entry].slice(-MAX_DRILL_SESSIONS);
+  await AsyncStorage.setItem(DRILL_STORAGE_KEY, JSON.stringify(next));
+}
+
 function parseLocalDate(dateStr: string): Date {
   const [y, m, d] = dateStr.split('-').map((p) => Number(p));
   return new Date(y, (m ?? 1) - 1, d ?? 1);
@@ -178,6 +387,61 @@ function isWithinLastCalendarDays(dateStr: string, today: string, dayCount: numb
   const end = parseLocalDate(today);
   const diff = Math.floor((end.getTime() - entry.getTime()) / (24 * 60 * 60 * 1000));
   return diff >= 0 && diff < dayCount;
+}
+
+function bestLessonScoreForDay(lessons: LessonHistoryEntry[], date: string): number | null {
+  const dayLessons = lessons.filter((e) => e.date === date);
+  if (!dayLessons.length) return null;
+  return Math.max(...dayLessons.map((e) => overallLessonScore(e)));
+}
+
+function bestDrillScoreForDay(drills: DrillHistoryEntry[], date: string): number | null {
+  const dayDrills = drills.filter((e) => e.date === date);
+  if (!dayDrills.length) return null;
+  return Math.max(...dayDrills.map((e) => e.percentage));
+}
+
+function getBestLessonEntryForDay(
+  lessons: LessonHistoryEntry[],
+  date: string,
+): LessonHistoryEntry | null {
+  const dayLessons = lessons.filter((e) => e.date === date);
+  if (!dayLessons.length) return null;
+  return dayLessons.reduce((best, e) =>
+    overallLessonScore(e) > overallLessonScore(best) ? e : best,
+  );
+}
+
+function getBestDrillEntryForDay(
+  drills: DrillHistoryEntry[],
+  date: string,
+): DrillHistoryEntry | null {
+  const dayDrills = drills.filter((e) => e.date === date);
+  if (!dayDrills.length) return null;
+  return dayDrills.reduce((best, e) => (e.percentage > best.percentage ? e : best));
+}
+
+/** Weighted day score: 70% lesson + 30% drill when both exist. */
+export function combinedDayScore(
+  lessonScore: number | null,
+  drillScore: number | null,
+): number | null {
+  if (lessonScore != null && drillScore != null) {
+    return Math.round(lessonScore * LESSON_SCORE_WEIGHT + drillScore * DRILL_SCORE_WEIGHT);
+  }
+  if (lessonScore != null) return lessonScore;
+  if (drillScore != null) return drillScore;
+  return null;
+}
+
+function dayActivityType(
+  lessonScore: number | null,
+  drillScore: number | null,
+): WeekChartDay['activityType'] {
+  if (lessonScore != null && drillScore != null) return 'both';
+  if (lessonScore != null) return 'lesson';
+  if (drillScore != null) return 'drill';
+  return 'none';
 }
 
 /** Most recent lesson completed today, or null if none today. */
@@ -198,7 +462,92 @@ export function getTodaysLessonScore(
   return entry ? overallLessonScore(entry) : null;
 }
 
-/** Highest-scoring lesson in the last 7 calendar days. */
+export function getTodaysDrillEntry(
+  drills: DrillHistoryEntry[],
+  today: string = formatLocalDate(),
+): DrillHistoryEntry | null {
+  const todays = drills.filter((e) => e.date === today);
+  if (!todays.length) return null;
+  return todays[todays.length - 1];
+}
+
+/** Today's displayed score and label, factoring in lessons and practice drills. */
+export function getTodayScoreInfo(
+  history: LessonHistoryEntry[],
+  drills: DrillHistoryEntry[],
+  today: string = formatLocalDate(),
+): TodayScoreInfo {
+  const lessonEntry = getTodaysLessonEntry(history, today);
+  const lessonScore = lessonEntry ? overallLessonScore(lessonEntry) : null;
+  const drillEntry = getTodaysDrillEntry(drills, today);
+  const drillScore = drillEntry ? drillEntry.percentage : null;
+
+  if (lessonScore != null && drillScore != null) {
+    const score = Math.max(lessonScore, drillScore);
+    return {
+      score,
+      label: 'Best Today',
+      lessonEntry,
+      drillEntry,
+    };
+  }
+  if (drillScore != null) {
+    return {
+      score: drillScore,
+      label: 'Practice Score',
+      lessonEntry: null,
+      drillEntry,
+    };
+  }
+  if (lessonScore != null) {
+    return {
+      score: lessonScore,
+      label: "Today's score",
+      lessonEntry,
+      drillEntry: null,
+    };
+  }
+  return {
+    score: null,
+    label: "Today's score",
+    lessonEntry: null,
+    drillEntry: null,
+  };
+}
+
+export function getTopScoreThisWeek(
+  history: LessonHistoryEntry[],
+  drills: DrillHistoryEntry[] = [],
+  today: string = formatLocalDate(),
+): number | null {
+  const best = getBestDayThisWeek(history, drills, today);
+  return best ? best.combinedScore : null;
+}
+
+/** Highest combined day score in the last 7 calendar days. */
+export function getBestDayThisWeek(
+  history: LessonHistoryEntry[],
+  drills: DrillHistoryEntry[] = [],
+  today: string = formatLocalDate(),
+): BestWeekDayInfo | null {
+  const chart = getWeekScoreChart(history, drills, today);
+  const scored = chart.filter((d) => d.score != null);
+  if (!scored.length) return null;
+
+  const bestDay = scored.reduce((best, d) => ((d.score ?? 0) > (best.score ?? 0) ? d : best));
+  const lessonScore = bestLessonScoreForDay(history, bestDay.date);
+  const drillScore = bestDrillScoreForDay(drills, bestDay.date);
+  const activityType = dayActivityType(lessonScore, drillScore);
+
+  return {
+    combinedScore: bestDay.score ?? 0,
+    lessonEntry: getBestLessonEntryForDay(history, bestDay.date),
+    drillEntry: getBestDrillEntryForDay(drills, bestDay.date),
+    activityType: activityType === 'none' ? 'lesson' : activityType,
+  };
+}
+
+/** @deprecated Use getBestDayThisWeek for combined lesson + drill analytics. */
 export function getBestLessonThisWeek(
   history: LessonHistoryEntry[],
   today: string = formatLocalDate(),
@@ -210,17 +559,10 @@ export function getBestLessonThisWeek(
   );
 }
 
-export function getTopScoreThisWeek(
-  history: LessonHistoryEntry[],
-  today: string = formatLocalDate(),
-): number | null {
-  const best = getBestLessonThisWeek(history, today);
-  return best ? overallLessonScore(best) : null;
-}
-
-/** Last 7 calendar days ending today — best score per day for the mini chart. */
+/** Last 7 calendar days ending today — combined weighted score per day for the mini chart. */
 export function getWeekScoreChart(
   history: LessonHistoryEntry[],
+  drills: DrillHistoryEntry[] = [],
   today: string = formatLocalDate(),
 ): WeekChartDay[] {
   const end = parseLocalDate(today);
@@ -230,14 +572,13 @@ export function getWeekScoreChart(
     const d = new Date(end);
     d.setDate(end.getDate() - i);
     const date = formatLocalDate(d);
-    const lessons = history.filter((e) => e.date === date);
-    const score = lessons.length
-      ? Math.max(...lessons.map((e) => overallLessonScore(e)))
-      : null;
+    const lessonScore = bestLessonScoreForDay(history, date);
+    const drillScore = bestDrillScoreForDay(drills, date);
     days.push({
       date,
       dayLabel: DAY_LABELS[d.getDay()],
-      score,
+      score: combinedDayScore(lessonScore, drillScore),
+      activityType: dayActivityType(lessonScore, drillScore),
     });
   }
 

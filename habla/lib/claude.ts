@@ -141,10 +141,33 @@ function extractFirstJsonObject(text: string): unknown {
 }
 
 export type LessonBreakdownJson = {
-  grammar: { score: number; topic: string; details: string[] };
-  vocabulary: { score: number; topic: string; details: string[] };
-  fluency: { score: number; details: string[] };
-  writing: { score: number; details: string[] };
+  grammar: {
+    score: number;
+    topic: string;
+    details: string[];
+    lessonDescription: string;
+    mistakes: { mistake: string; correction: string; explanation: string }[];
+  };
+  vocabulary: {
+    score: number;
+    topic: string;
+    details: string[];
+    wordsCorrect: { spanish: string; english: string }[];
+    wordsToRevisit: { spanish: string; english: string }[];
+  };
+  fluency: {
+    score: number;
+    details: string[];
+    description: string;
+    positivePatterns: string[];
+    negativePatterns: string[];
+    sentenceNotes: string[];
+    weeklyTips: string[];
+  };
+  writing: {
+    score: number;
+    details: string[];
+  };
 };
 
 export type LessonAnalysisJson = {
@@ -168,6 +191,8 @@ export type WritingEvaluationJson = {
   fluencyScore: number;
   feedback: string;
   corrections: { mistake: string; correction: string; explanation: string }[];
+  accentIssues: string[];
+  structuralFeedback: string[];
 };
 
 export type DrillExerciseJson = {
@@ -255,10 +280,33 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
 - overallScore: integer percent (0-100) average across grammar, vocabulary, fluency, and writing in breakdown
 - encouragingMessage: one short motivational sentence in Spanish then English (same line, separated by " / ")
 - breakdown: object with:
-  - grammar: { score: 0-100 integer, topic: string (e.g. "Past tense (preterite)"), details: array of exactly 2 short notes }
-  - vocabulary: { score: 0-100 integer, topic: string (e.g. "Food and cooking"), details: array of exactly 2 short notes }
-  - fluency: { score: 0-100 integer, details: array of exactly 2 short notes }
-  - writing: { score: 0-100 integer, details: array of exactly 2 short notes }
+  - grammar: {
+      score: 0-100 integer,
+      topic: string (e.g. "Past tense (preterite)"),
+      details: array of exactly 2 short notes (one positive, one to improve),
+      lessonDescription: 2-3 sentences describing what grammar was covered and practised today,
+      mistakes: array of up to 4 specific mistakes from the conversation, each { mistake, correction, explanation }
+    }
+  - vocabulary: {
+      score: 0-100 integer,
+      topic: string (e.g. "Food and cooking"),
+      details: array of exactly 2 short notes,
+      wordsCorrect: array of up to 6 words used well, each { spanish, english },
+      wordsToRevisit: array of up to 4 words the learner was uncertain about or used wrong, each { spanish, english }
+    }
+  - fluency: {
+      score: 0-100 integer,
+      details: array of exactly 2 short notes,
+      description: one sentence explaining what the fluency score reflects,
+      positivePatterns: array of 2 things the learner did well with flow/structure,
+      negativePatterns: array of 2 patterns that held fluency back,
+      sentenceNotes: array of 2 notes on sentence construction,
+      weeklyTips: array of 2 practical tips from Javi for improving fluency this week
+    }
+  - writing: {
+      score: 0-100 integer,
+      details: array of exactly 2 short notes about writing (use writing scores if provided)
+    }
 
 Lesson type: ${lessonType}
 Lesson focus / topic context: ${lessonFocusLabel ?? 'General B1 practice'}
@@ -272,14 +320,15 @@ Rules:
 - breakdown.grammar.topic and breakdown.vocabulary.topic must reflect what was practised in this lesson.
 - overallScore must be the rounded average of the four breakdown scores.
 - weakAreas and focusAreas must align with breakdown details.
-- details arrays: one positive note and one area to improve per section.
+- Populate ALL nested breakdown fields with real observations from the conversation — never leave arrays empty; use best-effort inference if needed.
+- wordsCorrect / wordsToRevisit must use real Spanish words from the conversation where possible.
 
 Conversation turns (role + content):
 ${JSON.stringify(conversation, null, 2)}`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 1200,
+    max_tokens: 2200,
     system,
     messages: [{ role: 'user', content: user }],
   });
@@ -358,6 +407,8 @@ Return JSON exactly with these keys:
 - feedback: 2-3 sentences of encouraging, specific feedback from Javi
 - corrections: array of specific mistakes with why it was wrong, with objects:
   { "mistake": "...", "correction": "...", "explanation": "..." }
+- accentIssues: array of accent/tilde mistakes flagged separately (e.g. "café written as cafe")
+- structuralFeedback: array of 2-3 notes on paragraph structure, connectors, or sentence variety
 
 Lesson type: ${lessonType}
 Task prompt: ${taskPrompt}
@@ -369,7 +420,7 @@ ${userWriting}`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 900,
+    max_tokens: 1100,
     system,
     messages: [{ role: 'user', content: user }],
   });

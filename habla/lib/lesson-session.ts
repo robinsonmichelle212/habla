@@ -8,10 +8,39 @@ export type LessonConversationTurn = {
 };
 
 export type LessonBreakdown = {
-  grammar: { score: number; topic: string; details: string[] };
-  vocabulary: { score: number; topic: string; details: string[] };
-  fluency: { score: number; details: string[] };
-  writing: { score: number; details: string[] };
+  grammar: {
+    score: number;
+    topic: string;
+    details: string[];
+    lessonDescription?: string;
+    mistakes?: { mistake: string; correction: string; explanation: string }[];
+  };
+  vocabulary: {
+    score: number;
+    topic: string;
+    details: string[];
+    wordsCorrect?: { spanish: string; english: string }[];
+    wordsToRevisit?: { spanish: string; english: string }[];
+  };
+  fluency: {
+    score: number;
+    details: string[];
+    description?: string;
+    positivePatterns?: string[];
+    negativePatterns?: string[];
+    sentenceNotes?: string[];
+    weeklyTips?: string[];
+  };
+  writing: {
+    score: number;
+    details: string[];
+    originalText?: string;
+    correctedText?: string;
+    corrections?: WritingCorrection[];
+    accentIssues?: string[];
+    structuralFeedback?: string[];
+    writingPrompt?: string;
+  };
 };
 
 export type LessonAnalysis = {
@@ -48,6 +77,8 @@ export type WritingEvaluation = {
   fluencyScore: number; // 0-100
   feedback: string;
   corrections: WritingCorrection[];
+  accentIssues?: string[];
+  structuralFeedback?: string[];
 };
 
 export type LessonSessionState = {

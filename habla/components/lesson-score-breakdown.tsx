@@ -1,7 +1,15 @@
-import type { LessonHistoryEntry } from '@/lib/practice-storage';
-import { scoreBarColor } from '@/lib/practice-storage';
+import type { DrillHistoryEntry, LessonHistoryEntry, WeekChartDay } from '@/lib/practice-storage';
+import {
+  getCoveredGrammarTopics,
+  getCoveredVocabThemes,
+  getLessonHistory,
+  getPreviousLessonEntry,
+  scoreBarColor,
+} from '@/lib/practice-storage';
+import { getCurrentGrammarTopic, type GrammarTopic } from '@/lib/lesson-focus';
+import { ScoreDetailModal, type ScoreDetailTab } from '@/components/score-detail-modals';
 import { useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Modal,
   Platform,
@@ -26,37 +34,75 @@ const palette = {
   grey: '#3D4654',
 };
 
-export type WeekChartDay = {
-  date: string;
-  dayLabel: string;
-  score: number | null;
-};
+export type { WeekChartDay };
 
 type Props = {
   visible: boolean;
   title: string;
   entry: LessonHistoryEntry | null;
+  drillEntry?: DrillHistoryEntry | null;
+  displayScore?: number | null;
   onClose: () => void;
   weekChart?: WeekChartDay[];
   showPracticeButton?: boolean;
+  enableScoreDetails?: boolean;
 };
 
 export function LessonScoreBreakdownModal({
   visible,
   title,
   entry,
+  drillEntry = null,
+  displayScore = null,
   onClose,
   weekChart,
   showPracticeButton = false,
+  enableScoreDetails = false,
 }: Props) {
   const router = useRouter();
-  const overall = entry?.overallScore ?? null;
+  const [detailTab, setDetailTab] = useState<ScoreDetailTab | null>(null);
+  const [currentGrammarTopic, setCurrentGrammarTopic] = useState<GrammarTopic | null>(null);
+  const [coveredGrammarTopics, setCoveredGrammarTopics] = useState<string[]>([]);
+  const [coveredVocabThemes, setCoveredVocabThemes] = useState<string[]>([]);
+  const [previousFluencyScore, setPreviousFluencyScore] = useState<number | null>(null);
+  const overall =
+    displayScore ??
+    entry?.overallScore ??
+    drillEntry?.percentage ??
+    null;
   const breakdown = entry?.breakdown;
+  const isPracticeOnly = !entry && !!drillEntry;
 
   useEffect(() => {
     if (!visible) return;
     console.log(`[Habla] Breakdown modal opened — "${title}":`, JSON.stringify(entry, null, 2));
   }, [visible, title, entry]);
+
+  useEffect(() => {
+    if (!visible || !enableScoreDetails || !entry) return;
+    let cancelled = false;
+
+    void (async () => {
+      const [grammarTopic, history] = await Promise.all([
+        getCurrentGrammarTopic(),
+        getLessonHistory(),
+      ]);
+      if (cancelled) return;
+      setCurrentGrammarTopic(grammarTopic);
+      setCoveredGrammarTopics(getCoveredGrammarTopics(history));
+      setCoveredVocabThemes(getCoveredVocabThemes(history));
+      const prev = getPreviousLessonEntry(history, entry.date);
+      setPreviousFluencyScore(prev ? prev.breakdown.fluency.score : null);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visible, enableScoreDetails, entry]);
+
+  useEffect(() => {
+    if (!visible) setDetailTab(null);
+  }, [visible]);
 
   const goPractice = () => {
     onClose();
@@ -64,8 +110,9 @@ export function LessonScoreBreakdownModal({
   };
 
   return (
+    <>
     <Modal
-      visible={visible}
+      visible={visible && detailTab == null}
       animationType="slide"
       presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
       transparent={false}
@@ -79,55 +126,104 @@ export function LessonScoreBreakdownModal({
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {!entry ? (
+          {!entry && !drillEntry ? (
             <View style={styles.emptyCard}>
               <Text style={styles.emptyText}>No lesson data yet. Complete a lesson to see your breakdown.</Text>
             </View>
           ) : (
             <>
               <Text style={styles.overallScore}>{overall}%</Text>
-              {entry.lessonType ? (
+              {entry?.lessonType ? (
                 <Text style={styles.lessonType}>{entry.lessonType} lesson</Text>
+              ) : isPracticeOnly ? (
+                <Text style={styles.lessonType}>
+                  Practice drill · {drillEntry?.score}/{drillEntry?.totalQuestions}
+                </Text>
               ) : null}
 
               {breakdown ? (
                 <View style={styles.barsRow}>
-                  <BreakdownBar label="Grammar" section={breakdown.grammar} showTopic />
-                  <BreakdownBar label="Vocabulary" section={breakdown.vocabulary} showTopic />
-                  <BreakdownBar label="Fluency" section={breakdown.fluency} />
-                  <BreakdownBar label="Writing" section={breakdown.writing} />
+                  <BreakdownBar
+                    label="Grammar"
+                    section={breakdown.grammar}
+                    showTopic
+                    tappable={enableScoreDetails && !!entry}
+                    onPress={() => setDetailTab('grammar')}
+                  />
+                  <BreakdownBar
+                    label="Vocabulary"
+                    section={breakdown.vocabulary}
+                    showTopic
+                    tappable={enableScoreDetails && !!entry}
+                    onPress={() => setDetailTab('vocabulary')}
+                  />
+                  <BreakdownBar
+                    label="Fluency"
+                    section={breakdown.fluency}
+                    tappable={enableScoreDetails && !!entry}
+                    onPress={() => setDetailTab('fluency')}
+                  />
+                  <BreakdownBar
+                    label="Writing"
+                    section={breakdown.writing}
+                    tappable={enableScoreDetails && !!entry}
+                    onPress={() => setDetailTab('writing')}
+                  />
                 </View>
               ) : null}
 
               {weekChart?.length ? (
                 <View style={styles.chartCard}>
                   <Text style={styles.sectionTitle}>This week</Text>
+                  <View style={styles.chartLegend}>
+                    <Text style={styles.legendItem}>■ Lesson</Text>
+                    <Text style={styles.legendItem}>□ Practice only</Text>
+                  </View>
                   <View style={styles.chartRow}>
-                    {weekChart.map((day) => (
-                      <View key={day.date} style={styles.chartCol}>
-                        <View style={styles.chartBarTrack}>
-                          <View
-                            style={[
-                              styles.chartBarFill,
-                              {
-                                height: day.score != null ? `${Math.max(8, day.score)}%` : '8%',
-                                backgroundColor:
-                                  day.score != null ? scoreBarColor(day.score) : palette.grey,
-                              },
-                            ]}
-                          />
+                    {weekChart.map((day) => {
+                      const hasScore = day.score != null;
+                      const barColor = hasScore ? scoreBarColor(day.score!) : palette.grey;
+                      const isDrillOnly = day.activityType === 'drill';
+                      return (
+                        <View key={day.date} style={styles.chartCol}>
+                          <View style={styles.chartBarTrack}>
+                            <View
+                              style={[
+                                styles.chartBarFill,
+                                {
+                                  height: hasScore ? `${Math.max(8, day.score!)}%` : '8%',
+                                  backgroundColor: barColor,
+                                  opacity: isDrillOnly ? 0.45 : 1,
+                                },
+                              ]}
+                            />
+                          </View>
+                          <Text style={styles.chartDay}>{day.dayLabel}</Text>
+                          <Text style={styles.chartScore}>
+                            {hasScore ? `${day.score}%` : '—'}
+                          </Text>
                         </View>
-                        <Text style={styles.chartDay}>{day.dayLabel}</Text>
-                        <Text style={styles.chartScore}>
-                          {day.score != null ? `${day.score}%` : '—'}
-                        </Text>
-                      </View>
-                    ))}
+                      );
+                    })}
                   </View>
                 </View>
               ) : null}
 
-              {entry.weakAreas.length ? (
+              {drillEntry?.weakAreasDrilled.length ? (
+                <View style={styles.listCard}>
+                  <Text style={styles.sectionTitle}>Areas drilled</Text>
+                  {drillEntry.weakAreasDrilled.map((w, i) => (
+                    <Text key={`d-${i}`} style={styles.listItem}>
+                      • {w}
+                    </Text>
+                  ))}
+                  {drillEntry.gemsEarned > 0 ? (
+                    <Text style={styles.gemNote}>💎 +{drillEntry.gemsEarned} gems earned</Text>
+                  ) : null}
+                </View>
+              ) : null}
+
+              {entry?.weakAreas.length ? (
                 <View style={styles.listCard}>
                   <Text style={styles.sectionTitle}>Weak areas</Text>
                   {entry.weakAreas.map((w, i) => (
@@ -138,7 +234,7 @@ export function LessonScoreBreakdownModal({
                 </View>
               ) : null}
 
-              {entry.focusAreas.length ? (
+              {entry?.focusAreas.length ? (
                 <View style={styles.listCard}>
                   <Text style={styles.sectionTitle}>Focus areas</Text>
                   {entry.focusAreas.map((f, i) => (
@@ -161,6 +257,20 @@ export function LessonScoreBreakdownModal({
         </ScrollView>
       </SafeAreaView>
     </Modal>
+
+      {entry && enableScoreDetails ? (
+        <ScoreDetailModal
+          visible={detailTab != null}
+          tab={detailTab}
+          entry={entry}
+          currentGrammarTopic={currentGrammarTopic}
+          coveredGrammarTopics={coveredGrammarTopics}
+          coveredVocabThemes={coveredVocabThemes}
+          previousFluencyScore={previousFluencyScore}
+          onClose={() => setDetailTab(null)}
+        />
+      ) : null}
+    </>
   );
 }
 
@@ -168,14 +278,18 @@ function BreakdownBar({
   label,
   section,
   showTopic = false,
+  tappable = false,
+  onPress,
 }: {
   label: string;
   section: { score: number; topic?: string; details: string[] };
   showTopic?: boolean;
+  tappable?: boolean;
+  onPress?: () => void;
 }) {
   const color = scoreBarColor(section.score);
-  return (
-    <View style={styles.barCol}>
+  const inner = (
+    <>
       <Text style={styles.barLabel}>{label}</Text>
       <Text style={[styles.barPct, { color }]}>{section.score}%</Text>
       <View style={styles.barTrack}>
@@ -191,7 +305,22 @@ function BreakdownBar({
           {d}
         </Text>
       ))}
-    </View>
+      {tappable ? <Text style={styles.tapHint}>Tap for details</Text> : null}
+    </>
+  );
+
+  if (!tappable || !onPress) {
+    return <View style={styles.barCol}>{inner}</View>;
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.barCol, styles.barColTappable, pressed && styles.barColPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`${label} score details`}>
+      {inner}
+    </Pressable>
   );
 }
 
@@ -247,6 +376,13 @@ const styles = StyleSheet.create({
     borderColor: palette.surfaceBorder,
     padding: 10,
   },
+  barColTappable: {
+    borderColor: 'rgba(255, 122, 89, 0.35)',
+  },
+  barColPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
+  },
   barLabel: {
     fontSize: 10,
     fontWeight: '800',
@@ -266,6 +402,14 @@ const styles = StyleSheet.create({
   barFill: { height: 6, borderRadius: 999 },
   barTopic: { fontSize: 10, fontWeight: '800', color: palette.text, marginBottom: 4, lineHeight: 13 },
   barDetail: { fontSize: 9, fontWeight: '600', color: palette.muted, lineHeight: 12, marginBottom: 2 },
+  tapHint: {
+    fontSize: 8,
+    fontWeight: '800',
+    color: palette.accent,
+    marginTop: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   chartCard: {
     backgroundColor: palette.surface,
     borderRadius: 16,
@@ -281,6 +425,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
+  },
+  chartLegend: {
+    flexDirection: 'row',
+    gap: 16,
+    marginBottom: 10,
+  },
+  legendItem: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.muted,
+  },
+  gemNote: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#A78BFA',
+    marginTop: 8,
   },
   chartRow: {
     flexDirection: 'row',

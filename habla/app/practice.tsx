@@ -5,11 +5,11 @@ import {
 } from '@/lib/claude';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { addGems, gemsForPracticeDrill } from '@/lib/gems';
-import { buildPriorityWeakAreas, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
+import { buildPriorityWeakAreas, appendDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
 import { syncStreakReminder } from '@/lib/streak-notifications';
-import { recordQuickFirePractice } from '@/lib/streak';
-import { useRouter } from 'expo-router';
+import { formatLocalDate, recordQuickFirePractice } from '@/lib/streak';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -58,9 +58,11 @@ type FlashState = 'correct' | 'incorrect' | null;
 
 export default function PracticeScreen() {
   const router = useRouter();
+  const { drill, topic } = useLocalSearchParams<{ drill?: string; topic?: string }>();
   const insets = useSafeAreaInsets();
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didAwardRef = useRef(false);
+  const didAutoStartRef = useRef(false);
 
   const [priorityWeakAreas, setPriorityWeakAreas] = useState<PriorityWeakArea[]>([]);
   const [recentLessonCount, setRecentLessonCount] = useState(0);
@@ -112,7 +114,14 @@ export default function PracticeScreen() {
       .then((res) => {
         if (cancelled) return;
         const recent = res.slice(-3);
-        const ranked = buildPriorityWeakAreas(recent).slice(0, 3);
+        let ranked = buildPriorityWeakAreas(recent).slice(0, 3);
+        const focusTopic = typeof topic === 'string' ? topic.trim() : '';
+        if (focusTopic) {
+          ranked = [
+            { label: focusTopic, frequency: 99 },
+            ...ranked.filter((r) => r.label.toLowerCase() !== focusTopic.toLowerCase()),
+          ].slice(0, 3);
+        }
         setRecentLessonCount(recent.length);
         setPriorityWeakAreas(ranked);
         setWeakAreasError(ranked.length ? null : 'No weak areas saved yet.');
@@ -130,7 +139,7 @@ export default function PracticeScreen() {
       cancelled = true;
       clearAdvanceTimer();
     };
-  }, []);
+  }, [topic]);
 
   const resetDrillState = () => {
     clearAdvanceTimer();
@@ -175,6 +184,14 @@ export default function PracticeScreen() {
       setStage('choose');
     }
   }, [loadingWeakAreas, priorityWeakAreas.length, prioritizedForPrompt]);
+
+  useEffect(() => {
+    if (loadingWeakAreas || !priorityWeakAreas.length) return;
+    if (didAutoStartRef.current) return;
+    if (drill !== 'grammar' && drill !== 'vocabulary') return;
+    didAutoStartRef.current = true;
+    void startQuickFire();
+  }, [drill, loadingWeakAreas, priorityWeakAreas.length, startQuickFire]);
 
   const finishDrill = useCallback((finalResults: AnswerRecord[]) => {
     const finalScore = finalResults.filter((r) => r.correct).length;
@@ -246,6 +263,15 @@ export default function PracticeScreen() {
     void (async () => {
       try {
         await addGems(gems);
+        await appendDrillHistory({
+          date: formatLocalDate(),
+          score: finalScore,
+          totalQuestions: TOTAL_QUESTIONS,
+          percentage: Math.round((finalScore / TOTAL_QUESTIONS) * 100),
+          weakAreasDrilled: priorityWeakAreas.map((w) => w.label),
+          gemsEarned: gems,
+          type: 'practice',
+        });
         const res = await recordQuickFirePractice(finalScore, gems);
         setStreakMaintained(res.streakMaintained);
         if (res.streakMaintained) {
@@ -257,7 +283,7 @@ export default function PracticeScreen() {
         setSavingRewards(false);
       }
     })();
-  }, [stage, results]);
+  }, [stage, results, priorityWeakAreas]);
 
   const progress = stage === 'drill' ? (questionIdx + (locked ? 1 : 0)) / TOTAL_QUESTIONS : 0;
 

@@ -1,6 +1,7 @@
 import { checkDrillAnswer, generateDrills } from '@/lib/claude';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { addGems, calculateLessonGems, gemsForStreakMilestone } from '@/lib/gems';
+import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
@@ -94,7 +95,7 @@ export default function SummaryScreen() {
         }
 
         if (analysis && lessonType) {
-          const breakdown = analysis.breakdown ?? {
+          const baseBreakdown = analysis.breakdown ?? {
             grammar: {
               score: Math.round(writing?.grammarScore ?? 0),
               topic: 'Grammar',
@@ -119,6 +120,11 @@ export default function SummaryScreen() {
               details: [],
             },
           };
+          const breakdown = mergeWritingIntoBreakdown(
+            baseBreakdown,
+            writing ?? undefined,
+            session.writingTask?.prompt,
+          );
 
           const lessonHistoryEntry = {
             date: today,
