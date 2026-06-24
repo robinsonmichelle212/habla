@@ -7,12 +7,21 @@ export type LessonConversationTurn = {
   translation?: string;
 };
 
+export type LessonBreakdown = {
+  grammar: { score: number; topic: string; details: string[] };
+  vocabulary: { score: number; topic: string; details: string[] };
+  fluency: { score: number; details: string[] };
+  writing: { score: number; details: string[] };
+};
+
 export type LessonAnalysis = {
   strongAreas: string[];
   weakAreas: string[];
   focusAreas: string[];
   correctnessScore: number; // 0-100
+  overallScore: number;
   encouragingMessage: string; // Spanish then English
+  breakdown: LessonBreakdown;
 };
 
 export type DrillExercise = {

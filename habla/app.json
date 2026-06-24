@@ -28,7 +28,14 @@
     },
     "plugins": [
       "expo-router",
-      "expo-notifications",
+      "expo-font",
+      "expo-web-browser",
+      [
+        "expo-notifications",
+        {
+          "color": "#FF7A59"
+        }
+      ],
       [
         "expo-splash-screen",
         {

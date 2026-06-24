@@ -140,12 +140,21 @@ function extractFirstJsonObject(text: string): unknown {
   throw new Error('Claude returned incomplete JSON.');
 }
 
+export type LessonBreakdownJson = {
+  grammar: { score: number; topic: string; details: string[] };
+  vocabulary: { score: number; topic: string; details: string[] };
+  fluency: { score: number; details: string[] };
+  writing: { score: number; details: string[] };
+};
+
 export type LessonAnalysisJson = {
   strongAreas: string[];
   weakAreas: string[];
   focusAreas: string[];
   correctnessScore: number;
+  overallScore: number;
   encouragingMessage: string;
+  breakdown: LessonBreakdownJson;
 };
 
 export type WritingTaskJson = {
@@ -230,6 +239,7 @@ export async function analyzeConversation(
   lessonType: LessonType,
   conversation: JaviMessage[],
   writingScores?: { grammarScore: number; vocabularyScore: number; fluencyScore: number },
+  lessonFocusLabel?: string,
 ): Promise<LessonAnalysisJson> {
   const anthropic = getClient();
   const model = getModel();
@@ -241,26 +251,35 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
 - strongAreas: array of 3 things the user did well
 - weakAreas: array of 3 things the user struggled with
 - focusAreas: array of 2 specific grammar or vocabulary topics to practise next
-- correctnessScore: integer percent (0-100) for overall Spanish correctness (consider grammar + vocabulary, and incorporate the writing scores if provided)
+- correctnessScore: integer percent (0-100) for overall Spanish correctness
+- overallScore: integer percent (0-100) average across grammar, vocabulary, fluency, and writing in breakdown
 - encouragingMessage: one short motivational sentence in Spanish then English (same line, separated by " / ")
+- breakdown: object with:
+  - grammar: { score: 0-100 integer, topic: string (e.g. "Past tense (preterite)"), details: array of exactly 2 short notes }
+  - vocabulary: { score: 0-100 integer, topic: string (e.g. "Food and cooking"), details: array of exactly 2 short notes }
+  - fluency: { score: 0-100 integer, details: array of exactly 2 short notes }
+  - writing: { score: 0-100 integer, details: array of exactly 2 short notes }
 
 Lesson type: ${lessonType}
+Lesson focus / topic context: ${lessonFocusLabel ?? 'General B1 practice'}
 
 Writing scores (optional, may be null):
 ${writingScores ? JSON.stringify(writingScores) : 'null'}
 
-If writing scores are provided, you MUST use them in the analysis:
-- Use writing grammar/vocabulary/fluency to influence strongAreas, weakAreas, and focusAreas.
-- Blend conversation evidence + writing evidence when selecting those areas.
-- correctnessScore must reflect both conversation performance and writing scores (not conversation alone).
-- A high writing score should raise correctnessScore; a low writing score should lower it.
+Rules:
+- Use writing scores to set breakdown.grammar.score, breakdown.vocabulary.score, breakdown.fluency.score where appropriate.
+- breakdown.writing.score should reflect writing quality (use writing scores as a guide).
+- breakdown.grammar.topic and breakdown.vocabulary.topic must reflect what was practised in this lesson.
+- overallScore must be the rounded average of the four breakdown scores.
+- weakAreas and focusAreas must align with breakdown details.
+- details arrays: one positive note and one area to improve per section.
 
 Conversation turns (role + content):
 ${JSON.stringify(conversation, null, 2)}`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 700,
+    max_tokens: 1200,
     system,
     messages: [{ role: 'user', content: user }],
   });
@@ -424,6 +443,98 @@ Return JSON only.`;
   const text = extractText(response);
   const parsed = extractFirstJsonObject(text) as DrillCheckJson;
   return parsed;
+}
+
+export type QuickFireQuestionType =
+  | 'fill_blank'
+  | 'translate_word'
+  | 'correct_mistake'
+  | 'choose_word'
+  | 'quick_translate';
+
+export type QuickFireQuestion = {
+  id: string;
+  type: QuickFireQuestionType;
+  prompt: string;
+  expectedAnswer: string;
+  acceptableAnswers?: string[];
+};
+
+const QUICK_FIRE_TYPES: QuickFireQuestionType[] = [
+  'fill_blank',
+  'translate_word',
+  'correct_mistake',
+  'choose_word',
+  'quick_translate',
+];
+
+export async function generateQuickFireQuestions(
+  prioritizedWeakAreas: PrioritizedWeakAreaInput[],
+): Promise<QuickFireQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a Spanish tutor creating quick-fire B1 drill questions.
+Return ONLY valid JSON. No markdown. No extra keys.`;
+
+  const user = `Generate exactly 10 quick-fire Spanish practice questions for a B1 learner.
+
+Target these prioritised weak areas (focus most on highest priority): ${JSON.stringify(prioritizedWeakAreas)}
+
+Use exactly 2 questions of each type (10 total):
+- fill_blank: e.g. "Yo ___ (ir) al mercado ayer" → answer: "fui"
+- translate_word: e.g. "How do you say 'yesterday' in Spanish?" → answer: "ayer"
+- correct_mistake: e.g. "Yo soy hambre" → answer: "Yo tengo hambre"
+- choose_word: e.g. "Ser or Estar? Yo ___ cansado" → answer: "estoy"
+- quick_translate: e.g. "How do you say this sentence in Spanish: I went to the shop"
+
+Rules:
+- Short prompts only. Answers must be brief (1–6 words usually).
+- Tie questions to the weak areas where possible.
+- expectedAnswer is the primary correct answer.
+- acceptableAnswers: optional array of other valid answers (accents, synonyms).
+- Rotate types across the 10 questions.
+
+Return JSON exactly:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "fill_blank",
+      "prompt": "...",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."]
+    }
+  ]
+}
+
+Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1400,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as { questions: QuickFireQuestion[] };
+  if (!Array.isArray(parsed.questions)) return [];
+
+  return parsed.questions
+    .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
+    .slice(0, 10)
+    .map((q, i) => ({
+      id: String(q.id ?? i + 1),
+      type: QUICK_FIRE_TYPES.includes(q.type as QuickFireQuestionType)
+        ? (q.type as QuickFireQuestionType)
+        : QUICK_FIRE_TYPES[i % QUICK_FIRE_TYPES.length],
+      prompt: q.prompt.trim(),
+      expectedAnswer: q.expectedAnswer.trim(),
+      acceptableAnswers: Array.isArray(q.acceptableAnswers)
+        ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+        : undefined,
+    }));
 }
 
 export async function generatePracticeExercises(

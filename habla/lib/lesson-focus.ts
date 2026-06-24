@@ -206,6 +206,17 @@ export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<Less
   }
 }
 
+export function lessonFocusLabel(focus: LessonFocusContext): string {
+  switch (focus.kind) {
+    case 'grammar':
+      return focus.topic;
+    case 'vocabulary':
+      return focus.theme;
+    case 'your-day':
+      return focus.starter;
+  }
+}
+
 export function buildLessonOpening(focus: LessonFocusContext): {
   spanish: string;
   translation?: string;

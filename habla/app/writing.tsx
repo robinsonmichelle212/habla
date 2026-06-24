@@ -1,4 +1,5 @@
 import { analyzeConversation, evaluateWriting, generateWritingTask } from '@/lib/claude';
+import { lessonFocusLabel } from '@/lib/lesson-focus';
 import {
   conversationToJaviMessages,
   getLessonSession,
@@ -63,6 +64,7 @@ export default function WritingScreen() {
   const lessonType = session.lessonType;
   const lessonFocus = session.lessonFocus;
   const conversation = session.conversation;
+  const focusLabel = lessonFocus ? lessonFocusLabel(lessonFocus) : undefined;
 
   const [taskPrompt, setTaskPrompt] = useState(session.writingTask?.prompt ?? '');
   const [loadingTask, setLoadingTask] = useState(false);
@@ -149,11 +151,30 @@ export default function WritingScreen() {
         fluencyScore: Math.max(0, Math.min(100, Math.round(result.fluencyScore))),
       };
 
-      const analysis = await analyzeConversation(
+      const analysisJson = await analyzeConversation(
         lessonType,
         conversationToJaviMessages(conversation),
         normalizedWritingScores,
+        focusLabel,
       );
+      const g = normalizedWritingScores.grammarScore;
+      const v = normalizedWritingScores.vocabularyScore;
+      const f = normalizedWritingScores.fluencyScore;
+      const w = Math.round((g + v + f) / 3);
+      const analysis = {
+        strongAreas: analysisJson.strongAreas ?? [],
+        weakAreas: analysisJson.weakAreas ?? [],
+        focusAreas: analysisJson.focusAreas ?? [],
+        correctnessScore: analysisJson.correctnessScore ?? 0,
+        overallScore: analysisJson.overallScore ?? analysisJson.correctnessScore ?? 0,
+        encouragingMessage: analysisJson.encouragingMessage ?? '',
+        breakdown: analysisJson.breakdown ?? {
+          grammar: { score: g, topic: focusLabel ?? 'Grammar', details: [] },
+          vocabulary: { score: v, topic: 'Vocabulary', details: [] },
+          fluency: { score: f, details: [] },
+          writing: { score: w, details: [] },
+        },
+      };
       setLessonSession({ analysis });
       router.push('/summary');
     } catch (e) {
