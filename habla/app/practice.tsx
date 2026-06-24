@@ -15,6 +15,7 @@ import {
   generateQuickFireQuestions,
   type PrioritizedWeakAreaInput,
 } from '@/lib/claude';
+import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
 import { buildPriorityWeakAreas, appendDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
@@ -171,7 +172,9 @@ export default function PracticeScreen() {
   };
 
   const startQuickFire = useCallback(async () => {
-    if (loadingWeakAreas || !priorityWeakAreas.length) {
+    const isGrammarDrill = drill === 'grammar';
+
+    if (!isGrammarDrill && (loadingWeakAreas || !priorityWeakAreas.length)) {
       Alert.alert('Practice not ready', 'Complete a lesson first to unlock targeted practice.');
       return;
     }
@@ -184,6 +187,29 @@ export default function PracticeScreen() {
     setStage('loading');
 
     try {
+      if (isGrammarDrill) {
+        const curriculum = await resolveGrammarCurriculum();
+        const weekDef = getWeekDefinition(curriculum.currentWeek);
+        const grammarBatch = await generateQuickFireQuestions([], TOTAL_QUESTIONS, {
+          topic: weekDef.topic,
+          weekNumber: weekDef.week,
+          focusVerbs: weekDef.focusVerbs,
+          includesContrast: weekDef.includesContrast,
+        });
+
+        if (grammarBatch.length < 1) {
+          Alert.alert('Could not load questions', 'Try again in a moment.');
+          setStage('choose');
+          return;
+        }
+
+        setQuestions(
+          grammarBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+        );
+        setStage('drill');
+        return;
+      }
+
       const savedWords = await getSavedVocabulary();
       const activeWords = getActiveVocabulary(savedWords);
       const vocabCount = Math.min(VOCAB_DRILL_SLOTS, activeWords.length);
@@ -204,12 +230,17 @@ export default function PracticeScreen() {
       Alert.alert('Could not load questions', message);
       setStage('choose');
     }
-  }, [loadingWeakAreas, priorityWeakAreas.length, prioritizedForPrompt]);
+  }, [drill, loadingWeakAreas, priorityWeakAreas.length, prioritizedForPrompt]);
 
   useEffect(() => {
-    if (loadingWeakAreas || !priorityWeakAreas.length) return;
     if (didAutoStartRef.current) return;
     if (drill !== 'grammar' && drill !== 'vocabulary') return;
+    if (drill === 'grammar') {
+      didAutoStartRef.current = true;
+      void startQuickFire();
+      return;
+    }
+    if (loadingWeakAreas || !priorityWeakAreas.length) return;
     didAutoStartRef.current = true;
     void startQuickFire();
   }, [drill, loadingWeakAreas, priorityWeakAreas.length, startQuickFire]);
@@ -540,6 +571,8 @@ function formatPracticeQuestionType(q: PracticeQuestion): string {
         return 'Saved vocabulary';
       case 'vocab_fill_blank':
         return 'Saved vocabulary · fill blank';
+      default:
+        return 'Saved vocabulary';
     }
   }
   switch (q.question.type) {
@@ -553,6 +586,14 @@ function formatPracticeQuestionType(q: PracticeQuestion): string {
       return 'Choose the right word';
     case 'quick_translate':
       return 'Quick translate';
+    case 'conjugate':
+      return 'Conjugate';
+    case 'choose_tense':
+      return 'Choose the tense';
+    case 'translate_tense':
+      return 'Translate using target tense';
+    default:
+      return 'Grammar drill';
   }
 }
 

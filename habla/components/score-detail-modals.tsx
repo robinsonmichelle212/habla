@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
-import type { GrammarTopic, VocabTheme } from '@/lib/lesson-focus';
-import { grammarRotationProgress, vocabThemeRotation } from '@/lib/lesson-focus';
+import type { GrammarTopic } from '@/lib/grammar-curriculum';
+import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
+import { vocabThemeRotation, type VocabTheme } from '@/lib/lesson-focus';
 import type { LessonHistoryEntry } from '@/lib/practice-storage';
 import { scoreBarColor } from '@/lib/practice-storage';
 import { useRouter } from 'expo-router';
@@ -37,6 +38,7 @@ type Props = {
   tab: ScoreDetailTab | null;
   entry: LessonHistoryEntry;
   currentGrammarTopic: GrammarTopic | null;
+  curriculumWeek: number | null;
   coveredGrammarTopics: string[];
   coveredVocabThemes: string[];
   previousFluencyScore: number | null;
@@ -48,6 +50,7 @@ export function ScoreDetailModal({
   tab,
   entry,
   currentGrammarTopic,
+  curriculumWeek,
   coveredGrammarTopics,
   coveredVocabThemes,
   previousFluencyScore,
@@ -103,6 +106,7 @@ export function ScoreDetailModal({
             <GrammarDetail
               section={breakdown.grammar}
               currentGrammarTopic={currentGrammarTopic}
+              curriculumWeek={curriculumWeek}
               coveredGrammarTopics={coveredGrammarTopics}
               onDrill={goGrammarDrill}
             />
@@ -151,16 +155,19 @@ function Card({ title, children }: { title: string; children: ReactNode }) {
 function GrammarDetail({
   section,
   currentGrammarTopic,
-  coveredGrammarTopics,
+  curriculumWeek,
   onDrill,
 }: {
   section: LessonHistoryEntry['breakdown']['grammar'];
   currentGrammarTopic: GrammarTopic | null;
+  curriculumWeek: number | null;
   coveredGrammarTopics: string[];
   onDrill: () => void;
 }) {
-  const rotation = grammarRotationProgress(coveredGrammarTopics, currentGrammarTopic);
   const weekTopic = currentGrammarTopic ?? section.topic;
+  const progress = curriculumWeek
+    ? Math.round((curriculumWeek / TOTAL_CURRICULUM_WEEKS) * 100)
+    : 0;
 
   return (
     <>
@@ -171,27 +178,20 @@ function GrammarDetail({
         </Card>
       ) : null}
       <Card title="This week's focus">
-        <Text style={styles.highlightText}>{weekTopic}</Text>
+        <Text style={styles.highlightText}>
+          {curriculumWeek ? `Week ${curriculumWeek} of ${TOTAL_CURRICULUM_WEEKS}: ` : ''}
+          {weekTopic}
+        </Text>
       </Card>
-      <Card title="Grammar rotation">
+      <Card title="Grammar curriculum">
         <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${rotation.progress}%` }]} />
+          <View style={[styles.progressFill, { width: `${progress}%` }]} />
         </View>
-        <Text style={styles.progressLabel}>{rotation.progress}% through rotation</Text>
-        {rotation.covered.length ? (
-          <View style={styles.checkList}>
-            {rotation.covered.map((t) => (
-              <Text key={`c-${t}`} style={styles.checkItem}>✅ {t}</Text>
-            ))}
-          </View>
-        ) : null}
-        {rotation.remaining.length ? (
-          <View style={styles.checkList}>
-            {rotation.remaining.map((t) => (
-              <Text key={`r-${t}`} style={styles.checkItemMuted}>⬜ {t}</Text>
-            ))}
-          </View>
-        ) : null}
+        <Text style={styles.progressLabel}>
+          {curriculumWeek
+            ? `Week ${curriculumWeek} of ${TOTAL_CURRICULUM_WEEKS} (${progress}%)`
+            : '20-week structured curriculum'}
+        </Text>
       </Card>
       {section.mistakes?.length ? (
         <Card title="Mistakes today">

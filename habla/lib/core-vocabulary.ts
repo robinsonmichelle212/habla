@@ -1,0 +1,60 @@
+/** 50 highest-priority Spanish words for Javi to use in all lessons. */
+export const CORE_VOCABULARY_50 = [
+  'ser',
+  'estar',
+  'tener',
+  'hacer',
+  'ir',
+  'poder',
+  'querer',
+  'saber',
+  'ver',
+  'dar',
+  'decir',
+  'venir',
+  'llegar',
+  'pasar',
+  'deber',
+  'poner',
+  'parecer',
+  'quedar',
+  'creer',
+  'hablar',
+  'llevar',
+  'dejar',
+  'seguir',
+  'encontrar',
+  'llamar',
+  'volver',
+  'tomar',
+  'conocer',
+  'vivir',
+  'sentir',
+  'tratar',
+  'mirar',
+  'contar',
+  'empezar',
+  'esperar',
+  'buscar',
+  'existir',
+  'entrar',
+  'trabajar',
+  'escribir',
+  'perder',
+  'producir',
+  'ocurrir',
+  'entender',
+  'pedir',
+  'recibir',
+  'recordar',
+  'terminar',
+  'permitir',
+] as const;
+
+export const CORE_VOCABULARY_PROMPT = `Core vocabulary (use these words first in ALL example sentences and prompts across every lesson type):
+${CORE_VOCABULARY_50.join(', ')}
+
+Vocabulary rules:
+- Prioritise these 50 essential words in examples, drills, and conversation prompts.
+- For any other words, stick to top-1000 most common Spanish vocabulary only.
+- Avoid rare, literary, or C1+ vocabulary unless deliberately teaching one new word.`;

@@ -1,12 +1,19 @@
 import {
-  GRAMMAR_TOPICS,
-  getCoveredGrammarTopicsFromStorage,
+  GRAMMAR_WEEK_DEFINITIONS,
+  TOTAL_CURRICULUM_WEEKS,
+  daysRemainingInWeek,
+  isWeekCompleted,
+  isWeekLocked,
+  resolveGrammarCurriculum,
+  resetGrammarCurriculum,
+  weekLabel,
+  type GrammarCurriculumState,
+} from '@/lib/grammar-curriculum';
+import {
   getCoveredVocabThemesFromStorage,
   getCoveredYourDayTopicsFromStorage,
-  getCurrentGrammarTopic,
   VOCAB_THEMES,
   YOUR_DAY_TOPICS,
-  type GrammarTopic,
 } from '@/lib/lesson-focus';
 import {
   getActiveVocabulary,
@@ -25,7 +32,6 @@ import {
   type SkillSnapshot,
 } from '@/lib/level-progress';
 import {
-  getCoveredGrammarTopics,
   getCoveredVocabThemes,
   getLessonHistory,
 } from '@/lib/practice-storage';
@@ -34,6 +40,7 @@ import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -79,8 +86,7 @@ export default function LevelScreen() {
   const [loading, setLoading] = useState(true);
   const [barometer, setBarometer] = useState<ReturnType<typeof getLevelBarometer>>(null);
   const [nextReq, setNextReq] = useState<ReturnType<typeof getNextLevelRequirements>>(null);
-  const [currentGrammarTopic, setCurrentGrammarTopic] = useState<GrammarTopic | null>(null);
-  const [grammarCovered, setGrammarCovered] = useState<Set<string>>(new Set());
+  const [grammarCurriculum, setGrammarCurriculum] = useState<GrammarCurriculumState | null>(null);
   const [vocabCovered, setVocabCovered] = useState<Set<string>>(new Set());
   const [yourDayCovered, setYourDayCovered] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
@@ -96,39 +102,32 @@ export default function LevelScreen() {
         try {
           const [
             lessonHistory,
-            grammarStorage,
             vocabStorage,
             yourDayStorage,
-            grammarTopic,
+            curriculum,
             stats,
             words,
           ] = await Promise.all([
             getLessonHistory(),
-            getCoveredGrammarTopicsFromStorage(),
             getCoveredVocabThemesFromStorage(),
             getCoveredYourDayTopicsFromStorage(),
-            getCurrentGrammarTopic(),
+            resolveGrammarCurriculum(),
             getVocabStats(),
             getSavedVocabulary(),
           ]);
           if (cancelled) return;
 
-          const grammarFromHistory = getCoveredGrammarTopics(lessonHistory);
           const vocabFromHistory = getCoveredVocabThemes(lessonHistory);
 
-          const grammarSet = new Set(
-            [...grammarStorage, ...grammarFromHistory].map((t) => t.toLowerCase()),
-          );
           const vocabSet = new Set(
             [...vocabStorage, ...vocabFromHistory].map((t) => t.toLowerCase()),
           );
           const yourDaySet = new Set(yourDayStorage.map((t) => t.toLowerCase()));
 
           setHistory(lessonHistory);
-          setGrammarCovered(grammarSet);
+          setGrammarCurriculum(curriculum);
           setVocabCovered(vocabSet);
           setYourDayCovered(yourDaySet);
-          setCurrentGrammarTopic(grammarTopic);
           setBarometer(getLevelBarometer(lessonHistory));
           setNextReq(getNextLevelRequirements(lessonHistory));
           setVocabStats(stats);
@@ -144,7 +143,23 @@ export default function LevelScreen() {
     }, []),
   );
 
-  const grammarCoveredCount = GRAMMAR_TOPICS.filter((t) => isCovered(t, grammarCovered)).length;
+  const handleResetCurriculum = () => {
+    Alert.alert(
+      'Reset grammar curriculum?',
+      'This will restart from Week 1. Your lesson history and scores are kept.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset',
+          style: 'destructive',
+          onPress: () => {
+            void resetGrammarCurriculum().then((state) => setGrammarCurriculum(state));
+          },
+        },
+      ],
+    );
+  };
+
   const vocabCoveredCount = VOCAB_THEMES.filter((t) => isCovered(t, vocabCovered)).length;
   const yourDayCoveredCount = YOUR_DAY_TOPICS.filter((t) => isCovered(t, yourDayCovered)).length;
 
@@ -173,11 +188,10 @@ export default function LevelScreen() {
           {barometer ? <LevelBarometerSection barometer={barometer} /> : null}
           {barometer ? (
             <>
-              <GrammarSection
-                covered={grammarCovered}
-                coveredCount={grammarCoveredCount}
-                currentTopic={currentGrammarTopic}
+              <GrammarCurriculumSection
+                curriculum={grammarCurriculum}
                 history={history}
+                onReset={handleResetCurriculum}
               />
               <VocabSection covered={vocabCovered} coveredCount={vocabCoveredCount} history={history} />
               <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} />
@@ -262,41 +276,54 @@ function BandPill({
   );
 }
 
-function GrammarSection({
-  covered,
-  coveredCount,
-  currentTopic,
+function GrammarCurriculumSection({
+  curriculum,
   history,
+  onReset,
 }: {
-  covered: Set<string>;
-  coveredCount: number;
-  currentTopic: GrammarTopic | null;
+  curriculum: GrammarCurriculumState | null;
   history: Awaited<ReturnType<typeof getLessonHistory>>;
+  onReset: () => void;
 }) {
+  if (!curriculum) return null;
+
+  const daysLeft = daysRemainingInWeek(curriculum);
+  const weekDef = GRAMMAR_WEEK_DEFINITIONS[curriculum.currentWeek - 1];
+  const progressPercent = Math.round((curriculum.currentWeek / TOTAL_CURRICULUM_WEEKS) * 100);
+
   return (
     <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Grammar progress</Text>
+      <Text style={styles.sectionTitle}>Grammar curriculum</Text>
       <View style={styles.card}>
-        {currentTopic ? (
-          <Text style={styles.focusLine}>This week&apos;s focus: {currentTopic}</Text>
-        ) : null}
-        <ProgressBarLabel count={coveredCount} total={GRAMMAR_TOPICS.length} label="topics covered" />
+        <Text style={styles.focusLine}>
+          Week {curriculum.currentWeek} of {TOTAL_CURRICULUM_WEEKS}: {curriculum.currentTopic}
+        </Text>
+        <Text style={styles.progressLabel}>
+          {daysLeft} day{daysLeft === 1 ? '' : 's'} remaining this week
+        </Text>
         <View style={styles.progressTrack}>
-          <View
-            style={[styles.progressFill, { width: `${(coveredCount / GRAMMAR_TOPICS.length) * 100}%` }]}
-          />
+          <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
         </View>
+        <Text style={styles.progressLabel}>Week {curriculum.currentWeek} of 20</Text>
+
+        <Text style={styles.focusVerbsLabel}>Focus verbs</Text>
+        <Text style={styles.focusVerbsText}>{curriculum.currentFocusVerbs.join(' · ')}</Text>
+
         <View style={styles.topicList}>
-          {GRAMMAR_TOPICS.map((topic) => {
-            const done = isCovered(topic, covered);
-            const avg = done ? averageScoreForTopic(history, topic, 'grammar') : null;
-            const isFocus = currentTopic === topic;
+          {GRAMMAR_WEEK_DEFINITIONS.map((week) => {
+            const done = isWeekCompleted(curriculum, week.week);
+            const locked = isWeekLocked(curriculum, week.week);
+            const isCurrent = week.week === curriculum.currentWeek;
+            const avg = done ? averageScoreForTopic(history, week.topic, 'grammar') : null;
+
             return (
-              <View key={topic} style={[styles.topicRow, isFocus && styles.topicRowFocus]}>
-                <Text style={styles.topicIcon}>{done ? '✅' : '⬜'}</Text>
-                <Text style={styles.topicLabel} numberOfLines={2}>
-                  {topic}
-                  {isFocus ? ' · this week' : ''}
+              <View key={week.week} style={[styles.topicRow, isCurrent && styles.topicRowFocus]}>
+                <Text style={styles.topicIcon}>
+                  {done ? '✅' : locked ? '⬜' : isCurrent ? '▶️' : '⬜'}
+                </Text>
+                <Text style={[styles.topicLabel, locked && styles.topicLabelLocked]} numberOfLines={2}>
+                  {weekLabel(week)}
+                  {isCurrent ? ' · now' : locked ? ' · locked' : ''}
                 </Text>
                 {done && avg != null ? (
                   <Text style={[styles.topicScore, { color: scoreColor(avg) }]}>{avg}%</Text>
@@ -305,6 +332,14 @@ function GrammarSection({
             );
           })}
         </View>
+
+        {weekDef ? (
+          <Text style={styles.weekSummary}>{weekDef.summary}</Text>
+        ) : null}
+
+        <Pressable onPress={onReset} style={styles.resetButton} accessibilityRole="button">
+          <Text style={styles.resetButtonText}>Reset curriculum</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -624,7 +659,43 @@ const styles = StyleSheet.create({
   },
   topicIcon: { fontSize: 14, width: 22 },
   topicLabel: { flex: 1, fontSize: 14, fontWeight: '600', color: palette.text, lineHeight: 18 },
+  topicLabelLocked: { color: palette.muted },
   topicScore: { fontSize: 14, fontWeight: '900' },
+  focusVerbsLabel: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  focusVerbsText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.text,
+    lineHeight: 18,
+    marginBottom: 8,
+  },
+  weekSummary: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 18,
+    marginTop: 12,
+  },
+  resetButton: {
+    marginTop: 16,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  resetButtonText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    textDecorationLine: 'underline',
+  },
   statGrid: { flexDirection: 'row', gap: 8, marginBottom: 14 },
   statBox: {
     flex: 1,

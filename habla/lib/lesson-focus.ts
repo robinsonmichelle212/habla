@@ -1,28 +1,35 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { LessonKindId } from '@/lib/claude';
-import { formatLocalDate } from '@/lib/streak';
+import {
+  getWeekDefinition,
+  resolveGrammarCurriculum,
+  type GrammarCurriculumState,
+  type GrammarTopic,
+} from '@/lib/grammar-curriculum';
 
-const KEY_CURRENT_GRAMMAR_TOPIC = 'currentGrammarTopic';
-const KEY_GRAMMAR_WEEK_START = 'grammarWeekStartDate';
 const KEY_LAST_VOCAB_THEME = 'lastVocabTheme';
 const KEY_LAST_YOUR_DAY_TOPIC = 'lastYourDayTopic';
 const KEY_COVERED_GRAMMAR_TOPICS = 'coveredGrammarTopics';
 const KEY_COVERED_VOCAB_THEMES = 'coveredVocabThemes';
 const KEY_COVERED_YOUR_DAY_TOPICS = 'coveredYourDayTopics';
 
-export const GRAMMAR_TOPICS = [
-  'Present tense',
-  'Past tense (preterite)',
-  'Past tense (imperfect)',
-  'Future tense',
-  'Subjunctive mood',
-  'Reflexive verbs',
-  'Ser vs Estar',
-  'Por vs Para',
-  'Conditional tense',
-  'Imperative mood',
-] as const;
+export type { GrammarTopic } from '@/lib/grammar-curriculum';
+export {
+  GRAMMAR_TOPICS,
+  GRAMMAR_WEEK_DEFINITIONS,
+  TOTAL_CURRICULUM_WEEKS,
+  getGrammarCurriculum,
+  resetGrammarCurriculum,
+  resolveGrammarCurriculum,
+  daysRemainingInWeek,
+  weekLabel,
+  grammarCurriculumProgress,
+  isWeekCompleted,
+  isWeekLocked,
+  getCurrentGrammarTopic,
+  getWeekDefinition,
+} from '@/lib/grammar-curriculum';
 
 export const VOCAB_THEMES = [
   'Food and cooking',
@@ -50,27 +57,22 @@ export const YOUR_DAY_TOPICS = [
   'Your plans for the next few weeks',
 ] as const;
 
-export type GrammarTopic = (typeof GRAMMAR_TOPICS)[number];
 export type VocabTheme = (typeof VOCAB_THEMES)[number];
 export type YourDayTopic = (typeof YOUR_DAY_TOPICS)[number];
 
 export type LessonFocusContext =
-  | { kind: 'grammar'; topic: GrammarTopic; topicSpanish: string }
+  | {
+      kind: 'grammar';
+      topic: GrammarTopic;
+      topicSpanish: string;
+      weekNumber: number;
+      focusVerbs: string[];
+      includesContrast: boolean;
+      weekSummary: string;
+      curriculum: GrammarCurriculumState;
+    }
   | { kind: 'vocabulary'; theme: VocabTheme; themeSpanish: string }
   | { kind: 'your-day'; starter: YourDayTopic; starterSpanish: string };
-
-const GRAMMAR_TOPIC_SPANISH: Record<GrammarTopic, string> = {
-  'Present tense': 'el presente',
-  'Past tense (preterite)': 'el pretérito',
-  'Past tense (imperfect)': 'el imperfecto',
-  'Future tense': 'el futuro',
-  'Subjunctive mood': 'el subjuntivo',
-  'Reflexive verbs': 'los verbos reflexivos',
-  'Ser vs Estar': 'ser vs estar',
-  'Por vs Para': 'por vs para',
-  'Conditional tense': 'el condicional',
-  'Imperative mood': 'el imperativo',
-};
 
 const VOCAB_THEME_SPANISH: Record<VocabTheme, string> = {
   'Food and cooking': 'la comida y la cocina',
@@ -100,21 +102,6 @@ const YOUR_DAY_STARTER_SPANISH: Record<YourDayTopic, string> = {
   'Something that made you laugh': '¿Qué te ha hecho reír últimamente?',
   'Your plans for the next few weeks': '¿Qué planes tienes para las próximas semanas?',
 };
-
-function parseLocalDate(dateStr: string): Date {
-  const [y, m, d] = dateStr.split('-').map((p) => Number(p));
-  return new Date(y, (m ?? 1) - 1, d ?? 1);
-}
-
-function daysBetween(startDate: string, endDate: string): number {
-  const start = parseLocalDate(startDate);
-  const end = parseLocalDate(endDate);
-  return Math.floor((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000));
-}
-
-function isGrammarTopic(value: string | null): value is GrammarTopic {
-  return !!value && (GRAMMAR_TOPICS as readonly string[]).includes(value);
-}
 
 function isVocabTheme(value: string | null): value is VocabTheme {
   return !!value && (VOCAB_THEMES as readonly string[]).includes(value);
@@ -198,34 +185,6 @@ function pickNextInRotation<T extends string>(items: readonly T[], last: T | nul
   return items[(idx + 1) % items.length];
 }
 
-async function resolveWeeklyGrammarTopic(today: string = formatLocalDate()): Promise<GrammarTopic> {
-  const [storedTopic, storedStart] = await Promise.all([
-    AsyncStorage.getItem(KEY_CURRENT_GRAMMAR_TOPIC),
-    AsyncStorage.getItem(KEY_GRAMMAR_WEEK_START),
-  ]);
-
-  if (!isGrammarTopic(storedTopic) || !storedStart) {
-    const topic = GRAMMAR_TOPICS[0];
-    await AsyncStorage.multiSet([
-      [KEY_CURRENT_GRAMMAR_TOPIC, topic],
-      [KEY_GRAMMAR_WEEK_START, today],
-    ]);
-    return topic;
-  }
-
-  if (daysBetween(storedStart, today) >= 7) {
-    const currentIdx = GRAMMAR_TOPICS.indexOf(storedTopic);
-    const nextTopic = GRAMMAR_TOPICS[(currentIdx + 1) % GRAMMAR_TOPICS.length];
-    await AsyncStorage.multiSet([
-      [KEY_CURRENT_GRAMMAR_TOPIC, nextTopic],
-      [KEY_GRAMMAR_WEEK_START, today],
-    ]);
-    return nextTopic;
-  }
-
-  return storedTopic;
-}
-
 async function selectVocabTheme(): Promise<VocabTheme> {
   const last = await AsyncStorage.getItem(KEY_LAST_VOCAB_THEME);
   const theme = pickNextInRotation(
@@ -251,11 +210,17 @@ export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<Less
   let focus: LessonFocusContext;
   switch (lessonKind) {
     case 'grammar': {
-      const topic = await resolveWeeklyGrammarTopic();
+      const curriculum = await resolveGrammarCurriculum();
+      const weekDef = getWeekDefinition(curriculum.currentWeek);
       focus = {
         kind: 'grammar',
-        topic,
-        topicSpanish: GRAMMAR_TOPIC_SPANISH[topic],
+        topic: weekDef.topic,
+        topicSpanish: weekDef.topicSpanish,
+        weekNumber: weekDef.week,
+        focusVerbs: weekDef.focusVerbs,
+        includesContrast: weekDef.includesContrast,
+        weekSummary: weekDef.summary,
+        curriculum,
       };
       break;
     }
@@ -282,27 +247,6 @@ export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<Less
   return focus;
 }
 
-/** Read the current weekly grammar topic from AsyncStorage (no rotation side effects). */
-export async function getCurrentGrammarTopic(): Promise<GrammarTopic | null> {
-  const stored = await AsyncStorage.getItem(KEY_CURRENT_GRAMMAR_TOPIC);
-  return isGrammarTopic(stored) ? stored : null;
-}
-
-export function grammarRotationProgress(
-  coveredTopics: string[],
-  currentTopic: GrammarTopic | null,
-): { covered: GrammarTopic[]; remaining: GrammarTopic[]; progress: number } {
-  const coveredSet = new Set(coveredTopics.map((t) => t.toLowerCase()));
-  const covered = GRAMMAR_TOPICS.filter((t) => coveredSet.has(t.toLowerCase()));
-  const remaining = GRAMMAR_TOPICS.filter((t) => !coveredSet.has(t.toLowerCase()));
-  const currentIdx = currentTopic ? GRAMMAR_TOPICS.indexOf(currentTopic) : -1;
-  const progress =
-    currentIdx >= 0
-      ? Math.round(((currentIdx + 1) / GRAMMAR_TOPICS.length) * 100)
-      : Math.round((covered.length / GRAMMAR_TOPICS.length) * 100);
-  return { covered, remaining, progress };
-}
-
 export function vocabThemeRotation(
   coveredThemes: string[],
 ): { covered: VocabTheme[]; remaining: VocabTheme[] } {
@@ -316,7 +260,7 @@ export function vocabThemeRotation(
 export function lessonFocusLabel(focus: LessonFocusContext): string {
   switch (focus.kind) {
     case 'grammar':
-      return focus.topic;
+      return `Week ${focus.weekNumber}: ${focus.topic}`;
     case 'vocabulary':
       return focus.theme;
     case 'your-day':
@@ -331,8 +275,8 @@ export function buildLessonOpening(focus: LessonFocusContext): {
   switch (focus.kind) {
     case 'grammar':
       return {
-        spanish: `Esta semana practicamos ${focus.topicSpanish}.`,
-        translation: `This week we're focusing on ${focus.topic}.`,
+        spanish: `Semana ${focus.weekNumber} de 20. Esta semana practicamos ${focus.topicSpanish}.`,
+        translation: `Week ${focus.weekNumber} of 20. This week we're focusing on ${focus.topic}.`,
       };
     case 'vocabulary':
       return {

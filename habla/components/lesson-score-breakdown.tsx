@@ -6,6 +6,7 @@ import {
   getPreviousLessonEntry,
   scoreBarColor,
 } from '@/lib/practice-storage';
+import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { getCurrentGrammarTopic, type GrammarTopic } from '@/lib/lesson-focus';
 import { ScoreDetailModal, type ScoreDetailTab } from '@/components/score-detail-modals';
 import { useRouter } from 'expo-router';
@@ -62,6 +63,7 @@ export function LessonScoreBreakdownModal({
   const router = useRouter();
   const [detailTab, setDetailTab] = useState<ScoreDetailTab | null>(null);
   const [currentGrammarTopic, setCurrentGrammarTopic] = useState<GrammarTopic | null>(null);
+  const [curriculumWeek, setCurriculumWeek] = useState<number | null>(null);
   const [coveredGrammarTopics, setCoveredGrammarTopics] = useState<string[]>([]);
   const [coveredVocabThemes, setCoveredVocabThemes] = useState<string[]>([]);
   const [previousFluencyScore, setPreviousFluencyScore] = useState<number | null>(null);
@@ -83,12 +85,14 @@ export function LessonScoreBreakdownModal({
     let cancelled = false;
 
     void (async () => {
-      const [grammarTopic, history] = await Promise.all([
+      const [grammarTopic, curriculum, history] = await Promise.all([
         getCurrentGrammarTopic(),
+        resolveGrammarCurriculum(),
         getLessonHistory(),
       ]);
       if (cancelled) return;
       setCurrentGrammarTopic(grammarTopic);
+      setCurriculumWeek(curriculum.currentWeek);
       setCoveredGrammarTopics(getCoveredGrammarTopics(history));
       setCoveredVocabThemes(getCoveredVocabThemes(history));
       const prev = getPreviousLessonEntry(history, entry.date);
@@ -264,6 +268,7 @@ export function LessonScoreBreakdownModal({
           tab={detailTab}
           entry={entry}
           currentGrammarTopic={currentGrammarTopic}
+          curriculumWeek={curriculumWeek}
           coveredGrammarTopics={coveredGrammarTopics}
           coveredVocabThemes={coveredVocabThemes}
           previousFluencyScore={previousFluencyScore}

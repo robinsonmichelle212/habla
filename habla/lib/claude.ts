@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 
 /** Matches the lesson chips on the lesson screen. */
@@ -49,11 +50,35 @@ function getModel(): string {
 function buildFocusInstructions(focus: LessonFocusContext): string {
   switch (focus.kind) {
     case 'grammar':
-      return `GRAMMAR FOCUS (this week — same for all Grammar lessons this week):
-- Topic: ${focus.topic}
-- Every Grammar lesson this week practises ONLY this grammar point.
-- Approach the topic from a fresh angle each session: different sentences, contexts, and mini-exercises — but never switch to a different grammar topic.
-- Drill the point clearly; correct mistakes gently and keep the learner using this structure.`;
+      return `GRAMMAR CURRICULUM (Week ${focus.weekNumber} of 20 — follow this structure strictly):
+- Topic: ${focus.topic} (${focus.topicSpanish})
+- Week focus: ${focus.weekSummary}
+- Focus verbs this week: ${focus.focusVerbs.join(', ')}
+- Every Grammar lesson this week practises ONLY this grammar point and these verbs.
+
+LESSON STRUCTURE — follow in order across the conversation:
+
+PART 1 — WHY AND WHEN (your first 2–3 messages in this session):
+- Explain in simple B1 Spanish when this grammar point is used and why it matters.
+- Use the Translate: line on every message so English is available via reveal.
+- Give 2 real-life examples using high-frequency vocabulary (core 50 words first).
+- Example style: "El pretérito indefinido se usa para acciones completadas en el pasado."
+
+PART 2 — GUIDED PRACTICE (next 3–4 exchanges):
+- Create sentences using ONLY top-1000 most common Spanish words.
+- Ask the learner to respond using the target tense/structure.
+- Use this week's focus verbs: ${focus.focusVerbs.join(', ')}.
+- Gently correct mistakes and explain why in one short sentence.
+
+${
+  focus.includesContrast
+    ? `PART 3 — CONTRAST (final 1–2 exchanges — required this week):
+- Present short story-telling scenarios where preterite vs imperfect choice matters.
+- Ask which tense to use and why.`
+    : ''
+}
+- Never switch to a different grammar topic mid-lesson.
+- Track where you are in the structure based on how many exchanges have happened.`;
     case 'vocabulary':
       return `VOCABULARY THEME (this session only):
 - Theme: ${focus.theme}
@@ -72,6 +97,8 @@ function buildSystemPrompt(lessonType: LessonType, focus: LessonFocusContext): s
 
 This session's lesson type: ${lessonType}
 ${buildFocusInstructions(focus)}
+
+${CORE_VOCABULARY_PROMPT}
 
 Voice and level:
 - Speak at B1 Spanish (CEFR): not too easy, not too hard—clear, natural, learner-appropriate.
@@ -506,7 +533,17 @@ export type QuickFireQuestionType =
   | 'translate_word'
   | 'correct_mistake'
   | 'choose_word'
-  | 'quick_translate';
+  | 'quick_translate'
+  | 'conjugate'
+  | 'choose_tense'
+  | 'translate_tense';
+
+export type GrammarDrillContext = {
+  topic: string;
+  weekNumber: number;
+  focusVerbs: string[];
+  includesContrast: boolean;
+};
 
 export type QuickFireQuestion = {
   id: string;
@@ -566,12 +603,28 @@ const QUICK_FIRE_TYPES: QuickFireQuestionType[] = [
   'correct_mistake',
   'choose_word',
   'quick_translate',
+  'conjugate',
+  'choose_tense',
+  'translate_tense',
+];
+
+const GRAMMAR_DRILL_TYPES: QuickFireQuestionType[] = [
+  'conjugate',
+  'fill_blank',
+  'correct_mistake',
+  'choose_tense',
+  'translate_tense',
 ];
 
 export async function generateQuickFireQuestions(
   prioritizedWeakAreas: PrioritizedWeakAreaInput[],
   count = 10,
+  grammarContext?: GrammarDrillContext,
 ): Promise<QuickFireQuestion[]> {
+  if (grammarContext) {
+    return generateGrammarCurriculumQuestions(grammarContext, count);
+  }
+
   const anthropic = getClient();
   const model = getModel();
 
@@ -630,6 +683,81 @@ Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
       type: QUICK_FIRE_TYPES.includes(q.type as QuickFireQuestionType)
         ? (q.type as QuickFireQuestionType)
         : QUICK_FIRE_TYPES[i % QUICK_FIRE_TYPES.length],
+      prompt: q.prompt.trim(),
+      expectedAnswer: q.expectedAnswer.trim(),
+      acceptableAnswers: Array.isArray(q.acceptableAnswers)
+        ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+        : undefined,
+    }));
+}
+
+export async function generateGrammarCurriculumQuestions(
+  grammarContext: GrammarDrillContext,
+  count = 10,
+): Promise<QuickFireQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a Spanish tutor creating grammar quick-fire drills for a B1 learner.
+Return ONLY valid JSON. No markdown. No extra keys.
+
+${CORE_VOCABULARY_PROMPT}`;
+
+  const user = `Generate exactly ${count} grammar drill questions for curriculum week ${grammarContext.weekNumber}.
+
+Grammar topic: ${grammarContext.topic}
+Focus verbs: ${grammarContext.focusVerbs.join(', ')}
+Contrast week (preterite vs imperfect): ${grammarContext.includesContrast ? 'yes' : 'no'}
+
+Use ONLY this week's topic and focus verbs. Vocabulary must be top-1000 Spanish words only.
+
+Question types (use 2 of each when count is 10):
+- conjugate: "Conjugate 'tener' in the preterite, first person singular" → tuve
+- fill_blank: "Ayer yo ___ (ir) al mercado" → fui
+- correct_mistake: "Ayer yo voy al mercado" → Ayer fui al mercado (or fui)
+- choose_tense: "Which tense? I used to go to the market every Sunday" → imperfect / imperfecto
+- translate_tense: "I couldn't find the keys" (translate using ${grammarContext.topic}) → No pude encontrar las llaves
+
+Rules:
+- Short prompts. Brief answers (1–6 words usually).
+- expectedAnswer is the primary correct answer.
+- acceptableAnswers: optional array of valid variants.
+- Rotate types evenly.
+
+Return JSON exactly:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "conjugate",
+      "prompt": "...",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."]
+    }
+  ]
+}
+
+Valid type values: ${GRAMMAR_DRILL_TYPES.join(', ')}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1400,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as { questions: QuickFireQuestion[] };
+  if (!Array.isArray(parsed.questions)) return [];
+
+  return parsed.questions
+    .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
+    .slice(0, count)
+    .map((q, i) => ({
+      id: String(q.id ?? i + 1),
+      type: GRAMMAR_DRILL_TYPES.includes(q.type as QuickFireQuestionType)
+        ? (q.type as QuickFireQuestionType)
+        : GRAMMAR_DRILL_TYPES[i % GRAMMAR_DRILL_TYPES.length],
       prompt: q.prompt.trim(),
       expectedAnswer: q.expectedAnswer.trim(),
       acceptableAnswers: Array.isArray(q.acceptableAnswers)
