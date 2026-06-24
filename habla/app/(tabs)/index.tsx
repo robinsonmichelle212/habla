@@ -5,13 +5,20 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
 import {
+  getBestLessonThisWeek,
   getLessonHistory,
   getProgressionLevel,
+  getTodaysLessonEntry,
   getTodaysLessonScore,
   getTopScoreThisWeek,
+  getWeekScoreChart,
+  type LessonHistoryEntry,
+  type WeekChartDay,
 } from '@/lib/practice-storage';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
+import { getTotalGems } from '@/lib/gems';
 
 const palette = {
   background: '#0B0F14',
@@ -30,12 +37,17 @@ export default function HomeScreen() {
   const [currentStreak, setCurrentStreak] = useState(0);
   const [longestStreak, setLongestStreak] = useState(0);
   const [totalSessions, setTotalSessions] = useState(0);
-  const [freezes, setFreezes] = useState(0);
+  const [totalGems, setTotalGems] = useState(0);
   const [last7Days, setLast7Days] = useState<{ date: string; completed: boolean }[]>([]);
   const [statsHydrated, setStatsHydrated] = useState(false);
   const [todaysScore, setTodaysScore] = useState<number | null>(null);
   const [topScoreWeek, setTopScoreWeek] = useState<number | null>(null);
   const [levelLabel, setLevelLabel] = useState<string | null>(null);
+  const [todaysEntry, setTodaysEntry] = useState<LessonHistoryEntry | null>(null);
+  const [bestWeekEntry, setBestWeekEntry] = useState<LessonHistoryEntry | null>(null);
+  const [weekChart, setWeekChart] = useState<WeekChartDay[]>([]);
+  const [showTodayModal, setShowTodayModal] = useState(false);
+  const [showWeekModal, setShowWeekModal] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -43,7 +55,11 @@ export default function HomeScreen() {
 
       const loadHomeData = async () => {
         try {
-          const [full, history] = await Promise.all([getStreakState(), getLessonHistory()]);
+          const [full, history, gems] = await Promise.all([
+            getStreakState(),
+            getLessonHistory(),
+            getTotalGems(),
+          ]);
           if (cancelled) return;
 
           console.log('Streak loaded from storage:', full.currentStreak);
@@ -51,12 +67,15 @@ export default function HomeScreen() {
           setCurrentStreak(full.currentStreak);
           setLongestStreak(full.longestStreak);
           setTotalSessions(full.totalSessionsCompleted);
-          setFreezes(full.freezes);
+          setTotalGems(gems);
           setLast7Days(full.last7Days);
 
           setTodaysScore(getTodaysLessonScore(history));
           setTopScoreWeek(getTopScoreThisWeek(history));
           setLevelLabel(getProgressionLevel(history));
+          setTodaysEntry(getTodaysLessonEntry(history));
+          setBestWeekEntry(getBestLessonThisWeek(history));
+          setWeekChart(getWeekScoreChart(history));
         } finally {
           if (!cancelled) {
             setStreakHydrated(true);
@@ -109,9 +128,9 @@ export default function HomeScreen() {
               </Text>
             </View>
 
-            <View style={styles.freezeWrap} accessibilityLabel="Streak freezes">
-              <Text style={styles.shieldEmoji}>🛡️</Text>
-              <Text style={styles.freezeCount}>{String(freezes)}</Text>
+            <View style={styles.gemsWrap} accessibilityLabel="Total gems">
+              <Text style={styles.gemEmoji}>💎</Text>
+              <Text style={styles.gemCount}>{streakHydrated ? String(totalGems) : '—'}</Text>
             </View>
           </View>
 
@@ -172,11 +191,33 @@ export default function HomeScreen() {
             value={
               !statsHydrated ? '—' : todaysScore != null ? `${todaysScore}%` : '--'
             }
+            onPress={
+              statsHydrated && todaysScore != null
+                ? () => {
+                    console.log("[Habla] Today's score tile tapped — entry passed to modal:", JSON.stringify(todaysEntry, null, 2));
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setShowTodayModal(true);
+                  }
+                : undefined
+            }
           />
           <StatCard
             label="Top Score This Week"
             value={
               !statsHydrated ? '—' : topScoreWeek != null ? `${topScoreWeek}%` : '--'
+            }
+            onPress={
+              statsHydrated && topScoreWeek != null
+                ? () => {
+                    console.log("[Habla] Top score this week tile tapped — entry passed to modal:", JSON.stringify(bestWeekEntry, null, 2));
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    setShowWeekModal(true);
+                  }
+                : undefined
             }
           />
           <StatCard
@@ -196,6 +237,21 @@ export default function HomeScreen() {
           <Text style={styles.debugDumpText}>Debug: dump AsyncStorage</Text>
         </Pressable>
       </ScrollView>
+
+      <LessonScoreBreakdownModal
+        visible={showTodayModal}
+        title="Today's Breakdown"
+        entry={todaysEntry}
+        onClose={() => setShowTodayModal(false)}
+        showPracticeButton
+      />
+      <LessonScoreBreakdownModal
+        visible={showWeekModal}
+        title="This Week's Best"
+        entry={bestWeekEntry}
+        onClose={() => setShowWeekModal(false)}
+        weekChart={weekChart}
+      />
     </SafeAreaView>
   );
 }
@@ -204,18 +260,34 @@ function StatCard({
   label,
   value,
   compact = false,
+  onPress,
 }: {
   label: string;
   value: string;
   compact?: boolean;
+  onPress?: () => void;
 }) {
-  return (
-    <View style={styles.statCard}>
+  const inner = (
+    <>
       <Text style={[styles.statValue, compact && styles.statValueCompact]} numberOfLines={2}>
         {value}
       </Text>
       <Text style={styles.statLabel}>{label}</Text>
-    </View>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.statCard}>{inner}</View>;
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.statCard, styles.statCardTappable, pressed && styles.statCardPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}, ${value}`}>
+      {inner}
+    </Pressable>
   );
 }
 
@@ -269,7 +341,7 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     marginBottom: 12,
   },
-  freezeWrap: {
+  gemsWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
@@ -280,13 +352,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
   },
-  shieldEmoji: {
+  gemEmoji: {
     fontSize: 16,
   },
-  freezeCount: {
+  gemCount: {
     fontSize: 14,
     fontWeight: '800',
-    color: palette.text,
+    color: '#A78BFA',
   },
   dotsRow: {
     flexDirection: 'row',
@@ -386,6 +458,13 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 8,
     alignItems: 'center',
+  },
+  statCardTappable: {
+    borderColor: 'rgba(255, 122, 89, 0.35)',
+  },
+  statCardPressed: {
+    opacity: 0.9,
+    transform: [{ scale: 0.98 }],
   },
   statValue: {
     fontSize: 22,

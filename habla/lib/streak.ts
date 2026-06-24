@@ -7,7 +7,6 @@ export type StreakState = {
   longestStreak: number;
   lastSessionDate: string | null; // YYYY-MM-DD
   totalSessionsCompleted: number;
-  freezes: number;
   totalStars: number;
   /** Last 7 days, oldest -> newest. Each entry is a YYYY-MM-DD date. */
   last7Days: { date: string; completed: boolean }[];
@@ -15,10 +14,7 @@ export type StreakState = {
 
 export type StreakUpdateResult = {
   state: StreakState;
-  usedFreeze: boolean;
-  earnedFreeze: boolean;
   milestone?: { day: StreakMilestone; starsAwarded: number };
-  message?: string;
 };
 
 const STORAGE_KEY = 'habla.streak.v1';
@@ -26,7 +22,6 @@ const CURRENT_STREAK_KEY = 'currentStreak';
 const LONGEST_STREAK_KEY = 'longestStreak';
 const TOTAL_SESSIONS_KEY = 'totalSessionsCompleted';
 const LAST_SESSION_DATE_KEY = 'lastSessionDate';
-const FREEZES_KEY = 'freezes';
 const TOTAL_STARS_KEY = 'totalStars';
 const LAST_7_DAYS_KEY = 'last7Days';
 
@@ -98,7 +93,6 @@ function defaultStreakState(today: string): StreakState {
     longestStreak: 0,
     lastSessionDate: null,
     totalSessionsCompleted: 0,
-    freezes: 0,
     totalStars: 0,
     last7Days: getDefaultLast7Days(today),
   };
@@ -109,12 +103,11 @@ function defaultStreakState(today: string): StreakState {
  * the flat keys written by `save()`, rebuild state so streak data survives.
  */
 async function getStreakStateFromFlatKeys(today: string): Promise<StreakState | null> {
-  const [cs, ls, ts, lsd, fz, tst, l7] = await Promise.all([
+  const [cs, ls, ts, lsd, tst, l7] = await Promise.all([
     AsyncStorage.getItem(CURRENT_STREAK_KEY),
     AsyncStorage.getItem(LONGEST_STREAK_KEY),
     AsyncStorage.getItem(TOTAL_SESSIONS_KEY),
     AsyncStorage.getItem(LAST_SESSION_DATE_KEY),
-    AsyncStorage.getItem(FREEZES_KEY),
     AsyncStorage.getItem(TOTAL_STARS_KEY),
     AsyncStorage.getItem(LAST_7_DAYS_KEY),
   ]);
@@ -124,7 +117,6 @@ async function getStreakStateFromFlatKeys(today: string): Promise<StreakState | 
     ls != null ||
     ts != null ||
     (lsd != null && lsd.length > 0) ||
-    fz != null ||
     tst != null ||
     (l7 != null && l7.length > 0);
 
@@ -147,7 +139,6 @@ async function getStreakStateFromFlatKeys(today: string): Promise<StreakState | 
     longestStreak: Math.max(0, parseInt(ls ?? '0', 10) || 0),
     lastSessionDate,
     totalSessionsCompleted: Math.max(0, parseInt(ts ?? '0', 10) || 0),
-    freezes: Math.max(0, parseInt(fz ?? '0', 10) || 0),
     totalStars: Math.max(0, parseInt(tst ?? '0', 10) || 0),
     last7Days,
   };
@@ -171,7 +162,6 @@ export async function getStreakState(): Promise<StreakState> {
       longestStreak: Math.max(0, clampInt(parsed.longestStreak, 0)),
       lastSessionDate,
       totalSessionsCompleted: Math.max(0, clampInt(parsed.totalSessionsCompleted, 0)),
-      freezes: Math.max(0, clampInt((parsed as any).freezes, 0)),
       totalStars: Math.max(0, clampInt((parsed as any).totalStars, 0)),
       last7Days: normalizeLast7Days((parsed as any).last7Days, today),
     };
@@ -197,7 +187,6 @@ async function save(state: StreakState) {
     AsyncStorage.setItem(LONGEST_STREAK_KEY, String(state.longestStreak)),
     AsyncStorage.setItem(TOTAL_SESSIONS_KEY, String(state.totalSessionsCompleted)),
     AsyncStorage.setItem(LAST_SESSION_DATE_KEY, state.lastSessionDate ?? ''),
-    AsyncStorage.setItem(FREEZES_KEY, String(state.freezes)),
     AsyncStorage.setItem(TOTAL_STARS_KEY, String(state.totalStars)),
     AsyncStorage.setItem(LAST_7_DAYS_KEY, JSON.stringify(state.last7Days)),
   ]);
@@ -251,8 +240,6 @@ export async function updateStreak(today: string = formatLocalDate()): Promise<S
   await save(next);
   return {
     state: next,
-    usedFreeze: false,
-    earnedFreeze: false,
     milestone,
   };
 }
@@ -265,6 +252,62 @@ export async function recordLessonCompleted(today: string = formatLocalDate()): 
 export type PracticeStreakUpdateResult = StreakUpdateResult & {
   starsAwarded: number; // practice stars only
 };
+
+export type QuickFirePracticeResult = {
+  state: StreakState;
+  streakMaintained: boolean;
+  gemsAwarded: number;
+};
+
+/**
+ * Quick-fire practice: streak maintained at 7+/10 correct; gems awarded separately via gems.ts.
+ */
+export async function recordQuickFirePractice(
+  correctCount: number,
+  gemsAwarded: number,
+  today: string = formatLocalDate(),
+): Promise<QuickFirePracticeResult> {
+  const prev = await getStreakState();
+  const streakMaintained = correctCount >= 7;
+
+  if (!streakMaintained) {
+    return {
+      state: prev,
+      streakMaintained: false,
+      gemsAwarded,
+    };
+  }
+
+  const next: StreakState = {
+    ...prev,
+    last7Days: normalizeLast7Days(prev.last7Days, today),
+  };
+
+  if (next.lastSessionDate === null) {
+    next.currentStreak = 1;
+    next.lastSessionDate = today;
+  } else if (next.lastSessionDate === today) {
+    // Already maintained for today.
+  } else {
+    const gap = daysBetween(next.lastSessionDate, today);
+    if (gap === 1) {
+      next.currentStreak += 1;
+    } else {
+      next.currentStreak = 1;
+    }
+    next.lastSessionDate = today;
+  }
+
+  next.longestStreak = Math.max(next.longestStreak, next.currentStreak);
+  next.last7Days = next.last7Days.map((d) => (d.date === today ? { ...d, completed: true } : d));
+
+  await save(next);
+  return {
+    state: next,
+    streakMaintained: true,
+    gemsAwarded,
+  };
+}
 
 /**
  * Practice sessions can keep a streak alive even if the user didn't finish the full lesson.
@@ -280,8 +323,6 @@ export async function recordPracticeCompleted(
   if (completedExercises < 3) {
     return {
       state: prev,
-      usedFreeze: false,
-      earnedFreeze: false,
       starsAwarded: 0,
     };
   }
@@ -316,8 +357,6 @@ export async function recordPracticeCompleted(
   await save(next);
   return {
     state: next,
-    usedFreeze: false,
-    earnedFreeze: false,
     milestone: undefined,
     starsAwarded: Math.max(0, Math.trunc(completedExercises)),
   };

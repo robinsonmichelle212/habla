@@ -1,8 +1,10 @@
 import { checkDrillAnswer, generateDrills } from '@/lib/claude';
+import { GemEarnedToast } from '@/components/gem-earned-toast';
+import { addGems, calculateLessonGems, gemsForStreakMilestone } from '@/lib/gems';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
-import { appendLessonHistory } from '@/lib/practice-storage';
+import { appendLessonHistory, lessonTypeLabel } from '@/lib/practice-storage';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -44,8 +46,9 @@ export default function SummaryScreen() {
   const lessonType = session.lessonType;
   const writing = session.writingEvaluation;
   const didRecordRef = useRef(false);
-  const [streakBanner, setStreakBanner] = useState<string | null>(null);
-  const [milestone, setMilestone] = useState<{ day: number; starsAwarded: number } | null>(null);
+  const [milestone, setMilestone] = useState<{ day: number } | null>(null);
+  const [gemsEarned, setGemsEarned] = useState(0);
+  const [showGemToast, setShowGemToast] = useState(false);
 
   const [mode, setMode] = useState<'summary' | 'drills'>('summary');
   const [loadingDrills, setLoadingDrills] = useState(false);
@@ -65,25 +68,69 @@ export default function SummaryScreen() {
     didRecordRef.current = true;
 
     updateStreak()
-      .then((res) => {
+      .then(async (res) => {
         const currentStreak = res.state.currentStreak;
         const today = formatLocalDate();
         console.log('Streak saved:', currentStreak)
         console.log('Last session date saved:', today)
-        if (res.usedFreeze && res.message) setStreakBanner(res.message);
-        if (res.milestone) setMilestone(res.milestone);
+        if (res.milestone) setMilestone({ day: res.milestone.day });
 
-        if (analysis) {
-          void appendLessonHistory({
+        const overallScore =
+          analysis?.overallScore ?? analysis?.correctnessScore ?? 0;
+        const milestoneDay =
+          res.milestone && gemsForStreakMilestone(res.milestone.day) > 0
+            ? res.milestone.day
+            : null;
+        const gems = calculateLessonGems(overallScore, milestoneDay);
+
+        if (gems > 0) {
+          try {
+            await addGems(gems);
+            setGemsEarned(gems);
+            setShowGemToast(true);
+          } catch {
+            // Non-blocking: summary should not fail if gems cannot be saved.
+          }
+        }
+
+        if (analysis && lessonType) {
+          const breakdown = analysis.breakdown ?? {
+            grammar: {
+              score: Math.round(writing?.grammarScore ?? 0),
+              topic: 'Grammar',
+              details: [],
+            },
+            vocabulary: {
+              score: Math.round(writing?.vocabularyScore ?? 0),
+              topic: 'Vocabulary',
+              details: [],
+            },
+            fluency: {
+              score: Math.round(writing?.fluencyScore ?? 0),
+              details: [],
+            },
+            writing: {
+              score: Math.round(
+                ((writing?.grammarScore ?? 0) +
+                  (writing?.vocabularyScore ?? 0) +
+                  (writing?.fluencyScore ?? 0)) /
+                  3,
+              ),
+              details: [],
+            },
+          };
+
+          const lessonHistoryEntry = {
             date: today,
+            overallScore: analysis.overallScore ?? analysis.correctnessScore ?? 0,
+            breakdown,
             weakAreas: analysis.weakAreas ?? [],
             focusAreas: analysis.focusAreas ?? [],
-            scores: {
-              grammar: Math.round(writing?.grammarScore ?? 0),
-              vocabulary: Math.round(writing?.vocabularyScore ?? 0),
-              fluency: Math.round(writing?.fluencyScore ?? 0),
-            },
-          }).catch(() => {
+            lessonType: lessonTypeLabel(lessonType),
+          };
+          console.log('[Habla] Saving to lessonHistory:', JSON.stringify(lessonHistoryEntry, null, 2));
+
+          void appendLessonHistory(lessonHistoryEntry).catch(() => {
             // Non-blocking: summary should not fail if lesson history cannot be saved.
           });
         }
@@ -166,6 +213,12 @@ export default function SummaryScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
+      {showGemToast ? (
+        <GemEarnedToast
+          amount={gemsEarned}
+          onDone={() => setShowGemToast(false)}
+        />
+      ) : null}
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
@@ -174,18 +227,11 @@ export default function SummaryScreen() {
         showsVerticalScrollIndicator={false}>
         <Text style={styles.pageTitle}>Lesson Complete</Text>
 
-        {streakBanner ? (
-          <View style={styles.banner}>
-            <Text style={styles.bannerText}>{streakBanner}</Text>
-          </View>
-        ) : null}
-
-        {milestone ? (
+        {milestone && gemsForStreakMilestone(milestone.day) > 0 ? (
           <View style={styles.milestoneCard}>
             <Text style={styles.milestoneTitle}>Streak milestone!</Text>
             <Text style={styles.milestoneText}>
-              Day {milestone.day} — +{milestone.starsAwarded} gold star
-              {milestone.starsAwarded === 1 ? '' : 's'} ⭐
+              Day {milestone.day} — +{gemsForStreakMilestone(milestone.day)} gems 💎
             </Text>
           </View>
         ) : null}
