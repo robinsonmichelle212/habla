@@ -168,6 +168,27 @@ export function getNextLevelRequirements(history: LessonHistoryEntry[]): NextLev
   };
 }
 
+/** Estimate sessions to reach a target average at the current improvement pace. */
+export function estimateSessionsToReachScore(
+  currentAverage: number,
+  targetAverage: number,
+  history: LessonHistoryEntry[],
+): number | null {
+  const gap = Math.max(0, targetAverage - currentAverage);
+  if (gap <= 0) return 0;
+  if (history.length < 2) return null;
+
+  const recent = history.slice(-RECENT_SESSION_COUNT);
+  const scores = recent.map((e) => overallLessonScore(e));
+  let totalDelta = 0;
+  for (let i = 1; i < scores.length; i++) {
+    totalDelta += scores[i] - scores[i - 1];
+  }
+  const avgImprovement = totalDelta / Math.max(1, scores.length - 1);
+  if (avgImprovement <= 0.5) return null;
+  return Math.ceil(gap / avgImprovement);
+}
+
 export function averageScoreForTopic(
   history: LessonHistoryEntry[],
   topic: string,

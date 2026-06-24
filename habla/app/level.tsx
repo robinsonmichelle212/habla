@@ -1,3 +1,4 @@
+import { LevelDetailModal, LevelProgressionList } from '@/components/level-detail-modal';
 import {
   GRAMMAR_WEEK_DEFINITIONS,
   TOTAL_CURRICULUM_WEEKS,
@@ -29,6 +30,7 @@ import {
   getLevelBarometer,
   getNextLevelRequirements,
   type LevelBand,
+  type LevelBandId,
   type SkillSnapshot,
 } from '@/lib/level-progress';
 import {
@@ -92,6 +94,7 @@ export default function LevelScreen() {
   const [history, setHistory] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
   const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
   const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
+  const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -185,7 +188,12 @@ export default function LevelScreen() {
             { paddingBottom: Math.max(insets.bottom, 24) },
           ]}
           showsVerticalScrollIndicator={false}>
-          {barometer ? <LevelBarometerSection barometer={barometer} /> : null}
+          {barometer ? (
+            <LevelBarometerSection
+              barometer={barometer}
+              onSelectBand={setSelectedBandId}
+            />
+          ) : null}
           {barometer ? (
             <>
               <GrammarCurriculumSection
@@ -208,20 +216,37 @@ export default function LevelScreen() {
           ) : null}
         </ScrollView>
       )}
+
+      {barometer ? (
+        <LevelDetailModal
+          visible={selectedBandId != null}
+          bandId={selectedBandId}
+          currentBandIndex={barometer.bandIndex}
+          currentAverage={barometer.averageScore}
+          history={history}
+          nextRequirements={nextReq}
+          onClose={() => setSelectedBandId(null)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
 
 function LevelBarometerSection({
   barometer,
+  onSelectBand,
 }: {
   barometer: NonNullable<ReturnType<typeof getLevelBarometer>>;
+  onSelectBand: (id: LevelBandId) => void;
 }) {
   return (
     <View style={styles.section}>
       <Text style={styles.sectionTitle}>Level barometer</Text>
       <View style={styles.card}>
-        <Text style={styles.currentBand}>{barometer.band.label}</Text>
+        <Pressable onPress={() => onSelectBand(barometer.band.id)} accessibilityRole="button">
+          <Text style={[styles.currentBand, styles.currentBandTappable]}>{barometer.band.label}</Text>
+          <Text style={styles.tapHint}>Tap your level for a full description</Text>
+        </Pressable>
         <Text style={styles.avgLabel}>
           {barometer.averageScore}% average · last 10 sessions
         </Text>
@@ -233,6 +258,8 @@ function LevelBarometerSection({
               band={band}
               active={i === barometer.bandIndex}
               passed={i < barometer.bandIndex}
+              locked={i > barometer.bandIndex}
+              onPress={() => onSelectBand(band.id)}
             />
           ))}
         </View>
@@ -241,6 +268,12 @@ function LevelBarometerSection({
           <View style={[styles.progressFill, { width: `${barometer.progressInBand}%` }]} />
         </View>
         <Text style={styles.progressMessage}>{barometer.message}</Text>
+
+        <Text style={styles.progressionHeader}>B1 → B2 progression</Text>
+        <LevelProgressionList
+          currentBandIndex={barometer.bandIndex}
+          onSelectBand={onSelectBand}
+        />
       </View>
     </View>
   );
@@ -250,29 +283,39 @@ function BandPill({
   band,
   active,
   passed,
+  locked,
+  onPress,
 }: {
   band: LevelBand;
   active: boolean;
   passed: boolean;
+  locked?: boolean;
+  onPress: () => void;
 }) {
   const short = band.label.replace('B1 ', '').replace('B2 ', 'B2·');
   return (
-    <View
-      style={[
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [
         styles.bandPill,
         active && styles.bandPillActive,
         passed && !active && styles.bandPillPassed,
-      ]}>
+        locked && styles.bandPillLocked,
+        pressed && styles.bandPillPressed,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel={`${band.label} level`}>
       <Text
         style={[
           styles.bandPillText,
           active && styles.bandPillTextActive,
           passed && !active && styles.bandPillTextPassed,
+          locked && styles.bandPillTextLocked,
         ]}
         numberOfLines={1}>
-        {short}
+        {passed ? '✓ ' : ''}{short}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
@@ -601,7 +644,18 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   currentBand: { fontSize: 28, fontWeight: '900', color: palette.text, marginBottom: 4 },
+  currentBandTappable: { color: palette.accent },
+  tapHint: { fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 8 },
   avgLabel: { fontSize: 14, fontWeight: '600', color: palette.muted, marginBottom: 16 },
+  progressionHeader: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.7,
+    marginTop: 16,
+    marginBottom: 4,
+  },
   bandRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -623,9 +677,16 @@ const styles = StyleSheet.create({
   bandPillPassed: {
     borderColor: 'rgba(52, 211, 153, 0.4)',
   },
+  bandPillLocked: {
+    opacity: 0.45,
+  },
+  bandPillPressed: {
+    opacity: 0.88,
+  },
   bandPillText: { fontSize: 10, fontWeight: '800', color: palette.muted },
   bandPillTextActive: { color: palette.accent },
   bandPillTextPassed: { color: palette.green },
+  bandPillTextLocked: { color: palette.grey },
   progressTrack: {
     height: 10,
     borderRadius: 999,
