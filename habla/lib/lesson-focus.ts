@@ -7,6 +7,9 @@ const KEY_CURRENT_GRAMMAR_TOPIC = 'currentGrammarTopic';
 const KEY_GRAMMAR_WEEK_START = 'grammarWeekStartDate';
 const KEY_LAST_VOCAB_THEME = 'lastVocabTheme';
 const KEY_LAST_YOUR_DAY_TOPIC = 'lastYourDayTopic';
+const KEY_COVERED_GRAMMAR_TOPICS = 'coveredGrammarTopics';
+const KEY_COVERED_VOCAB_THEMES = 'coveredVocabThemes';
+const KEY_COVERED_YOUR_DAY_TOPICS = 'coveredYourDayTopics';
 
 export const GRAMMAR_TOPICS = [
   'Present tense',
@@ -121,6 +124,73 @@ function isYourDayTopic(value: string | null): value is YourDayTopic {
   return !!value && (YOUR_DAY_TOPICS as readonly string[]).includes(value);
 }
 
+async function addToCoveredList(key: string, value: string): Promise<void> {
+  const raw = await AsyncStorage.getItem(key);
+  let list: string[] = [];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        list = parsed.filter((x) => typeof x === 'string');
+      }
+    } catch {
+      list = [];
+    }
+  }
+  const normalized = value.trim();
+  if (!normalized) return;
+  if (list.some((x) => x.toLowerCase() === normalized.toLowerCase())) return;
+  list.push(normalized);
+  await AsyncStorage.setItem(key, JSON.stringify(list));
+}
+
+async function recordFocusCoverage(focus: LessonFocusContext): Promise<void> {
+  switch (focus.kind) {
+    case 'grammar':
+      await addToCoveredList(KEY_COVERED_GRAMMAR_TOPICS, focus.topic);
+      break;
+    case 'vocabulary':
+      await addToCoveredList(KEY_COVERED_VOCAB_THEMES, focus.theme);
+      break;
+    case 'your-day':
+      await addToCoveredList(KEY_COVERED_YOUR_DAY_TOPICS, focus.starter);
+      break;
+  }
+}
+
+export async function getCoveredGrammarTopicsFromStorage(): Promise<string[]> {
+  const raw = await AsyncStorage.getItem(KEY_COVERED_GRAMMAR_TOPICS);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getCoveredVocabThemesFromStorage(): Promise<string[]> {
+  const raw = await AsyncStorage.getItem(KEY_COVERED_VOCAB_THEMES);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function getCoveredYourDayTopicsFromStorage(): Promise<string[]> {
+  const raw = await AsyncStorage.getItem(KEY_COVERED_YOUR_DAY_TOPICS);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
 function pickNextInRotation<T extends string>(items: readonly T[], last: T | null): T {
   if (!last) return items[0];
   const idx = items.indexOf(last);
@@ -178,32 +248,38 @@ async function selectYourDayTopic(): Promise<YourDayTopic> {
 
 /** Resolves and persists the focus for a lesson type (grammar weekly, vocab/your-day per lesson). */
 export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<LessonFocusContext> {
+  let focus: LessonFocusContext;
   switch (lessonKind) {
     case 'grammar': {
       const topic = await resolveWeeklyGrammarTopic();
-      return {
+      focus = {
         kind: 'grammar',
         topic,
         topicSpanish: GRAMMAR_TOPIC_SPANISH[topic],
       };
+      break;
     }
     case 'vocabulary': {
       const theme = await selectVocabTheme();
-      return {
+      focus = {
         kind: 'vocabulary',
         theme,
         themeSpanish: VOCAB_THEME_SPANISH[theme],
       };
+      break;
     }
     case 'your-day': {
       const starter = await selectYourDayTopic();
-      return {
+      focus = {
         kind: 'your-day',
         starter,
         starterSpanish: YOUR_DAY_STARTER_SPANISH[starter],
       };
+      break;
     }
   }
+  await recordFocusCoverage(focus);
+  return focus;
 }
 
 /** Read the current weekly grammar topic from AsyncStorage (no rotation side effects). */

@@ -10,7 +10,6 @@ import {
   getBestDayThisWeek,
   getDrillHistory,
   getLessonHistory,
-  getProgressionLevel,
   getTodayScoreInfo,
   getTopScoreThisWeek,
   getWeekScoreChart,
@@ -19,6 +18,7 @@ import {
   type TodayScoreInfo,
   type WeekChartDay,
 } from '@/lib/practice-storage';
+import { getProgressionLevel } from '@/lib/level-progress';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
 import { getTotalGems } from '@/lib/gems';
 
@@ -237,6 +237,16 @@ export default function HomeScreen() {
             label="Level"
             value={!statsHydrated ? '—' : levelLabel ?? '--'}
             compact
+            onPress={
+              statsHydrated
+                ? () => {
+                    if (Platform.OS !== 'web') {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }
+                    router.push('/level');
+                  }
+                : undefined
+            }
           />
         </View>
 

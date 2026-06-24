@@ -585,17 +585,6 @@ export function getWeekScoreChart(
   return days;
 }
 
-/** B1→B2 label from average score across the last 10 sessions. */
-export function getProgressionLevel(history: LessonHistoryEntry[]): string | null {
-  const recent = history.slice(-10);
-  if (!recent.length) return null;
-  const avg = recent.reduce((sum, e) => sum + overallLessonScore(e), 0) / recent.length;
-  if (avg < 60) return 'B1 Beginner';
-  if (avg < 70) return 'B1 Developing';
-  if (avg < 80) return 'B1 Confident';
-  if (avg < 90) return 'B1 Strong';
-  return 'B2 Emerging';
-}
 
 export function buildPriorityWeakAreas(lessons: LessonHistoryEntry[]): PriorityWeakArea[] {
   const counts = new Map<string, { label: string; frequency: number }>();
