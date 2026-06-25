@@ -194,7 +194,6 @@ async function save(state: StreakState) {
 
 export async function updateStreak(today: string = formatLocalDate()): Promise<StreakUpdateResult> {
   const prev = await getStreakState();
-  const prevStreak = prev.currentStreak;
 
   const next: StreakState = {
     ...prev,
@@ -225,23 +224,17 @@ export async function updateStreak(today: string = formatLocalDate()): Promise<S
   next.longestStreak = Math.max(next.longestStreak, next.currentStreak);
   next.last7Days = next.last7Days.map((d) => (d.date === today ? { ...d, completed: true } : d));
 
-  // Keep milestone feedback for existing UI.
-  const streakChanged = next.currentStreak !== prevStreak;
-  let milestone: StreakUpdateResult['milestone'] = undefined;
-  if (streakChanged) {
-    const milestoneDay = MILESTONES.find((m) => m === next.currentStreak);
-    if (milestoneDay) {
-      const starsAwarded = starsForMilestone(milestoneDay);
-      if (starsAwarded > 0) next.totalStars += starsAwarded;
-      milestone = { day: milestoneDay, starsAwarded };
-    }
-  }
-
   await save(next);
-  return {
-    state: next,
-    milestone,
-  };
+  return { state: next };
+}
+
+export async function addStars(amount: number): Promise<number> {
+  const add = Math.max(0, Math.trunc(amount));
+  if (add === 0) return (await getStreakState()).totalStars;
+  const state = await getStreakState();
+  const next = { ...state, totalStars: state.totalStars + add };
+  await save(next);
+  return next.totalStars;
 }
 
 // Backward compatible name used by existing screens.

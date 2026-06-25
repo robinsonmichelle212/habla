@@ -5,6 +5,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
+import { MilestoneProvider } from '@/contexts/milestone-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
@@ -64,23 +65,25 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <WrappedBootstrap />
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="lesson" options={{ headerShown: false }} />
-        <Stack.Screen name="practice" options={{ headerShown: false }} />
-        <Stack.Screen name="writing" options={{ headerShown: false }} />
-        <Stack.Screen name="level" options={{ headerShown: false }} />
-        <Stack.Screen name="progress" options={{ headerShown: false }} />
-        <Stack.Screen name="read-lesson" options={{ headerShown: false }} />
-        <Stack.Screen name="summary" options={{ headerShown: false }} />
-        <Stack.Screen name="wrapped" options={{ headerShown: false }} />
-        <Stack.Screen name="gem-shop" options={{ headerShown: false, presentation: 'modal' }} />
-        <Stack.Screen name="bonus-round" options={{ headerShown: false }} />
-        <Stack.Screen name="conjugation-tables" options={{ headerShown: false }} />
-        <Stack.Screen name="tense-guide" options={{ headerShown: false }} />
-      </Stack>
-      <StatusBar style="auto" />
+      <MilestoneProvider>
+        <WrappedBootstrap />
+        <Stack>
+          <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="lesson" options={{ headerShown: false }} />
+          <Stack.Screen name="practice" options={{ headerShown: false }} />
+          <Stack.Screen name="writing" options={{ headerShown: false }} />
+          <Stack.Screen name="level" options={{ headerShown: false }} />
+          <Stack.Screen name="progress" options={{ headerShown: false }} />
+          <Stack.Screen name="read-lesson" options={{ headerShown: false }} />
+          <Stack.Screen name="summary" options={{ headerShown: false }} />
+          <Stack.Screen name="wrapped" options={{ headerShown: false }} />
+          <Stack.Screen name="gem-shop" options={{ headerShown: false, presentation: 'modal' }} />
+          <Stack.Screen name="bonus-round" options={{ headerShown: false }} />
+          <Stack.Screen name="conjugation-tables" options={{ headerShown: false }} />
+          <Stack.Screen name="tense-guide" options={{ headerShown: false }} />
+        </Stack>
+        <StatusBar style="auto" />
+      </MilestoneProvider>
     </ThemeProvider>
   );
 }

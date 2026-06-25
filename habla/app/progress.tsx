@@ -6,6 +6,7 @@ import { ProgressSummaryHeader } from '@/components/progress/progress-summary';
 import { StreakHistoryChart } from '@/components/progress/streak-history-chart';
 import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
 import { LevelBarometerSection } from '@/components/level-barometer-section';
+import { MilestonesSection } from '@/components/milestones-section';
 import { LevelDetailModal } from '@/components/level-detail-modal';
 import { getLevelBarometer, getNextLevelRequirements, type LevelBandId } from '@/lib/level-progress';
 import {
@@ -223,6 +224,8 @@ export default function ProgressScreen() {
                 onSelectBand={setSelectedBandId}
               />
             ) : null}
+
+            <MilestonesSection />
 
             <Text style={styles.journeyHeading}>Your journey</Text>
 

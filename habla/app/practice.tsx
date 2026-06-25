@@ -20,7 +20,9 @@ import {
 import { getTopErrorDNA, getWordOrderErrorDNA, hasWordOrderPatterns } from '@/lib/error-dna';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
+import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
+import { checkStreakMilestones, milestonesAfterDrill } from '@/lib/milestones';
 import { buildPriorityWeakAreas, appendDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
 import { formatWordOrderQuestionType, recordWordOrderDrillMistakes } from '@/lib/word-order-drill';
@@ -95,6 +97,7 @@ export default function PracticeScreen() {
   const insets = useSafeAreaInsets();
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didAwardRef = useRef(false);
+  const { celebrate } = useMilestoneCelebration();
   const didAutoStartRef = useRef(false);
   const activeDrillRef = useRef<PracticeDrillKind>('vocabulary');
 
@@ -118,6 +121,7 @@ export default function PracticeScreen() {
 
   const [score, setScore] = useState(0);
   const [gemsEarned, setGemsEarned] = useState(0);
+  const [gemToastAmount, setGemToastAmount] = useState(0);
   const [showGemToast, setShowGemToast] = useState(false);
   const [savingRewards, setSavingRewards] = useState(false);
   const [masteryEvent, setMasteryEvent] = useState<VocabMasteryEvent | null>(null);
@@ -414,7 +418,10 @@ export default function PracticeScreen() {
     const finalScore = results.filter((r) => r.correct).length;
     const gems = gemsForPracticeDrill(finalScore, TOTAL_QUESTIONS);
     setGemsEarned(gems);
-    if (gems > 0) setShowGemToast(true);
+    if (gems > 0) {
+      setGemToastAmount(gems);
+      setShowGemToast(true);
+    }
     setSavingRewards(true);
 
     void (async () => {
@@ -446,7 +453,24 @@ export default function PracticeScreen() {
             }));
           await recordWordOrderDrillMistakes(wordOrderWrong);
         }
-        await recordQuickFirePractice(finalScore, gems);
+        const streakState = await recordQuickFirePractice(finalScore, gems);
+        const today = formatLocalDate();
+        const celebrations = [
+          ...(await milestonesAfterDrill(today)),
+          ...(await checkStreakMilestones(streakState.state.currentStreak, today)),
+        ];
+        if (celebrations.length > 0) {
+          const milestoneGems = celebrations.reduce((sum, c) => sum + c.gemsAwarded, 0);
+          celebrate(celebrations, {
+            onAllDismissed: () => {
+              if (milestoneGems > 0) {
+                setGemsEarned((prev) => prev + milestoneGems);
+                setGemToastAmount(milestoneGems);
+                setShowGemToast(true);
+              }
+            },
+          });
+        }
         await syncStreakReminder();
       } catch {
         // Non-blocking: still show end screen.
@@ -469,7 +493,7 @@ export default function PracticeScreen() {
       <StatusBar style="light" />
       {showGemToast ? (
         <GemEarnedToast
-          amount={gemsEarned}
+          amount={gemToastAmount}
           onDone={() => setShowGemToast(false)}
         />
       ) : null}

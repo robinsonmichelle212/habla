@@ -28,21 +28,10 @@ export async function deductGems(amount: number): Promise<{ success: boolean; to
   return { success: true, total: next };
 }
 
-/** Gems for hitting a streak milestone (7, 14, or 30 days). */
-export function gemsForStreakMilestone(day: number): number {
-  if (day === 7) return 5;
-  if (day === 14) return 15;
-  if (day === 30) return 50;
-  return 0;
-}
-
-/** Full lesson completed: +3, perfect 100%: +4, streak milestone gems stack on top. */
-export function calculateLessonGems(overallScore: number, streakMilestoneDay?: number | null): number {
+/** Full lesson completed: +3, perfect 100%: +4. */
+export function calculateLessonGems(overallScore: number): number {
   let total = 3;
   if (overallScore >= 100) total += 4;
-  if (streakMilestoneDay != null) {
-    total += gemsForStreakMilestone(streakMilestoneDay);
-  }
   return total;
 }
 

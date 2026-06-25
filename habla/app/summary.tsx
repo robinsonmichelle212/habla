@@ -3,7 +3,13 @@ import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
 import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChallenge } from '@/lib/daily-challenge';
 import { useSummaryReveal } from '@/hooks/use-summary-reveal';
-import { addGems, calculateLessonGems, gemsForStreakMilestone, getTotalGems } from '@/lib/gems';
+import { useMilestoneCelebration } from '@/contexts/milestone-context';
+import { addGems, calculateLessonGems, getTotalGems } from '@/lib/gems';
+import {
+  checkPersonalBestMilestone,
+  milestonesOnLessonComplete,
+  type MilestoneCelebration,
+} from '@/lib/milestones';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
@@ -62,7 +68,9 @@ export default function SummaryScreen() {
   const writing = session.writingEvaluation;
   const speaking = session.speakingEvaluation;
   const didRecordRef = useRef(false);
-  const [milestone, setMilestone] = useState<{ day: number } | null>(null);
+  const pendingCelebrationsRef = useRef<MilestoneCelebration[]>([]);
+  const milestoneGemPulse = useRef(new Animated.Value(1)).current;
+  const { celebrate } = useMilestoneCelebration();
   const [gemsEarned, setGemsEarned] = useState(0);
   const [gemsBefore, setGemsBefore] = useState(0);
   const [streakHydrated, setStreakHydrated] = useState(false);
@@ -91,20 +99,18 @@ export default function SummaryScreen() {
       .then(async (res) => {
         const currentStreak = res.state.currentStreak;
         const today = formatLocalDate();
-        console.log('Streak saved:', currentStreak)
-        console.log('Last session date saved:', today)
-        if (res.milestone) setMilestone({ day: res.milestone.day });
 
         const overallScore =
           analysis?.overallScore ?? analysis?.correctnessScore ?? 0;
-        const milestoneDay =
-          res.milestone && gemsForStreakMilestone(res.milestone.day) > 0
-            ? res.milestone.day
-            : null;
-        const gems = calculateLessonGems(overallScore, milestoneDay);
+        const gems = calculateLessonGems(overallScore);
 
         const beforeGems = await getTotalGems();
         setGemsBefore(beforeGems);
+
+        let personalBestCelebration = null;
+        if (analysis && lessonType) {
+          personalBestCelebration = await checkPersonalBestMilestone(overallScore, today);
+        }
 
         if (gems > 0) {
           try {
@@ -166,7 +172,7 @@ export default function SummaryScreen() {
           };
           console.log('[Habla] Saving to lessonHistory:', JSON.stringify(lessonHistoryEntry, null, 2));
 
-          void appendLessonHistory(lessonHistoryEntry).catch(() => {
+          await appendLessonHistory(lessonHistoryEntry).catch(() => {
             // Non-blocking: summary should not fail if lesson history cannot be saved.
           });
 
@@ -207,6 +213,39 @@ export default function SummaryScreen() {
               }
             })();
           }
+        }
+
+        const sessionCelebrations = await milestonesOnLessonComplete(currentStreak, today);
+        const allCelebrations = [
+          ...(personalBestCelebration ? [personalBestCelebration] : []),
+          ...sessionCelebrations,
+        ];
+        if (allCelebrations.length > 0) {
+          pendingCelebrationsRef.current = allCelebrations;
+          celebrate(allCelebrations, {
+            onAllDismissed: () => {
+              const milestoneGems = pendingCelebrationsRef.current.reduce(
+                (sum, c) => sum + c.gemsAwarded,
+                0,
+              );
+              if (milestoneGems > 0) {
+                setGemsEarned((prev) => prev + milestoneGems);
+                Animated.sequence([
+                  Animated.timing(milestoneGemPulse, {
+                    toValue: 1.22,
+                    duration: 180,
+                    useNativeDriver: true,
+                  }),
+                  Animated.timing(milestoneGemPulse, {
+                    toValue: 1,
+                    duration: 220,
+                    useNativeDriver: true,
+                  }),
+                ]).start();
+              }
+              pendingCelebrationsRef.current = [];
+            },
+          });
         }
 
         void syncStreakReminder().catch(() => {
@@ -450,7 +489,7 @@ export default function SummaryScreen() {
               ))}
             </View>
 
-            {gemsEarned > 0 || (milestone && gemsForStreakMilestone(milestone.day) > 0) ? (
+            {gemsEarned > 0 ? (
               <Animated.View
                 style={[
                   styles.gemsEarnedCard,
@@ -463,12 +502,9 @@ export default function SummaryScreen() {
                   💎
                 </Animated.Text>
                 <Text style={styles.gemsEarnedTitle}>Gems earned</Text>
-                <Text style={styles.gemsEarnedValue}>+{gemsEarned} gems</Text>
-                {milestone && gemsForStreakMilestone(milestone.day) > 0 ? (
-                  <Text style={styles.gemsEarnedMilestone}>
-                    Streak day {milestone.day} milestone included 🎉
-                  </Text>
-                ) : null}
+                <Animated.Text style={[styles.gemsEarnedValue, { transform: [{ scale: milestoneGemPulse }] }]}>
+                  +{gemsEarned} gems
+                </Animated.Text>
               </Animated.View>
             ) : null}
 

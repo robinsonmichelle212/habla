@@ -1,5 +1,6 @@
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
+import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { JaviSpanishMessage } from '@/components/javi-spanish-message';
 import {
   askCultureJavi,
@@ -39,6 +40,7 @@ import {
   type BonusRoundId,
 } from '@/lib/gem-shop';
 import { addGems } from '@/lib/gems';
+import { milestonesAfterBonusRound } from '@/lib/milestones';
 import { parseJaviResponse } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
 import { ensureMicPermission } from '@/lib/mic-permission';
@@ -102,6 +104,7 @@ export default function BonusRoundScreen() {
   const [maxChatTurns, setMaxChatTurns] = useState(4);
   const [quizTimerSec, setQuizTimerSec] = useState(QUIZ_TIMER_SEC_DEFAULT);
   const [gemsEarned, setGemsEarned] = useState(0);
+  const [gemToastAmount, setGemToastAmount] = useState(0);
   const [showGemToast, setShowGemToast] = useState(false);
   const [resultTitle, setResultTitle] = useState('');
   const [resultDetail, setResultDetail] = useState('');
@@ -139,6 +142,7 @@ export default function BonusRoundScreen() {
   const [roundMeta, setRoundMeta] = useState<Record<string, unknown>>({});
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { celebrate } = useMilestoneCelebration();
 
   const latestAssistantChatIndex = useMemo(() => {
     for (let i = chatMessages.length - 1; i >= 0; i -= 1) {
@@ -159,13 +163,27 @@ export default function BonusRoundScreen() {
       if (gems > 0) {
         await addGems(gems);
         setGemsEarned(gems);
+        setGemToastAmount(gems);
         setShowGemToast(true);
+      }
+      const celebrations = await milestonesAfterBonusRound();
+      if (celebrations.length > 0) {
+        const milestoneGems = celebrations.reduce((sum, c) => sum + c.gemsAwarded, 0);
+        celebrate(celebrations, {
+          onAllDismissed: () => {
+            if (milestoneGems > 0) {
+              setGemsEarned((prev) => prev + milestoneGems);
+              setGemToastAmount(milestoneGems);
+              setShowGemToast(true);
+            }
+          },
+        });
       }
       setResultTitle(title);
       setResultDetail(detail);
       setStage('result');
     },
-    [roundId, roundLevel],
+    [roundId, roundLevel, celebrate],
   );
 
   const submitQuizAnswer = useCallback(
@@ -380,7 +398,7 @@ export default function BonusRoundScreen() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="light" />
-        {showGemToast ? <GemEarnedToast amount={gemsEarned} onDone={() => setShowGemToast(false)} /> : null}
+        {showGemToast ? <GemEarnedToast amount={gemToastAmount} onDone={() => setShowGemToast(false)} /> : null}
         <View style={styles.resultWrap}>
           <Text style={styles.resultEmoji}>{def.emoji}</Text>
           <Text style={styles.resultTitle}>{resultTitle}</Text>
