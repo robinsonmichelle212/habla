@@ -194,6 +194,19 @@ export default function HomeScreen() {
           <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
         </View>
 
+        <Pressable
+          onPress={() => {
+            if (Platform.OS !== 'web') {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            }
+            router.push('/progress');
+          }}
+          style={({ pressed }) => [styles.progressButton, pressed && styles.progressButtonPressed]}
+          accessibilityRole="button"
+          accessibilityLabel="My Progress">
+          <Text style={styles.progressButtonText}>My Progress 📈</Text>
+        </Pressable>
+
         <View style={styles.statsRow}>
           <StatCard
             label={todaysScoreInfo.label}
@@ -471,6 +484,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.muted,
     textAlign: 'center',
+  },
+  progressButton: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    paddingVertical: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 28,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+  },
+  progressButtonPressed: {
+    opacity: 0.92,
+    transform: [{ scale: 0.99 }],
+  },
+  progressButtonText: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: palette.text,
+    letterSpacing: 0.2,
   },
   statsRow: {
     flexDirection: 'row',

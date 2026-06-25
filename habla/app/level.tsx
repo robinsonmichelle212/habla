@@ -203,6 +203,14 @@ export default function LevelScreen() {
             { paddingBottom: Math.max(insets.bottom, 24) },
           ]}
           showsVerticalScrollIndicator={false}>
+          <Pressable
+            onPress={() => router.push('/progress')}
+            style={({ pressed }) => [styles.progressLink, pressed && styles.progressLinkPressed]}
+            accessibilityRole="button">
+            <Text style={styles.progressLinkText}>My Progress 📈</Text>
+            <Text style={styles.progressLinkHint}>Score trends · activity · streaks</Text>
+          </Pressable>
+
           {barometer ? (
             <LevelBarometerSection
               barometer={barometer}
@@ -643,6 +651,26 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: '900', color: palette.text, marginBottom: 8 },
   emptyText: { fontSize: 15, fontWeight: '600', color: palette.muted, textAlign: 'center' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 16 },
+  progressLink: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 20,
+  },
+  progressLinkPressed: { opacity: 0.92 },
+  progressLinkText: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: palette.text,
+    marginBottom: 4,
+  },
+  progressLinkHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+  },
   section: { marginBottom: 20 },
   sectionTitle: {
     fontSize: 13,

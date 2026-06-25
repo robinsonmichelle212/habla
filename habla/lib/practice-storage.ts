@@ -4,6 +4,7 @@ import type { LessonType } from '@/lib/claude';
 import { formatLocalDate } from '@/lib/streak';
 
 const STORAGE_KEY = 'lessonHistory';
+const MAX_LESSON_HISTORY = 200;
 
 export type ScoreBreakdownSection = {
   score: number;
@@ -333,7 +334,7 @@ export async function getLessonHistory(): Promise<LessonHistoryEntry[]> {
 
 export async function appendLessonHistory(entry: LessonHistoryEntry): Promise<void> {
   const current = await getLessonHistory();
-  const next = [...current, entry].slice(-10);
+  const next = [...current, entry].slice(-MAX_LESSON_HISTORY);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
 }
 
