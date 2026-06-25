@@ -1,4 +1,5 @@
 import { SummaryScoreRing } from '@/components/summary-score-ring';
+import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
 import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChallenge } from '@/lib/daily-challenge';
 import { useSummaryReveal } from '@/hooks/use-summary-reveal';
@@ -42,6 +43,15 @@ const palette = {
   blue: '#60A5FA',
   blueBg: 'rgba(96, 165, 250, 0.12)',
 };
+
+function splitBilingualMessage(message: string): { spanish: string; english?: string } {
+  const idx = message.indexOf(' / ');
+  if (idx === -1) return { spanish: message };
+  return {
+    spanish: message.slice(0, idx).trim(),
+    english: message.slice(idx + 3).trim(),
+  };
+}
 
 export default function SummaryScreen() {
   const router = useRouter();
@@ -479,7 +489,12 @@ export default function SummaryScreen() {
               {challengeLoading ? (
                 <ActivityIndicator color={palette.accent} style={styles.challengeLoader} />
               ) : dailyChallengeText ? (
-                <Text style={styles.challengeText}>{dailyChallengeText}</Text>
+                <InteractiveSpanishText
+                  text={dailyChallengeText}
+                  source="conversation"
+                  style={styles.challengeText}
+                  contextSentence={dailyChallengeText}
+                />
               ) : (
                 <Text style={styles.challengeFallback}>
                   Take one thing from today&apos;s lesson and name it in Spanish before bed tonight.
@@ -577,7 +592,12 @@ export default function SummaryScreen() {
                       </Text>
                     </View>
                     {speaking.javiFeedback ? (
-                      <Text style={styles.speakingFeedback}>{speaking.javiFeedback}</Text>
+                      <InteractiveSpanishText
+                        text={speaking.javiFeedback}
+                        source="conversation"
+                        style={styles.speakingFeedback}
+                        contextSentence={speaking.javiFeedback}
+                      />
                     ) : null}
                   </View>
                 ) : null}
@@ -590,7 +610,22 @@ export default function SummaryScreen() {
 
                 <View style={[styles.encourageCard, styles.supplementaryCard]}>
                   <Text style={styles.encourageTitle}>Javi says</Text>
-                  <Text style={styles.encourageText}>{analysis.encouragingMessage}</Text>
+                  {(() => {
+                    const parts = splitBilingualMessage(analysis.encouragingMessage);
+                    return (
+                      <>
+                        <InteractiveSpanishText
+                          text={parts.spanish}
+                          source="conversation"
+                          style={styles.encourageText}
+                          contextSentence={parts.spanish}
+                        />
+                        {parts.english ? (
+                          <Text style={styles.encourageEnglish}>{parts.english}</Text>
+                        ) : null}
+                      </>
+                    );
+                  })()}
                 </View>
               </>
             ) : null}
@@ -1029,6 +1064,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.text,
     lineHeight: 20,
+  },
+  encourageEnglish: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 20,
+    marginTop: 6,
   },
   practiceButton: {
     backgroundColor: palette.blue,

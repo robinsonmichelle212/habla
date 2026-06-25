@@ -74,7 +74,7 @@ LESSON STRUCTURE — follow in order across the conversation:
 
 PART 1 — WHY AND WHEN (your first 2–3 messages in this session):
 - Explain in simple B1 Spanish when this grammar point is used and why it matters.
-- Use the Translate: line on every message so English is available via reveal.
+- Use the Translate: line on every message so learners can tap individual words for meaning.
 - Give 2 real-life examples using high-frequency vocabulary (core 50 words first).
 - Example style: "El pretérito indefinido se usa para acciones completadas en el pasado."
 
@@ -171,7 +171,7 @@ Response format (every message must follow this structure):
 2) Your main reply in Spanish only: at most 2–3 sentences (bracketed [🇦🇷 Argentine: …] notes count as part of this Spanish block). Do not put English inside the Spanish block—no English glosses or translations there (dialect tags in Spanish are fine).
 3) On its own line after the Spanish, add the English translation using exactly this prefix (nothing before it on that line):
    Translate: <English translation of your Spanish sentences>
-   The Translate line reveals the meaning; everything above it stays Spanish-only.
+   The Translate line is stored for reference; learners tap words for meaning instead of revealing the full translation.
 
 General:
 - Stay on this lesson type; if the learner drifts, acknowledge briefly and steer back.
@@ -1190,21 +1190,29 @@ export type VocabLookupJson = {
   exampleSpanish: string;
   exampleEnglish: string;
   difficulty: 'B1' | 'B2';
+  partOfSpeech?: string;
+  usageNote?: string;
 };
 
-export async function lookupVocabularyWord(spanishWord: string): Promise<VocabLookupJson> {
+export async function lookupVocabularyWord(
+  spanishWord: string,
+  contextSentence?: string,
+): Promise<VocabLookupJson> {
   const anthropic = getClient();
   const model = getModel();
 
   const system = `You are a Spanish lexicographer for B1–B2 learners.
 Return ONLY valid JSON. No markdown.`;
 
-  const user = `Look up this Spanish word or short phrase for a learner saving it to their vocabulary list: "${spanishWord.trim()}"
+  const user = `Look up this Spanish word or short phrase for a learner: "${spanishWord.trim()}"
+${contextSentence ? `\nIt appeared in this sentence: ${contextSentence}` : ''}
 
 Return JSON exactly:
 {
   "spanish": "canonical Spanish form",
   "english": "English translation (use / for multiple meanings)",
+  "partOfSpeech": "verb / noun / adjective / adverb / preposition / pronoun / other",
+  "usageNote": "optional brief usage note for complex words, or empty string",
   "exampleSpanish": "one natural B1 example sentence using the word",
   "exampleEnglish": "English translation of the example",
   "difficulty": "B1" or "B2"
@@ -1225,6 +1233,8 @@ Return JSON exactly:
     exampleSpanish: String(parsed.exampleSpanish ?? '').trim(),
     exampleEnglish: String(parsed.exampleEnglish ?? '').trim(),
     difficulty: parsed.difficulty === 'B2' ? 'B2' : 'B1',
+    partOfSpeech: typeof parsed.partOfSpeech === 'string' ? parsed.partOfSpeech.trim() : undefined,
+    usageNote: typeof parsed.usageNote === 'string' ? parsed.usageNote.trim() : undefined,
   };
 }
 

@@ -1,6 +1,6 @@
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
-import { JaviTypingText } from '@/components/javi-typing-text';
+import { JaviSpanishMessage } from '@/components/javi-spanish-message';
 import {
   askCultureJavi,
   askFilmJavi,
@@ -77,6 +77,10 @@ const palette = {
 const QUIZ_TIMER_SEC_DEFAULT = 15;
 
 type Stage = 'gate' | 'loading' | 'play' | 'result';
+
+function safeSpanish(text: string): string {
+  return text.split(/\r?\n\s*(Translate|Translation)\s*:/i)[0].trim();
+}
 
 function parseRoundId(value: string | undefined): BonusRoundId | null {
   const ids: BonusRoundId[] = ['quiz', 'slang', 'roleplay', 'shadowing', 'culture', 'immersion', 'music', 'film'];
@@ -211,9 +215,7 @@ export default function BonusRoundScreen() {
           roundId === 'immersion'
             ? { spanish: reply, translation: undefined }
             : parseJaviResponse(reply);
-        const assistantText = parsed.translation
-          ? `${parsed.spanish}\n${parsed.translation}`
-          : parsed.spanish;
+        const assistantText = parsed.spanish;
         const withReply = [...next, { role: 'assistant' as const, text: assistantText }];
         setChatMessages(withReply);
         if (nextTurns >= maxChatTurns) {
@@ -477,10 +479,11 @@ export default function BonusRoundScreen() {
                 <>
                   {chatMessages.map((m, i) => (
                     <View key={i} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
-                      {m.role === 'assistant' && i === latestAssistantChatIndex ? (
-                        <JaviTypingText
-                          text={m.text}
-                          animate
+                      {m.role === 'assistant' ? (
+                        <JaviSpanishMessage
+                          spanish={safeSpanish(m.text)}
+                          source="conversation"
+                          animate={i === latestAssistantChatIndex}
                           resetKey={`${i}-${m.text}`}
                           style={styles.bubbleText}
                         />
@@ -544,10 +547,11 @@ export default function BonusRoundScreen() {
               {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
               {chatMessages.map((m, i) => (
                 <View key={i} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
-                  {m.role === 'assistant' && i === latestAssistantChatIndex ? (
-                    <JaviTypingText
-                      text={m.text}
-                      animate
+                  {m.role === 'assistant' ? (
+                    <JaviSpanishMessage
+                      spanish={safeSpanish(m.text)}
+                      source="conversation"
+                      animate={i === latestAssistantChatIndex}
                       resetKey={`${i}-${m.text}`}
                       style={styles.bubbleText}
                     />

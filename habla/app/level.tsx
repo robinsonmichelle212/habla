@@ -24,6 +24,7 @@ import {
   getMasteredVocabulary,
   getSavedVocabulary,
   getVocabStats,
+  vocabSourceLabel,
   type SavedVocabWord,
   type VocabStats,
 } from '@/lib/saved-vocabulary';
@@ -612,7 +613,7 @@ function VocabWordRow({ word, mastered = false }: { word: SavedVocabWord; master
       ) : null}
       <Text style={styles.vocabMeta}>
         {word.difficulty}
-        {word.source === 'reading' ? ' · from reading 📖' : ''}
+        {vocabSourceLabel(word) ? ` · ${vocabSourceLabel(word)}` : ''}
         {' · '}seen {word.timesSeen}× · {word.timesCorrect} correct
       </Text>
     </View>

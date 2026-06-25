@@ -10,7 +10,7 @@ const LONGEST_MASTERY_STREAK_KEY = 'vocabLongestMasteryStreak';
 
 export type VocabDifficulty = 'B1' | 'B2';
 
-export type VocabSource = 'lesson' | 'reading' | 'slang' | 'music';
+export type VocabSource = 'lesson' | 'reading' | 'slang' | 'music' | 'conversation' | 'phrase';
 
 export type SavedVocabWord = {
   spanish: string;
@@ -25,6 +25,8 @@ export type SavedVocabWord = {
   mastered: boolean;
   source?: VocabSource;
   needsReview?: boolean;
+  partOfSpeech?: string;
+  isPhrase?: boolean;
 };
 
 export type SavedVocabQuestion = {
@@ -70,14 +72,20 @@ function normalizeWord(raw: unknown): SavedVocabWord | null {
     source:
       o.source === 'reading'
         ? 'reading'
-        : o.source === 'slang'
-          ? 'slang'
-          : o.source === 'music'
-            ? 'music'
-            : o.source === 'lesson'
-              ? 'lesson'
-              : undefined,
+        : o.source === 'conversation'
+          ? 'conversation'
+          : o.source === 'phrase'
+            ? 'phrase'
+            : o.source === 'slang'
+              ? 'slang'
+              : o.source === 'music'
+                ? 'music'
+                : o.source === 'lesson'
+                  ? 'lesson'
+                  : undefined,
     needsReview: Boolean(o.needsReview),
+    partOfSpeech: typeof o.partOfSpeech === 'string' ? o.partOfSpeech.trim() : undefined,
+    isPhrase: Boolean(o.isPhrase),
   };
 }
 
@@ -133,7 +141,15 @@ function wordKey(spanish: string): string {
 
 export async function saveVocabularyWord(
   spanishInput: string,
-  options?: { source?: VocabSource; needsReview?: boolean; english?: string; exampleSpanish?: string },
+  options?: {
+    source?: VocabSource;
+    needsReview?: boolean;
+    english?: string;
+    exampleSpanish?: string;
+    exampleEnglish?: string;
+    partOfSpeech?: string;
+    isPhrase?: boolean;
+  },
 ): Promise<{
   word: SavedVocabWord;
   alreadyExists: boolean;
@@ -166,8 +182,8 @@ export async function saveVocabularyWord(
   const word: SavedVocabWord = {
     spanish: lookup.spanish || spanish,
     english: lookup.english,
-    exampleSpanish: lookup.exampleSpanish,
-    exampleEnglish: lookup.exampleEnglish,
+    exampleSpanish: options?.exampleSpanish || lookup.exampleSpanish,
+    exampleEnglish: options?.exampleEnglish || lookup.exampleEnglish,
     difficulty: lookup.difficulty === 'B2' ? 'B2' : 'B1',
     dateSaved: formatLocalDate(),
     timesCorrect: 0,
@@ -176,10 +192,26 @@ export async function saveVocabularyWord(
     mastered: false,
     source: options?.source,
     needsReview: options?.needsReview,
+    partOfSpeech: options?.partOfSpeech,
+    isPhrase: options?.isPhrase,
   };
   await saveAll([...existing, word]);
   await addGems(1);
   return { word, alreadyExists: false };
+}
+
+export function vocabSourceLabel(word: SavedVocabWord): string {
+  if (word.isPhrase || word.source === 'phrase') return '🔗 phrase';
+  if (word.source === 'reading') return '📖 reading';
+  if (word.source === 'conversation' || word.source === 'lesson') return '💬 conversation';
+  if (word.source === 'slang') return 'slang';
+  if (word.source === 'music') return 'music';
+  return '';
+}
+
+export async function isWordSaved(spanish: string): Promise<boolean> {
+  const words = await getSavedVocabulary();
+  return words.some((w) => wordKey(w.spanish) === wordKey(spanish));
 }
 
 export async function saveReadingVocabularyWords(

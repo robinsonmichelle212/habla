@@ -1,3 +1,4 @@
+import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { SpeakingFeedbackCard } from '@/components/speaking-feedback-card';
@@ -942,15 +943,32 @@ export default function LessonScreen() {
                       ) : null}
                       <View style={styles.feedbackCard}>
                         <Text style={styles.feedbackLabel}>Corrected version</Text>
-                        <Text style={styles.feedbackText}>{writingResult.correctedText}</Text>
+                        <InteractiveSpanishText
+                          text={writingResult.correctedText}
+                          source="conversation"
+                          style={styles.feedbackText}
+                          contextSentence={writingResult.correctedText}
+                        />
                       </View>
                       <Text style={styles.feedbackBody}>{writingResult.feedback}</Text>
                       {writingResult.corrections.length ? (
                         <View style={styles.correctionsCard}>
                           {writingResult.corrections.map((c, i) => (
                             <View key={i} style={styles.correctionRow}>
-                              <Text style={styles.correctionWrong}>{c.mistake}</Text>
-                              <Text style={styles.correctionRight}>→ {c.correction}</Text>
+                              <InteractiveSpanishText
+                                text={c.mistake}
+                                source="conversation"
+                                style={styles.correctionWrong}
+                                textColor={palette.error}
+                                contextSentence={writingResult.correctedText}
+                              />
+                              <InteractiveSpanishText
+                                text={c.correction}
+                                source="conversation"
+                                style={styles.correctionRight}
+                                textColor={palette.green}
+                                contextSentence={writingResult.correctedText}
+                              />
                               <Text style={styles.correctionNote}>{c.explanation}</Text>
                             </View>
                           ))}
