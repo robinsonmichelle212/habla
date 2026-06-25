@@ -1,5 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dna';
+
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 
@@ -92,7 +94,29 @@ ${
   }
 }
 
-function buildSystemPrompt(lessonType: LessonType, focus: LessonFocusContext): string {
+function buildErrorDnaAppendix(topErrors: ErrorDNAInput[]): string {
+  if (!topErrors.length) return '';
+
+  const lines = topErrors
+    .slice(0, 3)
+    .map((item) => {
+      const example = item.example ? ` (e.g. ${item.example})` : '';
+      return `- ${item.error}${example}`;
+    })
+    .join('\n');
+
+  return `
+
+These are this user's most persistent errors based on their history:
+${lines}
+Naturally watch for these specific mistakes during the lesson. If they occur, gently correct them and reference that this is a recurring pattern: "Recuerda — esto es algo en lo que seguimos trabajando juntos."`;
+}
+
+function buildSystemPrompt(
+  lessonType: LessonType,
+  focus: LessonFocusContext,
+  topErrors: ErrorDNAInput[] = [],
+): string {
   return `You are Javi, a warm, encouraging Spanish tutor in a mobile app.
 
 This session's lesson type: ${lessonType}
@@ -126,7 +150,7 @@ General:
 Vocabulary teaching (all lesson types):
 - Roughly once per conversation (not every message), naturally introduce 1–2 words slightly above B1 level.
 - Use each new word in a natural Spanish sentence first, then briefly explain in Spanish on a new line starting with "Por cierto —" e.g. "Por cierto — 'conseguir' means to achieve or to get. You might want to save that one."
-- Keep it conversational — never turn into a vocabulary list. The learner can save words with the app's Save a word feature.`;
+- Keep it conversational — never turn into a vocabulary list. The learner can save words with the app's Save a word feature.${buildErrorDnaAppendix(topErrors)}`;
 }
 
 function extractText(response: Anthropic.Messages.Message): string {
@@ -203,6 +227,14 @@ export type LessonBreakdownJson = {
   };
 };
 
+export type ErrorDNAAnalysisItem = {
+  error: string;
+  category: 'grammar' | 'writing' | 'vocabulary' | 'speaking';
+  occurrences: number;
+  example: string;
+  correction: string;
+};
+
 export type LessonAnalysisJson = {
   strongAreas: string[];
   weakAreas: string[];
@@ -211,6 +243,7 @@ export type LessonAnalysisJson = {
   overallScore: number;
   encouragingMessage: string;
   breakdown: LessonBreakdownJson;
+  errorDNA?: ErrorDNAAnalysisItem[];
 };
 
 export type WritingTaskJson = {
@@ -266,6 +299,7 @@ export async function askJavi(
   userMessage: string,
   priorExchanges: JaviMessage[] = [],
   focus: LessonFocusContext,
+  topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
   const trimmed = userMessage.trim();
   if (!trimmed) {
@@ -286,7 +320,7 @@ export async function askJavi(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 512,
-    system: buildSystemPrompt(lessonType, focus),
+    system: buildSystemPrompt(lessonType, focus, topErrors),
     messages,
   });
 
@@ -309,6 +343,7 @@ LESSON PHASE: SPEAKING (voice only — learner listens to you).
 export async function generateWarmUpOpening(
   lessonType: LessonType,
   focus: LessonFocusContext,
+  topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -316,7 +351,7 @@ export async function generateWarmUpOpening(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
-    system: `${buildSystemPrompt(lessonType, focus)}${WARMUP_PHASE_APPENDIX}`,
+    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${WARMUP_PHASE_APPENDIX}`,
     messages: [
       {
         role: 'user',
@@ -335,6 +370,7 @@ export async function askJaviWarmUp(
   priorExchanges: JaviMessage[],
   focus: LessonFocusContext,
   javiMessageNumber: number,
+  topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -343,7 +379,7 @@ export async function askJaviWarmUp(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
-    system: `${buildSystemPrompt(lessonType, focus)}${WARMUP_PHASE_APPENDIX}
+    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${WARMUP_PHASE_APPENDIX}
 You have sent ${javiMessageNumber} message(s) so far. Send warm-up message ${javiMessageNumber + 1} of about ${target}. ${
       javiMessageNumber >= target - 1
         ? 'This should be your final warm-up message — summarise what to focus on and encourage them for the writing task.'
@@ -362,6 +398,7 @@ export async function generateSpeakingIntro(
   lessonType: LessonType,
   taskPrompt: string,
   focus: LessonFocusContext,
+  topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -369,7 +406,7 @@ export async function generateSpeakingIntro(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 350,
-    system: `${buildSystemPrompt(lessonType, focus)}${SPEAKING_PHASE_APPENDIX}`,
+    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}`,
     messages: [
       {
         role: 'user',
@@ -391,6 +428,7 @@ export async function askJaviSpeaking(
   priorExchanges: JaviMessage[],
   focus: LessonFocusContext,
   writingContext: { originalText: string; correctedText: string; corrections: { mistake: string; correction: string }[] },
+  topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -398,7 +436,7 @@ export async function askJaviSpeaking(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 280,
-    system: `${buildSystemPrompt(lessonType, focus)}${SPEAKING_PHASE_APPENDIX}
+    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}
 The learner's written version was:
 ${writingContext.originalText}
 Corrected version:
@@ -537,6 +575,9 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
 - correctnessScore: integer percent (0-100) for overall Spanish correctness
 - overallScore: integer percent (0-100) average across grammar, vocabulary, fluency, and writing in breakdown
 - encouragingMessage: one short motivational sentence in Spanish then English (same line, separated by " / ")
+- errorDNA: array of specific recurring mistake patterns from this lesson (empty array if none). Each item:
+  { error: string (concise pattern description), category: "grammar"|"writing"|"vocabulary"|"speaking", occurrences: 1, example: string (real mistake from this lesson), correction: string (how to fix + brief explanation) }
+  Only include precise, repeatable mistakes — not vague weak areas. Set occurrences to 1 for each new pattern found today.
 - breakdown: object with:
   - grammar: {
       score: 0-100 integer,
@@ -777,6 +818,7 @@ export type QuickFireQuestion = {
   prompt: string;
   expectedAnswer: string;
   acceptableAnswers?: string[];
+  targetsErrorDna?: boolean;
 };
 
 export type VocabLookupJson = {
@@ -846,13 +888,21 @@ export async function generateQuickFireQuestions(
   prioritizedWeakAreas: PrioritizedWeakAreaInput[],
   count = 10,
   grammarContext?: GrammarDrillContext,
+  errorDnaTargets: ErrorDNAInput[] = [],
 ): Promise<QuickFireQuestion[]> {
   if (grammarContext) {
-    return generateGrammarCurriculumQuestions(grammarContext, count);
+    return generateGrammarCurriculumQuestions(grammarContext, count, errorDnaTargets);
   }
 
   const anthropic = getClient();
   const model = getModel();
+  const errorDnaBlock =
+    errorDnaTargets.length > 0
+      ? `
+Exactly 2 of the ${count} questions MUST target these recurring user errors (one question each for the top 2):
+${formatErrorDnaForDrillPrompt(errorDnaTargets)}
+For those 2 questions set "targetsErrorDna": true.`
+      : '';
 
   const system = `You are Javi, a Spanish tutor creating quick-fire B1 drill questions.
 Return ONLY valid JSON. No markdown. No extra keys.`;
@@ -860,6 +910,7 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
   const user = `Generate exactly ${count} quick-fire Spanish practice questions for a B1 learner.
 
 Target these prioritised weak areas (focus most on highest priority): ${JSON.stringify(prioritizedWeakAreas)}
+${errorDnaBlock}
 
 Use exactly 2 questions of each type when count is 10; for ${count} questions vary types evenly.
 - fill_blank: e.g. "Yo ___ (ir) al mercado ayer" → answer: "fui"
@@ -883,7 +934,8 @@ Return JSON exactly:
       "type": "fill_blank",
       "prompt": "...",
       "expectedAnswer": "...",
-      "acceptableAnswers": ["..."]
+      "acceptableAnswers": ["..."],
+      "targetsErrorDna": false
     }
   ]
 }
@@ -914,12 +966,14 @@ Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
       acceptableAnswers: Array.isArray(q.acceptableAnswers)
         ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
         : undefined,
+      targetsErrorDna: Boolean(q.targetsErrorDna),
     }));
 }
 
 export async function generateGrammarCurriculumQuestions(
   grammarContext: GrammarDrillContext,
   count = 10,
+  errorDnaTargets: ErrorDNAInput[] = [],
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
@@ -929,11 +983,20 @@ Return ONLY valid JSON. No markdown. No extra keys.
 
 ${CORE_VOCABULARY_PROMPT}`;
 
+  const errorDnaBlock =
+    errorDnaTargets.length > 0
+      ? `
+Exactly 2 of the ${count} questions MUST target these recurring user errors (one question each for the top 2):
+${formatErrorDnaForDrillPrompt(errorDnaTargets)}
+For those 2 questions set "targetsErrorDna": true.`
+      : '';
+
   const user = `Generate exactly ${count} grammar drill questions for curriculum week ${grammarContext.weekNumber}.
 
 Grammar topic: ${grammarContext.topic}
 Focus verbs: ${grammarContext.focusVerbs.join(', ')}
 Contrast week (preterite vs imperfect): ${grammarContext.includesContrast ? 'yes' : 'no'}
+${errorDnaBlock}
 
 Use ONLY this week's topic and focus verbs. Vocabulary must be top-1000 Spanish words only.
 
@@ -958,7 +1021,8 @@ Return JSON exactly:
       "type": "conjugate",
       "prompt": "...",
       "expectedAnswer": "...",
-      "acceptableAnswers": ["..."]
+      "acceptableAnswers": ["..."],
+      "targetsErrorDna": false
     }
   ]
 }
@@ -989,6 +1053,7 @@ Valid type values: ${GRAMMAR_DRILL_TYPES.join(', ')}`;
       acceptableAnswers: Array.isArray(q.acceptableAnswers)
         ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
         : undefined,
+      targetsErrorDna: Boolean(q.targetsErrorDna),
     }));
 }
 

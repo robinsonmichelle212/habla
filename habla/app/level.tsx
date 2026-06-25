@@ -1,4 +1,11 @@
+import { ErrorDnaSection } from '@/components/error-dna-section';
 import { LevelDetailModal, LevelProgressionList } from '@/components/level-detail-modal';
+import {
+  getArchivedErrorDNA,
+  getErrorDNA,
+  type ArchivedErrorDNAItem,
+  type ErrorDNAItem,
+} from '@/lib/error-dna';
 import {
   GRAMMAR_WEEK_DEFINITIONS,
   TOTAL_CURRICULUM_WEEKS,
@@ -94,6 +101,8 @@ export default function LevelScreen() {
   const [history, setHistory] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
   const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
   const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
+  const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
+  const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
 
   useFocusEffect(
@@ -110,6 +119,8 @@ export default function LevelScreen() {
             curriculum,
             stats,
             words,
+            activeErrors,
+            archivedErrors,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredVocabThemesFromStorage(),
@@ -117,6 +128,8 @@ export default function LevelScreen() {
             resolveGrammarCurriculum(),
             getVocabStats(),
             getSavedVocabulary(),
+            getErrorDNA(),
+            getArchivedErrorDNA(),
           ]);
           if (cancelled) return;
 
@@ -135,6 +148,8 @@ export default function LevelScreen() {
           setNextReq(getNextLevelRequirements(lessonHistory));
           setVocabStats(stats);
           setSavedWords(words);
+          setErrorDna(activeErrors);
+          setArchivedErrorDna(archivedErrors);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -201,6 +216,7 @@ export default function LevelScreen() {
                 history={history}
                 onReset={handleResetCurriculum}
               />
+              <ErrorDnaSection errors={errorDna} archived={archivedErrorDna} history={history} />
               <VocabSection covered={vocabCovered} coveredCount={vocabCoveredCount} history={history} />
               <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} />
               {nextReq ? <NextLevelSection requirements={nextReq} /> : null}

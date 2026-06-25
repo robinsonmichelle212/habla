@@ -1,4 +1,5 @@
 import { analyzeConversation, evaluateWriting, generateWritingTask } from '@/lib/claude';
+import { mergeErrorDnaFromLesson } from '@/lib/error-dna';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import {
@@ -206,6 +207,9 @@ export default function WritingScreen() {
         encouragingMessage: analysisJson.encouragingMessage ?? '',
         breakdown: mergeWritingIntoBreakdown(baseBreakdown, result, taskPrompt),
       };
+      if (analysisJson.errorDNA?.length) {
+        await mergeErrorDnaFromLesson(analysisJson.errorDNA);
+      }
       setLessonSession({ analysis });
       router.push('/summary');
     } catch (e) {

@@ -15,6 +15,7 @@ import {
   generateQuickFireQuestions,
   type PrioritizedWeakAreaInput,
 } from '@/lib/claude';
+import { getTopErrorDNA } from '@/lib/error-dna';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
@@ -187,6 +188,8 @@ export default function PracticeScreen() {
     setStage('loading');
 
     try {
+      const errorDnaTargets = await getTopErrorDNA(2);
+
       if (isGrammarDrill) {
         const curriculum = await resolveGrammarCurriculum();
         const weekDef = getWeekDefinition(curriculum.currentWeek);
@@ -195,7 +198,7 @@ export default function PracticeScreen() {
           weekNumber: weekDef.week,
           focusVerbs: weekDef.focusVerbs,
           includesContrast: weekDef.includesContrast,
-        });
+        }, errorDnaTargets);
 
         if (grammarBatch.length < 1) {
           Alert.alert('Could not load questions', 'Try again in a moment.');
@@ -214,7 +217,7 @@ export default function PracticeScreen() {
       const activeWords = getActiveVocabulary(savedWords);
       const vocabCount = Math.min(VOCAB_DRILL_SLOTS, activeWords.length);
       const weakCount = TOTAL_QUESTIONS - vocabCount;
-      const weakBatch = await generateQuickFireQuestions(prioritizedForPrompt, weakCount);
+      const weakBatch = await generateQuickFireQuestions(prioritizedForPrompt, weakCount, undefined, errorDnaTargets);
       const vocabBatch = buildSavedVocabQuestions(activeWords, vocabCount);
       const mixed = mixPracticeQuestions(weakBatch, vocabBatch);
 
@@ -462,6 +465,9 @@ export default function PracticeScreen() {
               </Text>
 
               <View style={[styles.questionCard, flash === 'correct' && styles.flashGreenCard, flash === 'incorrect' && styles.flashRedCard]}>
+                {currentQuestion.kind === 'quick' && currentQuestion.question.targetsErrorDna ? (
+                  <Text style={styles.javiWatchingLabel}>Javi's watching this one 👀</Text>
+                ) : null}
                 <Text style={styles.questionType}>{formatPracticeQuestionType(currentQuestion)}</Text>
                 <Text style={styles.questionPrompt}>{practiceQuestionPrompt(currentQuestion)}</Text>
 
@@ -698,6 +704,12 @@ const styles = StyleSheet.create({
   },
   flashGreenCard: { backgroundColor: palette.greenBg, borderColor: 'rgba(52, 211, 153, 0.5)' },
   flashRedCard: { backgroundColor: palette.redBg, borderColor: 'rgba(248, 113, 113, 0.5)' },
+  javiWatchingLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: palette.accent,
+    marginBottom: 8,
+  },
   questionType: {
     fontSize: 12,
     fontWeight: '800',

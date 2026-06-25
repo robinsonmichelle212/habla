@@ -16,6 +16,7 @@ import {
 } from '@/lib/claude';
 import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
+import { mergeErrorDnaFromLesson, getTopErrorDNA, type ErrorDNAItem } from '@/lib/error-dna';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
 import {
   conversationToJaviMessages,
@@ -120,6 +121,7 @@ export default function LessonScreen() {
 
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
   const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
+  const [topErrorDna, setTopErrorDna] = useState<ErrorDNAItem[]>([]);
   const [loadingFocus, setLoadingFocus] = useState(true);
   const [phase, setPhase] = useState<LessonPhase>('warmup');
 
@@ -219,6 +221,9 @@ export default function LessonScreen() {
     prepareLessonFocus(lessonKind)
       .then(async (focus) => {
         if (cancelled) return;
+        const topErrors = await getTopErrorDNA(3);
+        if (cancelled) return;
+        setTopErrorDna(topErrors);
         setLessonFocus(focus);
         setLessonSession({
           lessonType: lessonKindToLessonType(lessonKind),
@@ -233,7 +238,7 @@ export default function LessonScreen() {
           speakingEvaluation: undefined,
         });
 
-        const openingText = await generateWarmUpOpening(lessonKindToLessonType(lessonKind), focus);
+        const openingText = await generateWarmUpOpening(lessonKindToLessonType(lessonKind), focus, topErrors);
         const parsed = parseJaviResponse(openingText);
         setWarmUpMessages([
           {
@@ -304,7 +309,7 @@ export default function LessonScreen() {
     setWarmUpMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
 
     try {
-      const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount);
+      const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount, topErrorDna);
       const parsed = parseJaviResponse(reply);
       setWarmUpMessages((prev) => [
         ...prev,
@@ -395,7 +400,7 @@ export default function LessonScreen() {
     setVoiceError(null);
 
     try {
-      const introText = await generateSpeakingIntro(lessonType, writingPrompt, lessonFocus);
+      const introText = await generateSpeakingIntro(lessonType, writingPrompt, lessonFocus, topErrorDna);
       const parsed = parseJaviResponse(introText);
       const introMsg: ChatMessage = {
         id: newId(),
@@ -428,11 +433,18 @@ export default function LessonScreen() {
     setRevealedJaviId(null);
 
     try {
-      const javiText = await askJaviSpeaking(lessonType, trimmed, prior, lessonFocus, {
-        originalText: writingResult.originalText,
-        correctedText: writingResult.correctedText,
-        corrections: writingResult.corrections,
-      });
+      const javiText = await askJaviSpeaking(
+        lessonType,
+        trimmed,
+        prior,
+        lessonFocus,
+        {
+          originalText: writingResult.originalText,
+          correctedText: writingResult.correctedText,
+          corrections: writingResult.corrections,
+        },
+        topErrorDna,
+      );
       const parsed = parseJaviResponse(javiText);
       setSpeakingMessages((prev) => [
         ...prev,
@@ -511,6 +523,10 @@ export default function LessonScreen() {
         encouragingMessage: analysisJson.encouragingMessage ?? '',
         breakdown: mergeWritingIntoBreakdown(baseBreakdown, writingResult, writingPrompt),
       };
+
+      if (analysisJson.errorDNA?.length) {
+        await mergeErrorDnaFromLesson(analysisJson.errorDNA);
+      }
 
       setLessonSession({
         lessonType,
