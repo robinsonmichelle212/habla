@@ -111,18 +111,20 @@ export function ErrorDnaSection({
   errors,
   archived,
   history,
+  hideTitle = false,
 }: {
   errors: ErrorDNAItem[];
   archived: ArchivedErrorDNAItem[];
   history: LessonHistoryEntry[];
+  hideTitle?: boolean;
 }) {
   const [showArchived, setShowArchived] = useState(false);
   const lastSessionDate = getMostRecentSessionDate(history);
   const recentSessionDates = getLastSessionDates(history);
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Error DNA 🧬</Text>
+    <View style={hideTitle ? styles.embeddedSection : styles.section}>
+      {!hideTitle ? <Text style={styles.sectionTitle}>Error DNA 🧬</Text> : null}
       <View style={styles.card}>
         <Text style={styles.title}>Your Recurring Patterns</Text>
         <Text style={styles.subtitle}>Javi watches for these every lesson</Text>
@@ -164,6 +166,7 @@ export function ErrorDnaSection({
 
 const styles = StyleSheet.create({
   section: { marginBottom: 22 },
+  embeddedSection: { marginBottom: 0 },
   sectionTitle: {
     fontSize: 13,
     fontWeight: '800',

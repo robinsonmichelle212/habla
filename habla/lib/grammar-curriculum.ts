@@ -453,6 +453,40 @@ export function weekLabel(def: GrammarWeekDefinition): string {
   return `Week ${def.week}: ${def.topic}`;
 }
 
+export type GrammarTopicGroup = {
+  id: string;
+  name: string;
+  weeks: number[];
+};
+
+export const GRAMMAR_TOPIC_GROUPS: GrammarTopicGroup[] = [
+  { id: 'present', name: 'Present Tense', weeks: [1, 2] },
+  { id: 'past', name: 'Past Tenses', weeks: [3, 4, 5, 6, 7, 8] },
+  { id: 'future', name: 'Future and Conditional', weeks: [9, 10, 11, 12] },
+  { id: 'subjunctive', name: 'Subjunctive', weeks: [13, 14] },
+  { id: 'confusions', name: 'Common Confusions', weeks: [15, 16, 17, 18] },
+  { id: 'reflexive', name: 'Reflexive Verbs', weeks: [19, 20] },
+];
+
+export function weekRangeLabel(weeks: number[]): string {
+  if (weeks.length === 0) return '';
+  if (weeks.length === 1) return `Week ${weeks[0]}`;
+  return `Weeks ${weeks[0]}-${weeks[weeks.length - 1]}`;
+}
+
+export function weekDisplayTitle(
+  def: GrammarWeekDefinition,
+  allWeeks: GrammarWeekDefinition[] = GRAMMAR_WEEK_DEFINITIONS,
+): string {
+  const hasEarlierSameTopic = allWeeks.some(
+    (w) => w.topic === def.topic && w.week < def.week,
+  );
+  if (hasEarlierSameTopic) {
+    return `Week ${def.week} — ${def.topic} continued`;
+  }
+  return `Week ${def.week} — ${def.topic}`;
+}
+
 export async function getCurrentGrammarTopic(): Promise<GrammarTopic | null> {
   const state = await resolveGrammarCurriculum();
   return state.currentTopic;

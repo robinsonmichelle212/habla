@@ -11,7 +11,7 @@ const palette = {
   amber: '#FBBF24',
 };
 
-export function CulturalNotesSection() {
+export function CulturalNotesSection({ hideTitle = false }: { hideTitle?: boolean }) {
   const [notes, setNotes] = useState<CulturalNote[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -32,7 +32,7 @@ export function CulturalNotesSection() {
   if (loading) {
     return (
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Cultural Notes 🌍</Text>
+        {!hideTitle ? <Text style={styles.cardTitle}>Cultural Notes 🌍</Text> : null}
         <ActivityIndicator color={palette.muted} />
       </View>
     );
@@ -41,7 +41,7 @@ export function CulturalNotesSection() {
   if (!notes.length) {
     return (
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Cultural Notes 🌍</Text>
+        {!hideTitle ? <Text style={styles.cardTitle}>Cultural Notes 🌍</Text> : null}
         <Text style={styles.emptyText}>
           Complete Read with Javi lessons to build your personal encyclopedia of Spanish culture.
         </Text>
@@ -51,7 +51,7 @@ export function CulturalNotesSection() {
 
   return (
     <View style={styles.card}>
-      <Text style={styles.cardTitle}>Cultural Notes 🌍</Text>
+      {!hideTitle ? <Text style={styles.cardTitle}>Cultural Notes 🌍</Text> : null}
       <Text style={styles.subtitle}>{notes.length} notes collected</Text>
       {notes.slice(0, 8).map((note) => (
         <View key={note.id} style={styles.noteRow}>

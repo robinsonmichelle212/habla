@@ -35,7 +35,7 @@ function MilestoneRow({ item }: { item: MilestoneProgressItem }) {
   );
 }
 
-export function MilestonesSection() {
+export function MilestonesSection({ hideTitle = false }: { hideTitle?: boolean }) {
   const [items, setItems] = useState<MilestoneProgressItem[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -57,8 +57,12 @@ export function MilestonesSection() {
 
   return (
     <View style={styles.section}>
-      <Text style={styles.title}>Milestones 🌟</Text>
-      <Text style={styles.subtitle}>Big moments on your Spanish journey</Text>
+      {!hideTitle ? (
+        <>
+          <Text style={styles.title}>Milestones 🌟</Text>
+          <Text style={styles.subtitle}>Big moments on your Spanish journey</Text>
+        </>
+      ) : null}
       {loading ? (
         <ActivityIndicator color={progressPalette.accent} style={styles.loader} />
       ) : (

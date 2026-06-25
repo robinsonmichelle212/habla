@@ -13,36 +13,61 @@ const palette = {
   background: '#0B0F14',
 };
 
-export function EssentialVerbsCard() {
+type Props = {
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+};
+
+export function EssentialVerbsCard({ expanded: controlledExpanded, onExpandedChange }: Props = {}) {
   const verbs = getEssentialVerbsReference();
-  const [expanded, setExpanded] = useState<string | null>(verbs[0]?.infinitive ?? null);
+  const [internalExpanded, setInternalExpanded] = useState(false);
+  const [activeVerb, setActiveVerb] = useState<string | null>(null);
+
+  const expanded = controlledExpanded ?? internalExpanded;
+  const setExpanded = (next: boolean) => {
+    if (onExpandedChange) onExpandedChange(next);
+    else setInternalExpanded(next);
+    if (!next) setActiveVerb(null);
+  };
 
   return (
     <View style={styles.card}>
-      <Text style={styles.title}>Essential Verbs — Always Available</Text>
-      <Text style={styles.subtitle}>
-        The 10 most important Spanish verbs — tap any form to hear pronunciation
-      </Text>
-      <View style={styles.verbTabs}>
-        {verbs.map((verb) => {
-          const active = expanded === verb.infinitive;
-          return (
-            <Pressable
-              key={verb.infinitive}
-              onPress={() => setExpanded(active ? null : verb.infinitive)}
-              style={[styles.verbTab, active && styles.verbTabActive]}>
-              <Text style={[styles.verbTabText, active && styles.verbTabTextActive]}>
-                {verb.infinitive}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
+      <Pressable
+        onPress={() => setExpanded(!expanded)}
+        style={({ pressed }) => [styles.header, pressed && styles.headerPressed]}
+        accessibilityRole="button"
+        accessibilityState={{ expanded }}>
+        <Text style={styles.title}>Essential Verbs — Always Available 📋</Text>
+        <Text style={styles.chevron}>{expanded ? '▼' : '›'}</Text>
+      </Pressable>
+
       {expanded ? (
-        <ConjugationTableCard
-          verb={verbs.find((v) => v.infinitive === expanded)!}
-          compact
-        />
+        <>
+          <Text style={styles.subtitle}>
+            The 10 most important Spanish verbs — tap any form to hear pronunciation
+          </Text>
+          <View style={styles.verbTabs}>
+            {verbs.map((verb) => {
+              const active = activeVerb === verb.infinitive;
+              return (
+                <Pressable
+                  key={verb.infinitive}
+                  onPress={() => setActiveVerb(active ? null : verb.infinitive)}
+                  style={[styles.verbTab, active && styles.verbTabActive]}>
+                  <Text style={[styles.verbTabText, active && styles.verbTabTextActive]}>
+                    {verb.infinitive}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+          {activeVerb ? (
+            <ConjugationTableCard
+              verb={verbs.find((v) => v.infinitive === activeVerb)!}
+              compact
+            />
+          ) : null}
+        </>
       ) : null}
     </View>
   );
@@ -58,10 +83,23 @@ const styles = StyleSheet.create({
     gap: 10,
     marginBottom: 14,
   },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  headerPressed: { opacity: 0.92 },
   title: {
+    flex: 1,
     fontSize: 16,
     fontWeight: '900',
     color: palette.text,
+  },
+  chevron: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: palette.muted,
   },
   subtitle: {
     fontSize: 13,

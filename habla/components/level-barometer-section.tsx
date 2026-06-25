@@ -16,12 +16,19 @@ const palette = {
 type Props = {
   barometer: LevelBarometer;
   onSelectBand: (id: LevelBandId) => void;
+  hideTitle?: boolean;
+  embedded?: boolean;
 };
 
-export function LevelBarometerSection({ barometer, onSelectBand }: Props) {
+export function LevelBarometerSection({
+  barometer,
+  onSelectBand,
+  hideTitle = false,
+  embedded = false,
+}: Props) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Level barometer</Text>
+    <View style={embedded ? styles.embeddedSection : styles.section}>
+      {!hideTitle ? <Text style={styles.sectionTitle}>Level barometer</Text> : null}
       <View style={styles.card}>
         <Pressable onPress={() => onSelectBand(barometer.band.id)} accessibilityRole="button">
           <Text style={[styles.currentBand, styles.currentBandTappable]}>{barometer.band.label}</Text>
@@ -102,6 +109,7 @@ function BandPill({
 
 const styles = StyleSheet.create({
   section: { marginBottom: 20 },
+  embeddedSection: { marginBottom: 14 },
   sectionTitle: {
     fontSize: 13,
     fontWeight: '900',

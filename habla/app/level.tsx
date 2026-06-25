@@ -1,8 +1,9 @@
+import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
 import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
-import { GrammarCurriculumSection } from '@/components/grammar-curriculum-section';
 import { LevelBarometerSection } from '@/components/level-barometer-section';
 import { LevelDetailModal } from '@/components/level-detail-modal';
+import { MilestonesSection } from '@/components/milestones-section';
 import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
 import {
   getArchivedErrorDNA,
@@ -13,8 +14,12 @@ import {
 import {
   resolveGrammarCurriculum,
   resetGrammarCurriculum,
+  daysRemainingInWeek,
+  TOTAL_CURRICULUM_WEEKS,
   type GrammarCurriculumState,
 } from '@/lib/grammar-curriculum';
+import { getCulturalNotes } from '@/lib/cultural-notes';
+import { getMilestoneHistory } from '@/lib/milestones';
 import {
   getCoveredVocabThemesFromStorage,
   getCoveredYourDayTopicsFromStorage,
@@ -50,6 +55,7 @@ import {
 } from '@/lib/streak-notifications';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
+import { useRouter } from 'expo-router';
 import {
   ActivityIndicator,
   Pressable,
@@ -92,8 +98,12 @@ function skillColor(status: SkillSnapshot['status']): string {
 }
 
 export default function LevelScreen() {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+  const [culturalNoteCount, setCulturalNoteCount] = useState(0);
+  const [milestonesAchieved, setMilestonesAchieved] = useState(0);
   const [barometer, setBarometer] = useState<ReturnType<typeof getLevelBarometer>>(null);
   const [nextReq, setNextReq] = useState<ReturnType<typeof getNextLevelRequirements>>(null);
   const [grammarCurriculum, setGrammarCurriculum] = useState<GrammarCurriculumState | null>(null);
@@ -109,6 +119,16 @@ export default function LevelScreen() {
   const [resetSuccess, setResetSuccess] = useState(false);
   const [profileBadges, setProfileBadges] = useState<ProfileBadge[]>([]);
   const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
+
+  useFocusEffect(
+    useCallback(() => {
+      setExpandedSections({});
+    }, []),
+  );
+
+  const toggleSection = (id: string) => {
+    setExpandedSections((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
 
   useFocusEffect(
     useCallback(() => {
@@ -128,6 +148,8 @@ export default function LevelScreen() {
             archivedErrors,
             badges,
             reminder,
+            culturalNotes,
+            milestoneHistory,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredVocabThemesFromStorage(),
@@ -139,6 +161,8 @@ export default function LevelScreen() {
             getArchivedErrorDNA(),
             getProfileBadges(),
             getReminderTime(),
+            getCulturalNotes(),
+            getMilestoneHistory(),
           ]);
           if (cancelled) return;
 
@@ -161,6 +185,11 @@ export default function LevelScreen() {
           setArchivedErrorDna(archivedErrors);
           setProfileBadges(badges);
           setReminderTimeState(reminder);
+          setCulturalNoteCount(culturalNotes.length);
+          const achievedIds = new Set(
+            milestoneHistory.map((m) => m.id),
+          );
+          setMilestonesAchieved(achievedIds.size);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -187,6 +216,25 @@ export default function LevelScreen() {
 
   const vocabCoveredCount = VOCAB_THEMES.filter((t) => isCovered(t, vocabCovered)).length;
   const yourDayCoveredCount = YOUR_DAY_TOPICS.filter((t) => isCovered(t, yourDayCovered)).length;
+  const grammarDaysLeft = grammarCurriculum ? daysRemainingInWeek(grammarCurriculum) : 0;
+  const levelSummary = barometer
+    ? `${barometer.band.label} — ${barometer.progressInBand}% through band`
+    : 'Complete lessons to see your level';
+  const errorDnaSummary =
+    errorDna.length > 0
+      ? `${errorDna.length} recurring pattern${errorDna.length === 1 ? '' : 's'} tracked`
+      : 'No patterns tracked yet';
+  const vocabularySummary = vocabStats
+    ? `${vocabStats.saved} words saved · ${vocabStats.mastered} mastered`
+    : 'Save words during lessons';
+  const grammarSummary = grammarCurriculum
+    ? `Week ${grammarCurriculum.currentWeek} of ${TOTAL_CURRICULUM_WEEKS} — ${grammarCurriculum.currentTopic} · ${grammarDaysLeft} day${grammarDaysLeft === 1 ? '' : 's'} left`
+    : '20-week grammar path';
+  const culturalSummary =
+    culturalNoteCount > 0
+      ? `${culturalNoteCount} note${culturalNoteCount === 1 ? '' : 's'} collected`
+      : 'Complete Read lessons to collect notes';
+  const milestonesSummary = `${milestonesAchieved} of 6 achieved`;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -212,48 +260,110 @@ export default function LevelScreen() {
             </View>
           ) : null}
 
-          {profileBadges.length > 0 ? (
-            <ProfileBadgesSection badges={profileBadges} />
-          ) : null}
+          <CollapsibleProfileSection
+            title="Current Level & Barometer"
+            summary={levelSummary}
+            expanded={!!expandedSections.level}
+            onToggle={() => toggleSection('level')}>
+            {barometer ? (
+              <>
+                <LevelBarometerSection
+                  barometer={barometer}
+                  onSelectBand={setSelectedBandId}
+                  hideTitle
+                  embedded
+                />
+                {nextReq ? <NextLevelSection requirements={nextReq} embedded /> : null}
+                {profileBadges.length > 0 ? (
+                  <ProfileBadgesSection badges={profileBadges} />
+                ) : null}
+              </>
+            ) : (
+              <View style={styles.emptyWrapInline}>
+                <Text style={styles.emptyTitle}>No level data yet</Text>
+                <Text style={styles.emptyText}>Complete a few lessons to see your progression.</Text>
+              </View>
+            )}
+          </CollapsibleProfileSection>
 
-          {barometer ? (
-            <LevelBarometerSection
-              barometer={barometer}
-              onSelectBand={setSelectedBandId}
+          <CollapsibleProfileSection
+            title="Error DNA 🧬"
+            summary={errorDnaSummary}
+            expanded={!!expandedSections.errorDna}
+            onToggle={() => toggleSection('errorDna')}>
+            <ErrorDnaSection
+              errors={errorDna}
+              archived={archivedErrorDna}
+              history={history}
+              hideTitle
             />
-          ) : null}
-          {barometer ? (
-            <>
-              <GrammarCurriculumSection
-                curriculum={grammarCurriculum}
-                history={history}
-                errors={errorDna}
-                onReset={handleResetCurriculum}
-              />
-              <ErrorDnaSection errors={errorDna} archived={archivedErrorDna} history={history} />
-              <VocabSection covered={vocabCovered} coveredCount={vocabCoveredCount} history={history} />
-              <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} />
-              <CulturalNotesSection />
-              {nextReq ? <NextLevelSection requirements={nextReq} /> : null}
-            </>
-          ) : (
-            <View style={styles.emptyWrapInline}>
-              <Text style={styles.emptyTitle}>No level data yet</Text>
-              <Text style={styles.emptyText}>Complete a few lessons to see your progression.</Text>
-            </View>
-          )}
-          {vocabStats ? (
-            <SavedVocabularySection stats={vocabStats} words={savedWords} />
-          ) : null}
+          </CollapsibleProfileSection>
 
-          <SettingsSection
-            reminderTime={reminderTime}
-            onReminderChange={async (hour, minute) => {
-              await setReminderTime(hour, minute);
-              setReminderTimeState({ hour, minute });
-            }}
-            onResetCurriculum={handleResetCurriculum}
-          />
+          <CollapsibleProfileSection
+            title="Vocabulary Dashboard"
+            summary={vocabularySummary}
+            expanded={!!expandedSections.vocabulary}
+            onToggle={() => toggleSection('vocabulary')}>
+            <VocabSection
+              covered={vocabCovered}
+              coveredCount={vocabCoveredCount}
+              history={history}
+              embedded
+            />
+            <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} embedded />
+            {vocabStats ? (
+              <SavedVocabularySection stats={vocabStats} words={savedWords} embedded />
+            ) : null}
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection
+            title="Grammar Curriculum"
+            summary={grammarSummary}
+            expanded={!!expandedSections.grammar}
+            onToggle={() => toggleSection('grammar')}>
+            <Pressable
+              onPress={() => router.push('/grammar-curriculum')}
+              style={({ pressed }) => [styles.curriculumLink, pressed && styles.curriculumLinkPressed]}
+              accessibilityRole="button">
+              <Text style={styles.curriculumLinkTitle}>Open full grammar curriculum 📚</Text>
+              <Text style={styles.curriculumLinkHint}>
+                Week {grammarCurriculum?.currentWeek ?? 1} of {TOTAL_CURRICULUM_WEEKS} · tap to view all
+                weeks, conjugation tables, and tense guides
+              </Text>
+            </Pressable>
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection
+            title="Cultural Notes"
+            summary={culturalSummary}
+            expanded={!!expandedSections.cultural}
+            onToggle={() => toggleSection('cultural')}>
+            <CulturalNotesSection hideTitle />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection
+            title="Milestones 🏆"
+            summary={milestonesSummary}
+            expanded={!!expandedSections.milestones}
+            onToggle={() => toggleSection('milestones')}>
+            <MilestonesSection hideTitle />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection
+            title="Settings"
+            summary="Notifications · Curriculum · Account"
+            expanded={!!expandedSections.settings}
+            onToggle={() => toggleSection('settings')}>
+            <SettingsSection
+              reminderTime={reminderTime}
+              onReminderChange={async (hour, minute) => {
+                await setReminderTime(hour, minute);
+                setReminderTimeState({ hour, minute });
+              }}
+              onResetCurriculum={handleResetCurriculum}
+              embedded
+            />
+          </CollapsibleProfileSection>
         </ScrollView>
       )}
 
@@ -282,10 +392,12 @@ function SettingsSection({
   reminderTime,
   onReminderChange,
   onResetCurriculum,
+  embedded = false,
 }: {
   reminderTime: ReminderTime | null;
   onReminderChange: (hour: number, minute: number) => Promise<void>;
   onResetCurriculum: () => void;
+  embedded?: boolean;
 }) {
   const options: ReminderTime[] = [
     { hour: 18, minute: 0 },
@@ -295,8 +407,8 @@ function SettingsSection({
   ];
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Settings</Text>
+    <View style={embedded ? undefined : styles.section}>
+      {!embedded ? <Text style={styles.sectionTitle}>Settings</Text> : null}
       <View style={styles.card}>
         <Text style={styles.settingsLabel}>Streak reminder time</Text>
         <Text style={styles.settingsHint}>
@@ -350,14 +462,16 @@ function VocabSection({
   covered,
   coveredCount,
   history,
+  embedded = false,
 }: {
   covered: Set<string>;
   coveredCount: number;
   history: Awaited<ReturnType<typeof getLessonHistory>>;
+  embedded?: boolean;
 }) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Vocabulary progress</Text>
+    <View style={embedded ? styles.embeddedBlock : styles.section}>
+      {!embedded ? <Text style={styles.sectionTitle}>Vocabulary progress</Text> : null}
       <View style={styles.card}>
         <ProgressBarLabel count={coveredCount} total={VOCAB_THEMES.length} label="themes covered" />
         <View style={styles.progressTrack}>
@@ -390,13 +504,15 @@ function VocabSection({
 function YourDaySection({
   covered,
   coveredCount,
+  embedded = false,
 }: {
   covered: Set<string>;
   coveredCount: number;
+  embedded?: boolean;
 }) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Your Day topics</Text>
+    <View style={embedded ? styles.embeddedBlock : styles.section}>
+      {!embedded ? <Text style={styles.sectionTitle}>Your Day topics</Text> : null}
       <View style={styles.card}>
         <ProgressBarLabel count={coveredCount} total={YOUR_DAY_TOPICS.length} label="starters covered" />
         <View style={styles.progressTrack}>
@@ -427,12 +543,14 @@ function YourDaySection({
 
 function NextLevelSection({
   requirements,
+  embedded = false,
 }: {
   requirements: NonNullable<ReturnType<typeof getNextLevelRequirements>>;
+  embedded?: boolean;
 }) {
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>What you need for next level</Text>
+    <View style={embedded ? styles.embeddedBlock : styles.section}>
+      {!embedded ? <Text style={styles.sectionTitle}>What you need for next level</Text> : null}
       <View style={styles.card}>
         <View style={styles.statGrid}>
           <StatBox label="Current avg" value={`${requirements.currentAverage}%`} />
@@ -472,16 +590,18 @@ function NextLevelSection({
 function SavedVocabularySection({
   stats,
   words,
+  embedded = false,
 }: {
   stats: VocabStats;
   words: SavedVocabWord[];
+  embedded?: boolean;
 }) {
   const active = getActiveVocabulary(words);
   const mastered = getMasteredVocabulary(words);
 
   return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Saved vocabulary</Text>
+    <View style={embedded ? styles.embeddedBlock : styles.section}>
+      {!embedded ? <Text style={styles.sectionTitle}>Saved vocabulary</Text> : null}
       <View style={styles.card}>
         <View style={styles.statGrid}>
           <StatBox label="Words saved" value={String(stats.saved)} />
@@ -605,6 +725,27 @@ const styles = StyleSheet.create({
     color: palette.muted,
   },
   section: { marginBottom: 20 },
+  embeddedBlock: { marginBottom: 14 },
+  curriculumLink: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    gap: 6,
+  },
+  curriculumLinkPressed: { opacity: 0.92 },
+  curriculumLinkTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: palette.text,
+  },
+  curriculumLinkHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 18,
+  },
   sectionTitle: {
     fontSize: 13,
     fontWeight: '900',
