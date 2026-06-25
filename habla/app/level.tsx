@@ -1,7 +1,9 @@
 import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
 import { GrammarCurriculumSection } from '@/components/grammar-curriculum-section';
-import { LevelDetailModal, LevelProgressionList } from '@/components/level-detail-modal';
+import { LevelBarometerSection } from '@/components/level-barometer-section';
+import { LevelDetailModal } from '@/components/level-detail-modal';
+import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
 import {
   getArchivedErrorDNA,
   getErrorDNA,
@@ -29,11 +31,9 @@ import {
   type VocabStats,
 } from '@/lib/saved-vocabulary';
 import {
-  LEVEL_BANDS,
   averageScoreForTopic,
   getLevelBarometer,
   getNextLevelRequirements,
-  type LevelBand,
   type LevelBandId,
   type SkillSnapshot,
 } from '@/lib/level-progress';
@@ -52,7 +52,6 @@ import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -106,6 +105,8 @@ export default function LevelScreen() {
   const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetSuccess, setResetSuccess] = useState(false);
   const [profileBadges, setProfileBadges] = useState<ProfileBadge[]>([]);
   const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
 
@@ -172,20 +173,16 @@ export default function LevelScreen() {
   );
 
   const handleResetCurriculum = () => {
-    Alert.alert(
-      'Reset grammar curriculum?',
-      'This will restart from Week 1. Your lesson history and scores are kept.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Reset',
-          style: 'destructive',
-          onPress: () => {
-            void resetGrammarCurriculum().then((state) => setGrammarCurriculum(state));
-          },
-        },
-      ],
-    );
+    setShowResetModal(true);
+  };
+
+  const confirmResetCurriculum = () => {
+    setShowResetModal(false);
+    void resetGrammarCurriculum().then((state) => {
+      setGrammarCurriculum(state);
+      setResetSuccess(true);
+      setTimeout(() => setResetSuccess(false), 2500);
+    });
   };
 
   const vocabCoveredCount = VOCAB_THEMES.filter((t) => isCovered(t, vocabCovered)).length;
@@ -209,6 +206,12 @@ export default function LevelScreen() {
             { paddingBottom: Math.max(insets.bottom, 24) },
           ]}
           showsVerticalScrollIndicator={false}>
+          {resetSuccess ? (
+            <View style={styles.resetSuccessBanner}>
+              <Text style={styles.resetSuccessText}>Curriculum reset to Week 1 ✅</Text>
+            </View>
+          ) : null}
+
           {profileBadges.length > 0 ? (
             <ProfileBadgesSection badges={profileBadges} />
           ) : null}
@@ -265,6 +268,12 @@ export default function LevelScreen() {
           onClose={() => setSelectedBandId(null)}
         />
       ) : null}
+
+      <ResetCurriculumModal
+        visible={showResetModal}
+        onConfirm={confirmResetCurriculum}
+        onCancel={() => setShowResetModal(false)}
+      />
     </SafeAreaView>
   );
 }
@@ -334,93 +343,6 @@ function ProfileBadgesSection({ badges }: { badges: ProfileBadge[] }) {
         </View>
       </View>
     </View>
-  );
-}
-
-function LevelBarometerSection({
-  barometer,
-  onSelectBand,
-}: {
-  barometer: NonNullable<ReturnType<typeof getLevelBarometer>>;
-  onSelectBand: (id: LevelBandId) => void;
-}) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Level barometer</Text>
-      <View style={styles.card}>
-        <Pressable onPress={() => onSelectBand(barometer.band.id)} accessibilityRole="button">
-          <Text style={[styles.currentBand, styles.currentBandTappable]}>{barometer.band.label}</Text>
-          <Text style={styles.tapHint}>Tap your level for a full description</Text>
-        </Pressable>
-        <Text style={styles.avgLabel}>
-          {barometer.averageScore}% average · last 10 sessions
-        </Text>
-
-        <View style={styles.bandRow}>
-          {LEVEL_BANDS.map((band, i) => (
-            <BandPill
-              key={band.id}
-              band={band}
-              active={i === barometer.bandIndex}
-              passed={i < barometer.bandIndex}
-              locked={i > barometer.bandIndex}
-              onPress={() => onSelectBand(band.id)}
-            />
-          ))}
-        </View>
-
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${barometer.progressInBand}%` }]} />
-        </View>
-        <Text style={styles.progressMessage}>{barometer.message}</Text>
-
-        <Text style={styles.progressionHeader}>B1 → B2 progression</Text>
-        <LevelProgressionList
-          currentBandIndex={barometer.bandIndex}
-          onSelectBand={onSelectBand}
-        />
-      </View>
-    </View>
-  );
-}
-
-function BandPill({
-  band,
-  active,
-  passed,
-  locked,
-  onPress,
-}: {
-  band: LevelBand;
-  active: boolean;
-  passed: boolean;
-  locked?: boolean;
-  onPress: () => void;
-}) {
-  const short = band.label.replace('B1 ', '').replace('B2 ', 'B2·');
-  return (
-    <Pressable
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.bandPill,
-        active && styles.bandPillActive,
-        passed && !active && styles.bandPillPassed,
-        locked && styles.bandPillLocked,
-        pressed && styles.bandPillPressed,
-      ]}
-      accessibilityRole="button"
-      accessibilityLabel={`${band.label} level`}>
-      <Text
-        style={[
-          styles.bandPillText,
-          active && styles.bandPillTextActive,
-          passed && !active && styles.bandPillTextPassed,
-          locked && styles.bandPillTextLocked,
-        ]}
-        numberOfLines={1}>
-        {passed ? '✓ ' : ''}{short}
-      </Text>
-    </Pressable>
   );
 }
 
@@ -741,50 +663,20 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   settingsDangerText: { fontSize: 14, fontWeight: '800', color: palette.red },
-  currentBand: { fontSize: 28, fontWeight: '900', color: palette.text, marginBottom: 4 },
-  currentBandTappable: { color: palette.accent },
-  tapHint: { fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 8 },
-  avgLabel: { fontSize: 14, fontWeight: '600', color: palette.muted, marginBottom: 16 },
-  progressionHeader: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: palette.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.7,
-    marginTop: 16,
-    marginBottom: 4,
-  },
-  bandRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginBottom: 14,
-  },
-  bandPill: {
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderRadius: 999,
-    backgroundColor: palette.background,
+  resetSuccessBanner: {
+    backgroundColor: 'rgba(52, 211, 153, 0.12)',
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: palette.surfaceBorder,
+    borderColor: 'rgba(52, 211, 153, 0.35)',
+    padding: 12,
+    marginBottom: 14,
+    alignItems: 'center',
   },
-  bandPillActive: {
-    backgroundColor: 'rgba(255, 122, 89, 0.2)',
-    borderColor: palette.accent,
+  resetSuccessText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.green,
   },
-  bandPillPassed: {
-    borderColor: 'rgba(52, 211, 153, 0.4)',
-  },
-  bandPillLocked: {
-    opacity: 0.45,
-  },
-  bandPillPressed: {
-    opacity: 0.88,
-  },
-  bandPillText: { fontSize: 10, fontWeight: '800', color: palette.muted },
-  bandPillTextActive: { color: palette.accent },
-  bandPillTextPassed: { color: palette.green },
-  bandPillTextLocked: { color: palette.grey },
   progressTrack: {
     height: 10,
     borderRadius: 999,
@@ -793,7 +685,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   progressFill: { height: 10, borderRadius: 999, backgroundColor: palette.accent },
-  progressMessage: { fontSize: 14, fontWeight: '600', color: palette.text, lineHeight: 20 },
   focusLine: {
     fontSize: 14,
     fontWeight: '800',

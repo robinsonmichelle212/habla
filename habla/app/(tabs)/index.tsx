@@ -5,8 +5,11 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { GemEarnedToast } from '@/components/gem-earned-toast';
-import { completeDailyChallenge, getTodaysChallenge, type DailyChallenge } from '@/lib/daily-challenge';
+import {
+  completeDailyChallenge,
+  getTodaysChallengeForHome,
+  type DailyChallenge,
+} from '@/lib/daily-challenge';
 import {
   dismissShopBadge,
   getAffordableNextLevels,
@@ -38,7 +41,7 @@ export default function HomeScreen() {
   const [currentStreak, setCurrentStreak] = useState(0);
   const [totalGems, setTotalGems] = useState(0);
   const [dailyChallenge, setDailyChallenge] = useState<DailyChallenge | null>(null);
-  const [challengeGemToast, setChallengeGemToast] = useState(0);
+  const [challengeConfirm, setChallengeConfirm] = useState(false);
   const [completingChallenge, setCompletingChallenge] = useState(false);
   const [showShopBadge, setShowShopBadge] = useState(false);
   const [urgentUnlock, setUrgentUnlock] = useState<ReturnType<typeof getUrgentPendingUnlock>>(null);
@@ -70,7 +73,7 @@ export default function HomeScreen() {
           const [streak, gems, challenge, shopProgress] = await Promise.all([
             getStreakState(),
             getTotalGems(),
-            getTodaysChallenge(),
+            getTodaysChallengeForHome(),
             getGemShopProgress(),
           ]);
           if (cancelled) return;
@@ -118,15 +121,18 @@ export default function HomeScreen() {
     try {
       const result = await completeDailyChallenge();
       if (result.alreadyCompleted) {
-        setDailyChallenge(result.challenge);
+        setDailyChallenge(null);
         return;
       }
       if (result.challenge) {
         const nextGems = await addGems(1);
         setTotalGems(nextGems);
-        setDailyChallenge(result.challenge);
-        setChallengeGemToast(1);
+        setChallengeConfirm(true);
         await refreshShopBadge(nextGems);
+        setTimeout(() => {
+          setDailyChallenge(null);
+          setChallengeConfirm(false);
+        }, 1500);
       }
     } finally {
       setCompletingChallenge(false);
@@ -136,9 +142,6 @@ export default function HomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      {challengeGemToast > 0 ? (
-        <GemEarnedToast amount={challengeGemToast} onDone={() => setChallengeGemToast(0)} />
-      ) : null}
 
       <View style={styles.topBar}>
         <View style={styles.streakPill} accessibilityLabel="Current streak">
@@ -169,8 +172,8 @@ export default function HomeScreen() {
             <View style={styles.challengeCard}>
               <Text style={styles.challengeEyebrow}>Today&apos;s thinking challenge</Text>
               <Text style={styles.challengeText}>{dailyChallenge.text}</Text>
-              {dailyChallenge.completed ? (
-                <Text style={styles.challengeDone}>Done today ✅ +1 💎</Text>
+              {challengeConfirm ? (
+                <Text style={styles.challengeConfirm}>💎 +1 Nice work! 🌟</Text>
               ) : (
                 <Pressable
                   onPress={() => void handleCompleteChallenge()}
@@ -337,10 +340,11 @@ const styles = StyleSheet.create({
     color: palette.text,
     lineHeight: 24,
   },
-  challengeDone: {
-    fontSize: 14,
-    fontWeight: '800',
+  challengeConfirm: {
+    fontSize: 16,
+    fontWeight: '900',
     color: palette.gem,
+    marginTop: 4,
   },
   challengeButton: {
     alignSelf: 'flex-start',

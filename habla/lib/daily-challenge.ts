@@ -4,6 +4,7 @@ import type { LessonType } from '@/lib/claude';
 import { formatLocalDate } from '@/lib/streak';
 
 const STORAGE_KEY = 'dailyChallenge';
+const COMPLETED_TODAY_KEY = 'challengeCompletedToday';
 const TYPE_HISTORY_KEY = 'dailyChallengeTypeHistory';
 const TEXT_HISTORY_KEY = 'dailyChallengeHistory';
 const MAX_TYPE_HISTORY = 6;
@@ -222,6 +223,25 @@ export async function getTodaysChallenge(): Promise<DailyChallenge | null> {
   return challenge;
 }
 
+/** Challenge to show on home — hidden after completion until next lesson generates one. */
+export async function getTodaysChallengeForHome(): Promise<DailyChallenge | null> {
+  const completedToday = await isChallengeCompletedToday();
+  if (completedToday) return null;
+
+  const challenge = await getTodaysChallenge();
+  if (!challenge || challenge.completed) return null;
+  return challenge;
+}
+
+export async function isChallengeCompletedToday(): Promise<boolean> {
+  const raw = await AsyncStorage.getItem(COMPLETED_TODAY_KEY);
+  return raw === 'true';
+}
+
+async function setChallengeCompletedToday(completed: boolean): Promise<void> {
+  await AsyncStorage.setItem(COMPLETED_TODAY_KEY, completed ? 'true' : 'false');
+}
+
 export async function saveDailyChallenge(
   text: string,
   type: ChallengeType,
@@ -235,6 +255,7 @@ export async function saveDailyChallenge(
     completed: false,
   };
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(challenge));
+  await setChallengeCompletedToday(false);
   await appendTypeHistory(type);
   await appendChallengeTextHistory(trimmed);
   return challenge;
@@ -255,6 +276,7 @@ export async function completeDailyChallenge(): Promise<{
 
   const updated: DailyChallenge = { ...current, completed: true };
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  await setChallengeCompletedToday(true);
   return { alreadyCompleted: false, challenge: updated };
 }
 
