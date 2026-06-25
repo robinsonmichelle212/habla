@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { JaviTypingText } from '@/components/javi-typing-text';
+
 const palette = {
   bubbleAi: '#1E2633',
   bubbleUser: '#2A1F2E',
@@ -13,19 +15,39 @@ type Props = {
   role: 'user' | 'assistant';
   spanish: string;
   translation?: string;
+  /** Animate word-by-word for the latest Javi message. */
+  animateTyping?: boolean;
+  messageKey?: string;
 };
 
-export function TextMessageBubble({ role, spanish, translation }: Props) {
+export function TextMessageBubble({
+  role,
+  spanish,
+  translation,
+  animateTyping = false,
+  messageKey,
+}: Props) {
   const [revealed, setRevealed] = useState(false);
+  const [typingComplete, setTypingComplete] = useState(!animateTyping);
   const isAssistant = role === 'assistant';
   const safeSpanish = spanish.split(/\r?\n\s*(Translate|Translation)\s*:/i)[0].trim();
 
   return (
     <View style={[styles.outer, isAssistant ? styles.outerAi : styles.outerUser]}>
       <View style={[styles.bubble, isAssistant ? styles.bubbleAi : styles.bubbleUser]}>
-        <Text style={styles.bubbleText}>{safeSpanish}</Text>
+        {isAssistant && animateTyping ? (
+          <JaviTypingText
+            text={safeSpanish}
+            animate
+            resetKey={messageKey}
+            style={styles.bubbleText}
+            onComplete={() => setTypingComplete(true)}
+          />
+        ) : (
+          <Text style={styles.bubbleText}>{safeSpanish}</Text>
+        )}
       </View>
-      {isAssistant && translation ? (
+      {isAssistant && translation && typingComplete ? (
         <View style={styles.translationBlock}>
           {revealed ? (
             <>

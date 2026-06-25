@@ -149,7 +149,6 @@ export default function LessonScreen() {
   const [speakingTranscripts, setSpeakingTranscripts] = useState<string[]>([]);
   const [speakingUserTurns, setSpeakingUserTurns] = useState(0);
   const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
-  const [revealedJaviId, setRevealedJaviId] = useState<string | null>(null);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
   const [heardTranscript, setHeardTranscript] = useState<string | null>(null);
@@ -175,6 +174,13 @@ export default function LessonScreen() {
     }
     return null;
   }, [speakingMessages]);
+
+  const latestWarmUpJaviId = useMemo(() => {
+    for (let i = warmUpMessages.length - 1; i >= 0; i -= 1) {
+      if (warmUpMessages[i]?.role === 'assistant') return warmUpMessages[i].id;
+    }
+    return null;
+  }, [warmUpMessages]);
 
   const setVoiceStateSafe = useCallback((next: VoiceButtonState) => {
     voiceStateRef.current = next;
@@ -218,7 +224,6 @@ export default function LessonScreen() {
     setSpeakingTranscripts([]);
     setSpeakingUserTurns(0);
     setSpeakingIntroDone(false);
-    setRevealedJaviId(null);
     setHeardTranscript(null);
     setVoiceError(null);
   }, []);
@@ -408,7 +413,6 @@ export default function LessonScreen() {
     setSpeakingTranscripts([]);
     setSpeakingUserTurns(0);
     setSpeakingIntroDone(false);
-    setRevealedJaviId(null);
     setVoiceError(null);
 
     try {
@@ -442,7 +446,6 @@ export default function LessonScreen() {
     setSpeakingMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
     setSpeakingTranscripts((prev) => [...prev, trimmed]);
     setSpeakingUserTurns(nextTurn);
-    setRevealedJaviId(null);
 
     try {
       const javiText = await askJaviSpeaking(
@@ -694,6 +697,8 @@ export default function LessonScreen() {
                   role={m.role}
                   spanish={m.spanish}
                   translation={m.translation}
+                  messageKey={m.id}
+                  animateTyping={m.role === 'assistant' && m.id === latestWarmUpJaviId}
                 />
               ))}
               {warmUpComplete ? (
@@ -785,10 +790,7 @@ export default function LessonScreen() {
               <VoiceConversationLog
                 messages={speakingMessages}
                 latestJaviId={latestSpeakingJaviId}
-                revealedJaviId={revealedJaviId}
-                onRevealLatestJavi={() => {
-                  if (latestSpeakingJaviId) setRevealedJaviId(latestSpeakingJaviId);
-                }}
+                voiceSyncLatest={voiceState === 'javi-speaking'}
               />
               {canEndSpeaking ? (
                 <Pressable

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { JaviTypingText } from '@/components/javi-typing-text';
+
 const palette = {
   text: '#F4F6F8',
   muted: '#8B95A5',
@@ -14,15 +16,6 @@ export type VoiceLogMessage = {
   translation?: string;
 };
 
-function previewJaviText(spanish: string): string {
-  const safe = spanish
-    .split(/\r?\n\s*(Translate|Translation)\s*:/i)[0]
-    .trim();
-  const words = safe.split(/\s+/).filter(Boolean);
-  if (words.length <= 6) return words.join(' ');
-  return `${words.slice(0, 6).join(' ')}...`;
-}
-
 function safeSpanish(spanish: string): string {
   return spanish.split(/\r?\n\s*(Translate|Translation)\s*:/i)[0].trim();
 }
@@ -30,22 +23,22 @@ function safeSpanish(spanish: string): string {
 type Props = {
   messages: VoiceLogMessage[];
   latestJaviId: string | null;
-  revealedJaviId: string | null;
-  onRevealLatestJavi: () => void;
+  /** True while Javi is speaking the latest message — syncs typing to voice. */
+  voiceSyncLatest?: boolean;
 };
 
 export function VoiceConversationLog({
   messages,
   latestJaviId,
-  revealedJaviId,
-  onRevealLatestJavi,
+  voiceSyncLatest = false,
 }: Props) {
   const [translationRevealed, setTranslationRevealed] = useState(false);
+  const [typingComplete, setTypingComplete] = useState(false);
   const latestJavi = latestJaviId ? messages.find((m) => m.id === latestJaviId) : null;
-  const latestRevealed = latestJaviId != null && revealedJaviId === latestJaviId;
 
   useEffect(() => {
     setTranslationRevealed(false);
+    setTypingComplete(false);
   }, [latestJaviId]);
 
   return (
@@ -60,25 +53,29 @@ export function VoiceConversationLog({
           );
         }
 
-        const showFull = message.id === latestJaviId && latestRevealed;
+        const isLatest = message.id === latestJaviId;
+        const spanish = safeSpanish(message.spanish);
 
         return (
           <View key={message.id} style={styles.entry}>
             <Text style={styles.label}>Javi:</Text>
-            <Text style={styles.javiPreview}>
-              {showFull ? safeSpanish(message.spanish) : previewJaviText(message.spanish)}
-            </Text>
+            {isLatest ? (
+              <JaviTypingText
+                text={spanish}
+                animate
+                voiceSync={voiceSyncLatest}
+                resetKey={message.id}
+                style={styles.javiText}
+                onComplete={() => setTypingComplete(true)}
+              />
+            ) : (
+              <Text style={styles.javiText}>{spanish}</Text>
+            )}
           </View>
         );
       })}
 
-      {latestJavi && !latestRevealed ? (
-        <Pressable onPress={onRevealLatestJavi} accessibilityRole="button" style={styles.revealRow}>
-          <Text style={styles.revealLink}>👁️ See what Javi said</Text>
-        </Pressable>
-      ) : null}
-
-      {latestJavi && latestRevealed && latestJavi.translation ? (
+      {latestJavi && typingComplete && latestJavi.translation ? (
         <View style={styles.translationBlock}>
           {translationRevealed ? (
             <>
@@ -121,14 +118,11 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     color: palette.muted,
   },
-  javiPreview: {
+  javiText: {
     fontSize: 15,
     lineHeight: 21,
     color: palette.text,
     fontWeight: '600',
-  },
-  revealRow: {
-    marginTop: 2,
   },
   revealLink: {
     fontSize: 13,

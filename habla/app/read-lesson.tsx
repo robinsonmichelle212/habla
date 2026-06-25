@@ -126,8 +126,6 @@ export default function ReadLessonScreen() {
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
   const [finishing, setFinishing] = useState(false);
 
-  const [revealedJaviId, setRevealedJaviId] = useState<string | null>(null);
-
   const latestJaviId = useMemo(() => {
     for (let i = discussionMessages.length - 1; i >= 0; i -= 1) {
       if (discussionMessages[i]?.role === 'assistant') return discussionMessages[i].id;
@@ -565,10 +563,7 @@ export default function ReadLessonScreen() {
               <VoiceConversationLog
                 messages={discussionMessages}
                 latestJaviId={latestJaviId}
-                revealedJaviId={revealedJaviId}
-                onRevealLatestJavi={() => {
-                  if (latestJaviId) setRevealedJaviId(latestJaviId);
-                }}
+                voiceSyncLatest={voiceState === 'javi-speaking'}
               />
               {heardTranscript ? (
                 <Text style={styles.heardText}>Heard: {heardTranscript}</Text>

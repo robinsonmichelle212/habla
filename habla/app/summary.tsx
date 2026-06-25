@@ -1,7 +1,8 @@
+import { SummaryScoreRing } from '@/components/summary-score-ring';
 import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
-import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChallenge } from '@/lib/daily-challenge';
-import { addGems, calculateLessonGems, gemsForStreakMilestone } from '@/lib/gems';
+import { useSummaryReveal } from '@/hooks/use-summary-reveal';
+import { addGems, calculateLessonGems, gemsForStreakMilestone, getTotalGems } from '@/lib/gems';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
@@ -15,6 +16,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Platform,
   Pressable,
   ScrollView,
@@ -52,7 +54,8 @@ export default function SummaryScreen() {
   const didRecordRef = useRef(false);
   const [milestone, setMilestone] = useState<{ day: number } | null>(null);
   const [gemsEarned, setGemsEarned] = useState(0);
-  const [showGemToast, setShowGemToast] = useState(false);
+  const [gemsBefore, setGemsBefore] = useState(0);
+  const [streakHydrated, setStreakHydrated] = useState(false);
 
   const [mode, setMode] = useState<'summary' | 'drills'>('summary');
   const [loadingDrills, setLoadingDrills] = useState(false);
@@ -90,11 +93,13 @@ export default function SummaryScreen() {
             : null;
         const gems = calculateLessonGems(overallScore, milestoneDay);
 
+        const beforeGems = await getTotalGems();
+        setGemsBefore(beforeGems);
+
         if (gems > 0) {
           try {
             await addGems(gems);
             setGemsEarned(gems);
-            setShowGemToast(true);
           } catch {
             // Non-blocking: summary should not fail if gems cannot be saved.
           }
@@ -191,6 +196,9 @@ export default function SummaryScreen() {
       })
       .catch(() => {
         // no-op: streak should not block summary UI
+      })
+      .finally(() => {
+        setStreakHydrated(true);
       });
   }, []);
 
@@ -259,14 +267,39 @@ export default function SummaryScreen() {
   };
 
   const hasAnalysis = !!analysis;
+  const overallScore = Math.round(analysis?.overallScore ?? 0);
+  const revealEnabled = hasAnalysis && mode === 'summary' && streakHydrated;
+
+  const reveal = useSummaryReveal({
+    enabled: revealEnabled,
+    overallScore,
+    strongCount: analysis?.strongAreas.length ?? 0,
+    weakCount: analysis?.weakAreas.length ?? 0,
+    focusCount: analysis?.focusAreas.length ?? 0,
+    gemsEarned,
+    gemsBefore,
+  });
+
+  const challengeBorderColor = reveal.challengeHighlight.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['rgba(37, 45, 58, 1)', 'rgba(255, 122, 89, 0.65)'],
+  });
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      {showGemToast ? (
-        <GemEarnedToast
-          amount={gemsEarned}
-          onDone={() => setShowGemToast(false)}
+      {hasAnalysis && mode === 'summary' ? (
+        <View style={styles.gemTopBar}>
+          <Text style={styles.gemTopEmoji}>💎</Text>
+          <Text style={styles.gemTopCount}>{reveal.gemCountDisplay}</Text>
+        </View>
+      ) : null}
+      {!reveal.complete && revealEnabled ? (
+        <Pressable
+          style={styles.skipOverlay}
+          onPress={reveal.skip}
+          accessibilityRole="button"
+          accessibilityLabel="Skip reveal animation"
         />
       ) : null}
       <ScrollView
@@ -275,182 +308,160 @@ export default function SummaryScreen() {
           { paddingBottom: 16 },
         ]}
         showsVerticalScrollIndicator={false}>
-        <Text style={styles.pageTitle}>Lesson Complete</Text>
-
-        {milestone && gemsForStreakMilestone(milestone.day) > 0 ? (
-          <View style={styles.milestoneCard}>
-            <Text style={styles.milestoneTitle}>Streak milestone!</Text>
-            <Text style={styles.milestoneText}>
-              Day {milestone.day} — +{gemsForStreakMilestone(milestone.day)} gems 💎
-            </Text>
-          </View>
-        ) : null}
-
         {!hasAnalysis ? (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No summary yet</Text>
-            <Text style={styles.emptyText}>
-              Go back to the lesson and tap End Lesson to generate your personalised summary.
-            </Text>
-          </View>
+          <>
+            <Text style={styles.pageTitle}>Lesson Complete</Text>
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyTitle}>No summary yet</Text>
+              <Text style={styles.emptyText}>
+                Go back to the lesson and tap End Lesson to generate your personalised summary.
+              </Text>
+            </View>
+          </>
         ) : mode === 'summary' ? (
           <>
-            {lessonType === 'Read' && analysis?.breakdown.reading ? (
-              <View style={styles.writingCard}>
-                <Text style={styles.writingTitle}>Reading comprehension 📖</Text>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Score</Text>
-                  <Text style={styles.writingValue}>{Math.round(analysis.breakdown.reading.score)}%</Text>
-                </View>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Text type</Text>
-                  <Text style={styles.writingValue}>{analysis.breakdown.reading.textType}</Text>
-                </View>
-                {analysis.breakdown.reading.wordsLearned?.length ? (
-                  <View style={styles.readWordsBlock}>
-                    <Text style={styles.readWordsTitle}>Words from this text</Text>
-                    {analysis.breakdown.reading.wordsLearned.map((w) => (
-                      <Text key={w.spanish} style={styles.readWordLine}>
-                        {w.spanish} — {w.english}
-                      </Text>
-                    ))}
-                  </View>
-                ) : null}
-                {analysis.breakdown.reading.grammarPatterns?.length ? (
-                  <View style={styles.readWordsBlock}>
-                    <Text style={styles.readWordsTitle}>Grammar patterns</Text>
-                    {analysis.breakdown.reading.grammarPatterns.map((p) => (
-                      <Text key={p} style={styles.readWordLine}>
-                        · {p}
-                      </Text>
-                    ))}
-                  </View>
-                ) : null}
-                {session.culturalNoteSaved ? (
-                  <View style={styles.culturalNoteBlock}>
-                    <Text style={styles.readWordsTitle}>Cultural note 🌍</Text>
-                    <Text style={styles.culturalNoteText}>{session.culturalNoteSaved}</Text>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
+            <Animated.Text
+              style={[
+                styles.pageTitle,
+                {
+                  opacity: reveal.titleOpacity,
+                  transform: [{ translateY: reveal.titleTranslateY }],
+                },
+              ]}>
+              Lesson Complete
+            </Animated.Text>
+            <Animated.Text
+              style={[
+                styles.pageSubtitle,
+                {
+                  opacity: reveal.subtitleOpacity,
+                  transform: [{ translateY: reveal.subtitleTranslateY }],
+                },
+              ]}>
+              {lessonType === 'Read' ? 'Reading lesson wrapped' : `${lessonType} lesson wrapped`}
+            </Animated.Text>
 
-            {writing ? (
-              <View style={styles.writingCard}>
-                <Text style={styles.writingTitle}>
-                  {lessonType === 'Read' ? 'Comprehension responses' : 'Writing scores'}
-                </Text>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Grammar</Text>
-                  <Text style={styles.writingValue}>{Math.round(writing.grammarScore)}%</Text>
-                </View>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Vocabulary</Text>
-                  <Text style={styles.writingValue}>{Math.round(writing.vocabularyScore)}%</Text>
-                </View>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Fluency</Text>
-                  <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
-                </View>
-                {writing.structureScore != null ? (
-                  <View style={styles.writingRow}>
-                    <Text style={styles.writingLabel}>Structure</Text>
-                    <Text style={styles.writingValue}>{Math.round(writing.structureScore)}%</Text>
-                  </View>
-                ) : null}
-              </View>
-            ) : null}
-
-            {speaking ? (
-              <View style={styles.writingCard}>
-                <Text style={styles.writingTitle}>Speaking scores</Text>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Overall speaking</Text>
-                  <Text style={styles.writingValue}>{Math.round(speaking.score)}%</Text>
-                </View>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Accuracy vs written</Text>
-                  <Text style={styles.writingValue}>{Math.round(speaking.accuracyVsWritten)}%</Text>
-                </View>
-                <View style={styles.writingRow}>
-                  <Text style={styles.writingLabel}>Writing corrections applied</Text>
-                  <Text style={styles.writingValue}>{speaking.correctionsApplied ? 'Yes ✅' : 'Not yet'}</Text>
-                </View>
-                {speaking.pronunciationNotes?.length ? (
-                  <Text style={styles.speakingNotes}>
-                    {speaking.pronunciationNotes.join(' · ')}
-                  </Text>
-                ) : null}
-                <Text style={styles.speakingFeedback}>{speaking.feedback}</Text>
-              </View>
-            ) : null}
-
-            {analysis ? (
-              <View style={styles.scoreBlock}>
-                <Text style={styles.scoreLabel}>Overall lesson score</Text>
-                <Text style={styles.scoreValue}>{Math.round(analysis.overallScore)}%</Text>
+            <View style={styles.scoreSection}>
+              <Text style={styles.scoreLabel}>Overall lesson score</Text>
+              <SummaryScoreRing
+                score={reveal.displayScore}
+                progress={reveal.scoreProgress}
+                scale={reveal.scoreScale}
+                opacity={reveal.scoreOpacity}
+              />
+              <Animated.View style={{ opacity: reveal.scoreOpacity }}>
                 <Text style={styles.scoreHint}>
                   {lessonType === 'Read' ? 'comprehension + discussion' : 'writing + speaking combined'}
                 </Text>
-              </View>
+              </Animated.View>
+            </View>
+
+            <View style={styles.section}>
+              <Animated.Text
+                style={[
+                  styles.sectionTitle,
+                  {
+                    opacity: reveal.strongHeaderOpacity,
+                    transform: [{ translateX: reveal.strongHeaderTranslateX }],
+                  },
+                ]}>
+                Strong Areas ✅
+              </Animated.Text>
+              {analysis.strongAreas.map((t, idx) => (
+                <Animated.View
+                  key={`s-${idx}`}
+                  style={[
+                    styles.item,
+                    styles.itemGreen,
+                    styles.itemGlowGreen,
+                    { opacity: reveal.strongItemOpacities[idx] ?? 1 },
+                  ]}>
+                  <Text style={[styles.itemText, styles.textGreen]}>{t}</Text>
+                </Animated.View>
+              ))}
+            </View>
+
+            <View style={styles.section}>
+              <Animated.Text
+                style={[
+                  styles.sectionTitle,
+                  {
+                    opacity: reveal.weakHeaderOpacity,
+                    transform: [{ translateX: reveal.weakHeaderTranslateX }],
+                  },
+                ]}>
+                Weak Areas ⚠️
+              </Animated.Text>
+              {analysis.weakAreas.map((t, idx) => (
+                <Animated.View
+                  key={`w-${idx}`}
+                  style={[
+                    styles.item,
+                    styles.itemAmber,
+                    styles.itemGlowAmber,
+                    { opacity: reveal.weakItemOpacities[idx] ?? 1 },
+                  ]}>
+                  <Text style={[styles.itemText, styles.textAmber]}>{t}</Text>
+                </Animated.View>
+              ))}
+            </View>
+
+            <View style={styles.section}>
+              <Animated.Text
+                style={[
+                  styles.sectionTitle,
+                  {
+                    opacity: reveal.focusHeaderOpacity,
+                    transform: [{ translateX: reveal.focusHeaderTranslateX }],
+                  },
+                ]}>
+                Focus Tomorrow 🎯
+              </Animated.Text>
+              {analysis.focusAreas.map((t, idx) => (
+                <Animated.View
+                  key={`f-${idx}`}
+                  style={[
+                    styles.item,
+                    styles.itemBlue,
+                    styles.itemGlowBlue,
+                    { opacity: reveal.focusItemOpacities[idx] ?? 1 },
+                  ]}>
+                  <Text style={[styles.itemText, styles.textBlue]}>{t}</Text>
+                </Animated.View>
+              ))}
+            </View>
+
+            {gemsEarned > 0 || (milestone && gemsForStreakMilestone(milestone.day) > 0) ? (
+              <Animated.View
+                style={[
+                  styles.gemsEarnedCard,
+                  {
+                    opacity: reveal.gemsOpacity,
+                    transform: [{ scale: reveal.gemsScale }],
+                  },
+                ]}>
+                <Animated.Text style={[styles.gemsEarnedEmoji, { transform: [{ scale: reveal.gemPulse }] }]}>
+                  💎
+                </Animated.Text>
+                <Text style={styles.gemsEarnedTitle}>Gems earned</Text>
+                <Text style={styles.gemsEarnedValue}>+{gemsEarned} gems</Text>
+                {milestone && gemsForStreakMilestone(milestone.day) > 0 ? (
+                  <Text style={styles.gemsEarnedMilestone}>
+                    Streak day {milestone.day} milestone included 🎉
+                  </Text>
+                ) : null}
+              </Animated.View>
             ) : null}
 
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Strong Areas ✅</Text>
-              {analysis.strongAreas.map((t, idx) => (
-                <View key={`s-${idx}`} style={[styles.item, styles.itemGreen]}>
-                  <Text style={[styles.itemText, styles.textGreen]}>{t}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Weak Areas ⚠️</Text>
-              {analysis.weakAreas.map((t, idx) => (
-                <View key={`w-${idx}`} style={[styles.item, styles.itemAmber]}>
-                  <Text style={[styles.itemText, styles.textAmber]}>{t}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Focus Tomorrow 🎯</Text>
-              {analysis.focusAreas.map((t, idx) => (
-                <View key={`f-${idx}`} style={[styles.item, styles.itemBlue]}>
-                  <Text style={[styles.itemText, styles.textBlue]}>{t}</Text>
-                </View>
-              ))}
-            </View>
-
-            <View style={styles.scoreBlock}>
-              <Text style={styles.scoreLabel}>Correctness score</Text>
-              <Text style={styles.scoreValue}>{Math.round(analysis.correctnessScore)}%</Text>
-              <Text style={styles.scoreHint}>grammar + vocabulary</Text>
-            </View>
-
-            <View style={styles.encourageCard}>
-              <Text style={styles.encourageTitle}>Javi says</Text>
-              <Text style={styles.encourageText}>{analysis.encouragingMessage}</Text>
-            </View>
-
-            <Pressable
-              onPress={startDrills}
-              disabled={loadingDrills}
-              style={({ pressed }) => [
-                styles.practiceButton,
-                loadingDrills && styles.practiceButtonDisabled,
-                pressed && !loadingDrills && styles.practiceButtonPressed,
-              ]}
-              accessibilityRole="button"
-              accessibilityLabel="Practice weak areas">
-              {loadingDrills ? (
-                <ActivityIndicator color="#0B0F14" size="small" />
-              ) : (
-                <Text style={styles.practiceButtonText}>Practice Weak Areas</Text>
-              )}
-            </Pressable>
-
-            <View style={styles.challengeCard}>
+            <Animated.View
+              style={[
+                styles.challengeCard,
+                {
+                  opacity: reveal.challengeOpacity,
+                  transform: [{ translateY: reveal.challengeTranslateY }],
+                  borderColor: challengeBorderColor,
+                },
+              ]}>
               <Text style={styles.challengeIcon}>💡</Text>
               <Text style={styles.challengeTitle}>Your Spanish Challenge for Today</Text>
               <Text style={styles.challengeSubtitle}>
@@ -465,7 +476,97 @@ export default function SummaryScreen() {
                   Take one thing from today&apos;s lesson and name it in Spanish before bed tonight.
                 </Text>
               )}
-            </View>
+            </Animated.View>
+
+            <Animated.View style={{ opacity: reveal.practiceOpacity }}>
+              <Pressable
+                onPress={startDrills}
+                disabled={loadingDrills}
+                style={({ pressed }) => [
+                  styles.practiceButton,
+                  loadingDrills && styles.practiceButtonDisabled,
+                  pressed && !loadingDrills && styles.practiceButtonPressed,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Practice weak areas">
+                {loadingDrills ? (
+                  <ActivityIndicator color="#0B0F14" size="small" />
+                ) : (
+                  <Text style={styles.practiceButtonText}>Practice Weak Areas</Text>
+                )}
+              </Pressable>
+            </Animated.View>
+
+            <Animated.View style={{ opacity: reveal.homeOpacity, marginTop: 10 }}>
+              <Pressable
+                onPress={goHome}
+                style={({ pressed }) => [styles.secondaryHomeButton, pressed && styles.secondaryHomePressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Back to home">
+                <Text style={styles.secondaryHomeText}>Back to Home</Text>
+              </Pressable>
+            </Animated.View>
+
+            {reveal.complete ? (
+              <>
+                {lessonType === 'Read' && analysis.breakdown.reading ? (
+                  <View style={[styles.writingCard, styles.supplementaryCard]}>
+                    <Text style={styles.writingTitle}>Reading comprehension 📖</Text>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Score</Text>
+                      <Text style={styles.writingValue}>
+                        {Math.round(analysis.breakdown.reading.score)}%
+                      </Text>
+                    </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Text type</Text>
+                      <Text style={styles.writingValue}>{analysis.breakdown.reading.textType}</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {writing ? (
+                  <View style={[styles.writingCard, styles.supplementaryCard]}>
+                    <Text style={styles.writingTitle}>
+                      {lessonType === 'Read' ? 'Comprehension responses' : 'Writing scores'}
+                    </Text>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Grammar</Text>
+                      <Text style={styles.writingValue}>{Math.round(writing.grammarScore)}%</Text>
+                    </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Vocabulary</Text>
+                      <Text style={styles.writingValue}>{Math.round(writing.vocabularyScore)}%</Text>
+                    </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Fluency</Text>
+                      <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                {speaking ? (
+                  <View style={[styles.writingCard, styles.supplementaryCard]}>
+                    <Text style={styles.writingTitle}>Speaking scores</Text>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Overall speaking</Text>
+                      <Text style={styles.writingValue}>{Math.round(speaking.score)}%</Text>
+                    </View>
+                  </View>
+                ) : null}
+
+                <View style={[styles.scoreBlock, styles.supplementaryCard]}>
+                  <Text style={styles.scoreLabel}>Correctness score</Text>
+                  <Text style={styles.scoreValue}>{Math.round(analysis.correctnessScore)}%</Text>
+                  <Text style={styles.scoreHint}>grammar + vocabulary</Text>
+                </View>
+
+                <View style={[styles.encourageCard, styles.supplementaryCard]}>
+                  <Text style={styles.encourageTitle}>Javi says</Text>
+                  <Text style={styles.encourageText}>{analysis.encouragingMessage}</Text>
+                </View>
+              </>
+            ) : null}
           </>
         ) : (
           <>
@@ -545,15 +646,17 @@ export default function SummaryScreen() {
         )}
       </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <Pressable
-          onPress={goHome}
-          style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}
-          accessibilityRole="button"
-          accessibilityLabel="Back to home">
-          <Text style={styles.primaryButtonText}>Back to Home</Text>
-        </Pressable>
-      </View>
+      {mode === 'drills' ? (
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <Pressable
+            onPress={goHome}
+            style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Back to home">
+            <Text style={styles.primaryButtonText}>Back to Home</Text>
+          </Pressable>
+        </View>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -572,8 +675,84 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     letterSpacing: -0.5,
     color: palette.text,
-    marginBottom: 24,
+    marginBottom: 8,
     textAlign: 'center',
+  },
+  pageSubtitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  gemTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+    paddingHorizontal: 20,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.surfaceBorder,
+  },
+  gemTopEmoji: { fontSize: 18 },
+  gemTopCount: { fontSize: 18, fontWeight: '900', color: '#A78BFA' },
+  skipOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 40,
+  },
+  scoreSection: {
+    alignItems: 'center',
+    marginBottom: 28,
+    paddingVertical: 12,
+  },
+  gemsEarnedCard: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(167, 139, 250, 0.1)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.35)',
+    padding: 18,
+    marginBottom: 20,
+    gap: 4,
+  },
+  gemsEarnedEmoji: { fontSize: 36, marginBottom: 4 },
+  gemsEarnedTitle: {
+    fontSize: 12,
+    fontWeight: '900',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  gemsEarnedValue: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#A78BFA',
+  },
+  gemsEarnedMilestone: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  supplementaryCard: {
+    marginTop: 20,
+  },
+  secondaryHomeButton: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  secondaryHomePressed: { opacity: 0.9 },
+  secondaryHomeText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.text,
   },
   emptyState: {
     backgroundColor: palette.surface,
@@ -767,6 +946,27 @@ const styles = StyleSheet.create({
     backgroundColor: palette.blueBg,
     borderColor: 'rgba(96, 165, 250, 0.35)',
   },
+  itemGlowGreen: {
+    shadowColor: '#34D399',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  itemGlowAmber: {
+    shadowColor: '#FBBF24',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  itemGlowBlue: {
+    shadowColor: '#60A5FA',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+    elevation: 3,
+  },
   itemText: {
     fontSize: 15,
     fontWeight: '600',
@@ -830,8 +1030,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
     padding: 16,
-    marginTop: 20,
-    marginBottom: 8,
+    marginTop: 8,
+    marginBottom: 18,
   },
   challengeIcon: {
     fontSize: 28,

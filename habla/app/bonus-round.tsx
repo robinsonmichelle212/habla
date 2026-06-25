@@ -1,5 +1,6 @@
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
+import { JaviTypingText } from '@/components/javi-typing-text';
 import {
   askCultureJavi,
   askFilmJavi,
@@ -47,7 +48,7 @@ import { MIN_RECORDING_MS, startVoiceRecording, stopVoiceRecording } from '@/lib
 import { transcribeSpanishAudio } from '@/lib/whisper';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -134,6 +135,13 @@ export default function BonusRoundScreen() {
   const [roundMeta, setRoundMeta] = useState<Record<string, unknown>>({});
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const latestAssistantChatIndex = useMemo(() => {
+    for (let i = chatMessages.length - 1; i >= 0; i -= 1) {
+      if (chatMessages[i]?.role === 'assistant') return i;
+    }
+    return -1;
+  }, [chatMessages]);
 
   const finishRound = useCallback(
     async (title: string, detail: string, gems: number) => {
@@ -469,7 +477,16 @@ export default function BonusRoundScreen() {
                 <>
                   {chatMessages.map((m, i) => (
                     <View key={i} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
-                      <Text style={styles.bubbleText}>{m.text}</Text>
+                      {m.role === 'assistant' && i === latestAssistantChatIndex ? (
+                        <JaviTypingText
+                          text={m.text}
+                          animate
+                          resetKey={`${i}-${m.text}`}
+                          style={styles.bubbleText}
+                        />
+                      ) : (
+                        <Text style={styles.bubbleText}>{m.text}</Text>
+                      )}
                     </View>
                   ))}
                   <TextInput
@@ -527,7 +544,16 @@ export default function BonusRoundScreen() {
               {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
               {chatMessages.map((m, i) => (
                 <View key={i} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
-                  <Text style={styles.bubbleText}>{m.text}</Text>
+                  {m.role === 'assistant' && i === latestAssistantChatIndex ? (
+                    <JaviTypingText
+                      text={m.text}
+                      animate
+                      resetKey={`${i}-${m.text}`}
+                      style={styles.bubbleText}
+                    />
+                  ) : (
+                    <Text style={styles.bubbleText}>{m.text}</Text>
+                  )}
                 </View>
               ))}
               {roundId === 'roleplay' ? (
