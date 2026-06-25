@@ -16,7 +16,7 @@ import {
 } from '@/lib/claude';
 import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
-import { mergeErrorDnaFromLesson, getTopErrorDNA, type ErrorDNAItem } from '@/lib/error-dna';
+import { mergeErrorDnaFromLesson, getTopErrorsForLesson, type ErrorDNAItem } from '@/lib/error-dna';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
 import {
   conversationToJaviMessages,
@@ -226,7 +226,7 @@ export default function LessonScreen() {
     prepareLessonFocus(lessonKind)
       .then(async (focus) => {
         if (cancelled) return;
-        const topErrors = await getTopErrorDNA(3);
+        const topErrors = await getTopErrorsForLesson(lessonKind, 3);
         if (cancelled) return;
         setTopErrorDna(topErrors);
         setLessonFocus(focus);

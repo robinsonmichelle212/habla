@@ -36,6 +36,8 @@ function categoryStyle(category: ErrorDNAItem['category']) {
       return styles.badgeSpeaking;
     case 'structure':
       return styles.badgeStructure;
+    case 'word-order':
+      return styles.badgeWordOrder;
   }
 }
 
@@ -248,6 +250,10 @@ const styles = StyleSheet.create({
   badgeStructure: {
     backgroundColor: 'rgba(167, 139, 250, 0.12)',
     borderColor: 'rgba(167, 139, 250, 0.45)',
+  },
+  badgeWordOrder: {
+    backgroundColor: 'rgba(45, 212, 191, 0.12)',
+    borderColor: 'rgba(45, 212, 191, 0.45)',
   },
   errorTitle: {
     fontSize: 15,

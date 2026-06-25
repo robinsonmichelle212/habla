@@ -18,9 +18,11 @@ import {
   type TodayScoreInfo,
   type WeekChartDay,
 } from '@/lib/practice-storage';
+import { completeDailyChallenge, getTodaysChallenge, type DailyChallenge } from '@/lib/daily-challenge';
 import { getProgressionLevel } from '@/lib/level-progress';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
-import { getTotalGems } from '@/lib/gems';
+import { addGems, getTotalGems } from '@/lib/gems';
+import { GemEarnedToast } from '@/components/gem-earned-toast';
 
 const palette = {
   background: '#0B0F14',
@@ -55,6 +57,9 @@ export default function HomeScreen() {
   const [weekChart, setWeekChart] = useState<WeekChartDay[]>([]);
   const [showTodayModal, setShowTodayModal] = useState(false);
   const [showWeekModal, setShowWeekModal] = useState(false);
+  const [dailyChallenge, setDailyChallenge] = useState<DailyChallenge | null>(null);
+  const [challengeGemToast, setChallengeGemToast] = useState(0);
+  const [completingChallenge, setCompletingChallenge] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -62,11 +67,12 @@ export default function HomeScreen() {
 
       const loadHomeData = async () => {
         try {
-          const [full, history, drills, gems] = await Promise.all([
+          const [full, history, drills, gems, challenge] = await Promise.all([
             getStreakState(),
             getLessonHistory(),
             getDrillHistory(),
             getTotalGems(),
+            getTodaysChallenge(),
           ]);
           if (cancelled) return;
 
@@ -77,6 +83,7 @@ export default function HomeScreen() {
           setTotalSessions(full.totalSessionsCompleted);
           setTotalGems(gems);
           setLast7Days(full.last7Days);
+          setDailyChallenge(challenge);
 
           setTodaysScoreInfo(getTodayScoreInfo(history, drills));
           setTopScoreWeek(getTopScoreThisWeek(history, drills));
@@ -115,9 +122,35 @@ export default function HomeScreen() {
     router.push('/lesson');
   };
 
+  const handleCompleteChallenge = async () => {
+    if (completingChallenge || !dailyChallenge || dailyChallenge.completed) return;
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setCompletingChallenge(true);
+    try {
+      const result = await completeDailyChallenge();
+      if (result.alreadyCompleted) {
+        setDailyChallenge(result.challenge);
+        return;
+      }
+      if (result.challenge) {
+        const nextGems = await addGems(1);
+        setTotalGems(nextGems);
+        setDailyChallenge(result.challenge);
+        setChallengeGemToast(1);
+      }
+    } finally {
+      setCompletingChallenge(false);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
+      {challengeGemToast > 0 ? (
+        <GemEarnedToast amount={challengeGemToast} onDone={() => setChallengeGemToast(0)} />
+      ) : null}
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
@@ -166,6 +199,32 @@ export default function HomeScreen() {
             Total sessions: {streakHydrated ? String(totalSessions) : '—'}
           </Text>
         </View>
+
+        {dailyChallenge ? (
+          <View style={styles.challengeCard}>
+            <Text style={styles.challengeIcon}>💡</Text>
+            <Text style={styles.challengeTitle}>Today&apos;s Spanish challenge</Text>
+            <Text style={styles.challengeText}>{dailyChallenge.text}</Text>
+            {dailyChallenge.completed ? (
+              <Text style={styles.challengeDone}>Done today ✅ +1 💎</Text>
+            ) : (
+              <Pressable
+                onPress={() => void handleCompleteChallenge()}
+                disabled={completingChallenge}
+                style={({ pressed }) => [
+                  styles.challengeButton,
+                  pressed && styles.challengeButtonPressed,
+                  completingChallenge && styles.challengeButtonDisabled,
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel="Mark challenge complete">
+                <Text style={styles.challengeButtonText}>
+                  {completingChallenge ? 'Saving…' : 'I did it ✅'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        ) : null}
 
         <Pressable
           onPress={handleStartLesson}
@@ -424,6 +483,58 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: palette.muted,
+  },
+  challengeCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 14,
+    marginBottom: 20,
+  },
+  challengeIcon: {
+    fontSize: 22,
+    marginBottom: 6,
+  },
+  challengeTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 8,
+  },
+  challengeText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 22,
+    marginBottom: 12,
+  },
+  challengeDone: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#34D399',
+  },
+  challengeButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(255, 122, 89, 0.15)',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: palette.accent,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+  },
+  challengeButtonPressed: {
+    opacity: 0.9,
+  },
+  challengeButtonDisabled: {
+    opacity: 0.6,
+  },
+  challengeButtonText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.accent,
   },
   primaryButton: {
     backgroundColor: palette.accent,

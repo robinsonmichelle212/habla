@@ -13,14 +13,17 @@ import {
 } from '@/lib/saved-vocabulary';
 import {
   generateQuickFireQuestions,
+  generateFluencyDrillQuestions,
+  generateWordOrderDrillQuestions,
   type PrioritizedWeakAreaInput,
 } from '@/lib/claude';
-import { getTopErrorDNA } from '@/lib/error-dna';
+import { getTopErrorDNA, getWordOrderErrorDNA, hasWordOrderPatterns } from '@/lib/error-dna';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
 import { buildPriorityWeakAreas, appendDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
+import { formatWordOrderQuestionType, recordWordOrderDrillMistakes } from '@/lib/word-order-drill';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, recordQuickFirePractice } from '@/lib/streak';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -60,6 +63,22 @@ const palette = {
 const TOTAL_QUESTIONS = 10;
 const AUTO_ADVANCE_MS = 2000;
 
+type PracticeDrillKind = 'grammar' | 'vocabulary' | 'fluency' | 'word-order';
+
+const DRILL_OPTIONS: { id: PracticeDrillKind; label: string; emoji: string; hint: string }[] = [
+  { id: 'grammar', label: 'Grammar', emoji: '📐', hint: 'Curriculum tense drills' },
+  { id: 'vocabulary', label: 'Vocabulary', emoji: '📚', hint: 'Weak areas + saved words' },
+  { id: 'fluency', label: 'Fluency', emoji: '🗣️', hint: 'Natural phrases & flow' },
+  { id: 'word-order', label: 'Word Order 🔀', emoji: '🔀', hint: 'Sentence structure order' },
+];
+
+function parseDrillParam(value: string | undefined): PracticeDrillKind | null {
+  if (value === 'grammar' || value === 'vocabulary' || value === 'fluency' || value === 'word-order') {
+    return value;
+  }
+  return null;
+}
+
 type ScreenStage = 'choose' | 'loading' | 'drill' | 'result';
 
 type AnswerRecord = {
@@ -77,11 +96,16 @@ export default function PracticeScreen() {
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didAwardRef = useRef(false);
   const didAutoStartRef = useRef(false);
+  const activeDrillRef = useRef<PracticeDrillKind>('vocabulary');
+
+  const initialDrill = parseDrillParam(typeof drill === 'string' ? drill : undefined);
 
   const [priorityWeakAreas, setPriorityWeakAreas] = useState<PriorityWeakArea[]>([]);
   const [recentLessonCount, setRecentLessonCount] = useState(0);
   const [loadingWeakAreas, setLoadingWeakAreas] = useState(true);
   const [weakAreasError, setWeakAreasError] = useState<string | null>(null);
+  const [selectedDrill, setSelectedDrill] = useState<PracticeDrillKind | null>(initialDrill);
+  const [wordOrderSuggested, setWordOrderSuggested] = useState(false);
 
   const [stage, setStage] = useState<ScreenStage>('choose');
   const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
@@ -156,6 +180,20 @@ export default function PracticeScreen() {
     };
   }, [topic]);
 
+  useEffect(() => {
+    let cancelled = false;
+    hasWordOrderPatterns()
+      .then((has) => {
+        if (!cancelled) setWordOrderSuggested(has);
+      })
+      .catch(() => {
+        if (!cancelled) setWordOrderSuggested(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const resetDrillState = () => {
     clearAdvanceTimer();
     setQuestionIdx(0);
@@ -172,10 +210,10 @@ export default function PracticeScreen() {
     didAwardRef.current = false;
   };
 
-  const startQuickFire = useCallback(async () => {
-    const isGrammarDrill = drill === 'grammar';
+  const startQuickFire = useCallback(async (drillKind: PracticeDrillKind) => {
+    const needsWeakAreas = drillKind === 'vocabulary' || drillKind === 'fluency';
 
-    if (!isGrammarDrill && (loadingWeakAreas || !priorityWeakAreas.length)) {
+    if (needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length)) {
       Alert.alert('Practice not ready', 'Complete a lesson first to unlock targeted practice.');
       return;
     }
@@ -184,13 +222,32 @@ export default function PracticeScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    activeDrillRef.current = drillKind;
+    setSelectedDrill(drillKind);
     resetDrillState();
     setStage('loading');
 
     try {
+      if (drillKind === 'word-order') {
+        const wordOrderTargets = (await getWordOrderErrorDNA()).slice(0, 2);
+        const wordOrderBatch = await generateWordOrderDrillQuestions(TOTAL_QUESTIONS, wordOrderTargets);
+
+        if (wordOrderBatch.length < 1) {
+          Alert.alert('Could not load questions', 'Try again in a moment.');
+          setStage('choose');
+          return;
+        }
+
+        setQuestions(
+          wordOrderBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+        );
+        setStage('drill');
+        return;
+      }
+
       const errorDnaTargets = await getTopErrorDNA(2);
 
-      if (isGrammarDrill) {
+      if (drillKind === 'grammar') {
         const curriculum = await resolveGrammarCurriculum();
         const weekDef = getWeekDefinition(curriculum.currentWeek);
         const grammarBatch = await generateQuickFireQuestions([], TOTAL_QUESTIONS, {
@@ -208,6 +265,26 @@ export default function PracticeScreen() {
 
         setQuestions(
           grammarBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+        );
+        setStage('drill');
+        return;
+      }
+
+      if (drillKind === 'fluency') {
+        const fluencyBatch = await generateFluencyDrillQuestions(
+          prioritizedForPrompt,
+          TOTAL_QUESTIONS,
+          errorDnaTargets,
+        );
+
+        if (fluencyBatch.length < 1) {
+          Alert.alert('Could not load questions', 'Try again in a moment.');
+          setStage('choose');
+          return;
+        }
+
+        setQuestions(
+          fluencyBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
         );
         setStage('drill');
         return;
@@ -233,19 +310,21 @@ export default function PracticeScreen() {
       Alert.alert('Could not load questions', message);
       setStage('choose');
     }
-  }, [drill, loadingWeakAreas, priorityWeakAreas.length, prioritizedForPrompt]);
+  }, [loadingWeakAreas, priorityWeakAreas.length, prioritizedForPrompt]);
 
   useEffect(() => {
     if (didAutoStartRef.current) return;
-    if (drill !== 'grammar' && drill !== 'vocabulary') return;
-    if (drill === 'grammar') {
+    const autoDrill = parseDrillParam(typeof drill === 'string' ? drill : undefined);
+    if (!autoDrill) return;
+
+    if (autoDrill === 'grammar' || autoDrill === 'word-order') {
       didAutoStartRef.current = true;
-      void startQuickFire();
+      void startQuickFire(autoDrill);
       return;
     }
     if (loadingWeakAreas || !priorityWeakAreas.length) return;
     didAutoStartRef.current = true;
-    void startQuickFire();
+    void startQuickFire(autoDrill);
   }, [drill, loadingWeakAreas, priorityWeakAreas.length, startQuickFire]);
 
   const finishDrill = useCallback((finalResults: AnswerRecord[]) => {
@@ -346,10 +425,27 @@ export default function PracticeScreen() {
           score: finalScore,
           totalQuestions: TOTAL_QUESTIONS,
           percentage: Math.round((finalScore / TOTAL_QUESTIONS) * 100),
-          weakAreasDrilled: priorityWeakAreas.map((w) => w.label),
+          weakAreasDrilled:
+            activeDrillRef.current === 'word-order'
+              ? ['Word order']
+              : priorityWeakAreas.map((w) => w.label),
           gemsEarned: gems,
           type: 'practice',
         });
+        if (activeDrillRef.current === 'word-order') {
+          const wordOrderWrong = results
+            .filter(
+              (r) =>
+                !r.correct &&
+                r.practiceQuestion.kind === 'quick' &&
+                Boolean(r.practiceQuestion.question.wordOrderSubtype),
+            )
+            .map((r) => ({
+              question: (r.practiceQuestion as Extract<PracticeQuestion, { kind: 'quick' }>).question,
+              userAnswer: r.userAnswer,
+            }));
+          await recordWordOrderDrillMistakes(wordOrderWrong);
+        }
         await recordQuickFirePractice(finalScore, gems);
         await syncStreakReminder();
       } catch {
@@ -438,13 +534,62 @@ export default function PracticeScreen() {
                 </View>
               ) : null}
 
+              {wordOrderSuggested ? (
+                <Pressable
+                  onPress={() => void startQuickFire('word-order')}
+                  style={({ pressed }) => [
+                    styles.wordOrderSuggestionCard,
+                    pressed && styles.wordOrderSuggestionPressed,
+                  ]}>
+                  <Text style={styles.wordOrderSuggestionText}>
+                    Javi noticed some word order patterns — want to drill those? 🔀
+                  </Text>
+                </Pressable>
+              ) : null}
+
+              <Text style={styles.drillPickerTitle}>Choose a drill</Text>
+              <View style={styles.drillGrid}>
+                {DRILL_OPTIONS.map((option) => {
+                  const needsWeakAreas = option.id === 'vocabulary' || option.id === 'fluency';
+                  const disabled = needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length);
+                  const isSelected = selectedDrill === option.id;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() => {
+                        setSelectedDrill(option.id);
+                        if (Platform.OS !== 'web') {
+                          Haptics.selectionAsync();
+                        }
+                      }}
+                      disabled={disabled}
+                      style={({ pressed }) => [
+                        styles.drillCard,
+                        isSelected && styles.drillCardSelected,
+                        disabled && styles.drillCardDisabled,
+                        pressed && !disabled && styles.drillCardPressed,
+                      ]}>
+                      <Text style={styles.drillEmoji}>{option.emoji}</Text>
+                      <Text style={styles.drillLabel}>{option.label}</Text>
+                      <Text style={styles.drillHint}>{option.hint}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
               <Pressable
-                onPress={() => void startQuickFire()}
-                disabled={loadingWeakAreas || !priorityWeakAreas.length}
+                onPress={() => {
+                  if (!selectedDrill) {
+                    Alert.alert('Pick a drill', 'Choose Grammar, Vocabulary, Fluency, or Word Order first.');
+                    return;
+                  }
+                  void startQuickFire(selectedDrill);
+                }}
+                disabled={!selectedDrill}
                 style={({ pressed }) => [
                   styles.startButton,
                   pressed && styles.startButtonPressed,
-                  !priorityWeakAreas.length && styles.startButtonDisabled,
+                  !selectedDrill && styles.startButtonDisabled,
                 ]}>
                 <Text style={styles.startButtonText}>Start Quick Fire</Text>
               </Pressable>
@@ -569,6 +714,9 @@ export default function PracticeScreen() {
 }
 
 function formatPracticeQuestionType(q: PracticeQuestion): string {
+  if (q.kind === 'quick' && q.question.wordOrderSubtype) {
+    return formatWordOrderQuestionType(q.question);
+  }
   if (q.kind === 'vocab') {
     switch (q.question.type) {
       case 'vocab_meaning':
@@ -673,6 +821,56 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   patternHintText: { fontSize: 13, fontWeight: '700', color: palette.muted, lineHeight: 18 },
+  wordOrderSuggestionCard: {
+    backgroundColor: 'rgba(167, 139, 250, 0.12)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.45)',
+    padding: 14,
+    marginBottom: 14,
+  },
+  wordOrderSuggestionPressed: { opacity: 0.88 },
+  wordOrderSuggestionText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.gem,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  drillPickerTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 10,
+  },
+  drillGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 16,
+  },
+  drillCard: {
+    width: '48%',
+    flexGrow: 1,
+    minWidth: '46%',
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 14,
+    gap: 4,
+  },
+  drillCardSelected: {
+    borderColor: palette.accent,
+    backgroundColor: 'rgba(255, 122, 89, 0.08)',
+  },
+  drillCardDisabled: { opacity: 0.45 },
+  drillCardPressed: { opacity: 0.9 },
+  drillEmoji: { fontSize: 22, marginBottom: 2 },
+  drillLabel: { fontSize: 15, fontWeight: '900', color: palette.text },
+  drillHint: { fontSize: 11, fontWeight: '600', color: palette.muted, lineHeight: 15 },
   startButton: {
     backgroundColor: palette.accent,
     borderRadius: 16,

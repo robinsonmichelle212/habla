@@ -1,8 +1,10 @@
-import { checkDrillAnswer, generateDrills } from '@/lib/claude';
+import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
+import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChallenge } from '@/lib/daily-challenge';
 import { addGems, calculateLessonGems, gemsForStreakMilestone } from '@/lib/gems';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
+import { lessonFocusLabel } from '@/lib/lesson-focus';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { appendLessonHistory, lessonTypeLabel } from '@/lib/practice-storage';
@@ -64,6 +66,9 @@ export default function SummaryScreen() {
     correctAnswer?: string;
   } | null>(null);
   const [stars, setStars] = useState(0);
+  const [dailyChallengeText, setDailyChallengeText] = useState<string | null>(null);
+  const [challengeLoading, setChallengeLoading] = useState(false);
+  const didGenerateChallengeRef = useRef(false);
 
   useEffect(() => {
     if (didRecordRef.current) return;
@@ -140,6 +145,44 @@ export default function SummaryScreen() {
           void appendLessonHistory(lessonHistoryEntry).catch(() => {
             // Non-blocking: summary should not fail if lesson history cannot be saved.
           });
+
+          if (!didGenerateChallengeRef.current) {
+            didGenerateChallengeRef.current = true;
+            setChallengeLoading(true);
+            void (async () => {
+              try {
+                const recent = await getRecentChallengeTexts();
+                const focus = session.lessonFocus
+                  ? lessonFocusLabel(session.lessonFocus)
+                  : undefined;
+                const grammarTopic =
+                  session.lessonFocus?.kind === 'grammar'
+                    ? session.lessonFocus.topic
+                    : undefined;
+                const challengeType = await resolveChallengeTypeForLesson(lessonType);
+                const text = await generateDailyThinkingChallenge(
+                  {
+                    lessonType,
+                    lessonFocus: focus,
+                    grammarTopic,
+                    strongAreas: analysis.strongAreas ?? [],
+                    weakAreas: analysis.weakAreas ?? [],
+                    focusAreas: analysis.focusAreas ?? [],
+                    encouragingMessage: analysis.encouragingMessage,
+                    overallScore: analysis.overallScore,
+                  },
+                  challengeType,
+                  recent,
+                );
+                await saveDailyChallenge(text, challengeType);
+                setDailyChallengeText(text);
+              } catch {
+                setDailyChallengeText(null);
+              } finally {
+                setChallengeLoading(false);
+              }
+            })();
+          }
         }
 
         void syncStreakReminder().catch(() => {
@@ -362,6 +405,23 @@ export default function SummaryScreen() {
                 <Text style={styles.practiceButtonText}>Practice Weak Areas</Text>
               )}
             </Pressable>
+
+            <View style={styles.challengeCard}>
+              <Text style={styles.challengeIcon}>💡</Text>
+              <Text style={styles.challengeTitle}>Your Spanish Challenge for Today</Text>
+              <Text style={styles.challengeSubtitle}>
+                Takes 30 seconds. Builds thinking in Spanish.
+              </Text>
+              {challengeLoading ? (
+                <ActivityIndicator color={palette.accent} style={styles.challengeLoader} />
+              ) : dailyChallengeText ? (
+                <Text style={styles.challengeText}>{dailyChallengeText}</Text>
+              ) : (
+                <Text style={styles.challengeFallback}>
+                  Take one thing from today&apos;s lesson and name it in Spanish before bed tonight.
+                </Text>
+              )}
+            </View>
           </>
         ) : (
           <>
@@ -685,6 +745,47 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#0B0F14',
     letterSpacing: 0.2,
+  },
+  challengeCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginTop: 20,
+    marginBottom: 8,
+  },
+  challengeIcon: {
+    fontSize: 28,
+    marginBottom: 8,
+  },
+  challengeTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: palette.text,
+    marginBottom: 4,
+  },
+  challengeSubtitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    marginBottom: 12,
+  },
+  challengeText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 24,
+  },
+  challengeFallback: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 22,
+    fontStyle: 'italic',
+  },
+  challengeLoader: {
+    marginVertical: 8,
   },
   drillHeader: {
     marginBottom: 12,

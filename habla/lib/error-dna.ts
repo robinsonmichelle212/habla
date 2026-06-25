@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLessonHistory, type LessonHistoryEntry } from '@/lib/practice-storage';
 import { formatLocalDate } from '@/lib/streak';
 
-export type ErrorDNACategory = 'grammar' | 'writing' | 'vocabulary' | 'speaking' | 'structure';
+export type ErrorDNACategory = 'grammar' | 'writing' | 'vocabulary' | 'speaking' | 'structure' | 'word-order';
 
 export type ErrorDNAInput = {
   error: string;
@@ -34,17 +34,25 @@ const MAX_ACTIVE_ERRORS = 20;
 const IMPROVING_SESSION_WINDOW = 5;
 const ARCHIVE_IMPROVING_MONTHS = 3;
 
-const VALID_CATEGORIES: ErrorDNACategory[] = ['grammar', 'writing', 'vocabulary', 'speaking', 'structure'];
+const VALID_CATEGORIES: ErrorDNACategory[] = [
+  'grammar',
+  'writing',
+  'vocabulary',
+  'speaking',
+  'structure',
+  'word-order',
+];
 
 function normalizeErrorKey(error: string): string {
   return error.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 function normalizeCategory(value: string): ErrorDNACategory {
-  const lower = value.trim().toLowerCase();
+  const lower = value.trim().toLowerCase().replace(/\s+/g, '-');
   if (VALID_CATEGORIES.includes(lower as ErrorDNACategory)) {
     return lower as ErrorDNACategory;
   }
+  if (lower === 'wordorder') return 'word-order';
   return 'grammar';
 }
 
@@ -135,6 +143,8 @@ export function categoryLabel(category: ErrorDNACategory): string {
       return 'Speaking';
     case 'structure':
       return 'Structure';
+    case 'word-order':
+      return 'Word order';
   }
 }
 
@@ -267,6 +277,32 @@ export async function getArchivedErrorDNA(): Promise<ArchivedErrorDNAItem[]> {
 
 export async function getTopErrorDNA(count = 3): Promise<ErrorDNAItem[]> {
   const items = await getErrorDNA();
+  return items.slice(0, count);
+}
+
+export async function getWordOrderErrorDNA(): Promise<ErrorDNAItem[]> {
+  const items = await getErrorDNA();
+  return items.filter((item) => item.category === 'word-order' || item.category === 'structure');
+}
+
+export async function hasWordOrderPatterns(): Promise<boolean> {
+  const items = await getWordOrderErrorDNA();
+  return items.length > 0;
+}
+
+export async function getTopErrorsForLesson(
+  lessonKind: 'grammar' | 'vocabulary' | 'your-day' | 'structure',
+  count = 3,
+): Promise<ErrorDNAItem[]> {
+  const items = await getErrorDNA();
+  if (lessonKind === 'structure') {
+    const wordOrder = items.filter(
+      (item) => item.category === 'word-order' || item.category === 'structure',
+    );
+    if (wordOrder.length >= count) return wordOrder.slice(0, count);
+    const rest = items.filter((item) => !wordOrder.includes(item));
+    return [...wordOrder, ...rest].slice(0, count);
+  }
   return items.slice(0, count);
 }
 

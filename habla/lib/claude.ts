@@ -250,7 +250,7 @@ export type LessonBreakdownJson = {
 
 export type ErrorDNAAnalysisItem = {
   error: string;
-  category: 'grammar' | 'writing' | 'vocabulary' | 'speaking' | 'structure';
+  category: 'grammar' | 'writing' | 'vocabulary' | 'speaking' | 'structure' | 'word-order';
   occurrences: number;
   example: string;
   correction: string;
@@ -667,9 +667,9 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
 - overallScore: integer percent (0-100) average across ${isStructure ? 'grammar, vocabulary, fluency, writing, and structure' : 'grammar, vocabulary, fluency, and writing'} in breakdown
 - encouragingMessage: one short motivational sentence in Spanish then English (same line, separated by " / ")
 - errorDNA: array of specific recurring mistake patterns from this lesson (empty array if none). Each item:
-  { error: string (concise pattern description), category: "grammar"|"writing"|"vocabulary"|"speaking"|"structure", occurrences: 1, example: string (real mistake from this lesson), correction: string (how to fix + brief explanation) }
+  { error: string (concise pattern description), category: "grammar"|"writing"|"vocabulary"|"speaking"|"structure"|"word-order", occurrences: 1, example: string (real mistake from this lesson), correction: string (how to fix + brief explanation) }
   Only include precise, repeatable mistakes — not vague weak areas. Set occurrences to 1 for each new pattern found today.
-  ${isStructure ? 'Tag word-order and construction mistakes as category "structure".' : ''}
+  ${isStructure ? 'Tag word-order and construction mistakes as category "word-order" (or "structure" for broader lesson patterns).' : 'Tag word-order mistakes as category "word-order".'}
 - breakdown: object with:
   - grammar: {
       score: 0-100 integer,
@@ -708,7 +708,7 @@ ${writingScores ? JSON.stringify(writingScores) : 'null'}
 Rules:
 - Use writing scores to set breakdown.grammar.score, breakdown.vocabulary.score, breakdown.fluency.score where appropriate.
 - breakdown.writing.score should reflect writing quality (use writing scores as a guide).
-${isStructure ? '- breakdown.structure.score must use structureScore from writing scores when provided.\n- breakdown.structure.topic must match the lesson focus.\n- Tag word-order patterns in errorDNA as category "structure".' : ''}
+${isStructure ? '- breakdown.structure.score must use structureScore from writing scores when provided.\n- breakdown.structure.topic must match the lesson focus.\n- Tag word-order patterns in errorDNA as category "word-order".' : ''}
 - breakdown.grammar.topic and breakdown.vocabulary.topic must reflect what was practised in this lesson.
 - overallScore must be the rounded average of the ${isStructure ? 'five' : 'four'} breakdown scores${isStructure ? ' (grammar, vocabulary, fluency, writing, structure)' : ''}.
 - weakAreas and focusAreas must align with breakdown details.
@@ -864,6 +864,86 @@ focusAreas: ${JSON.stringify(focusAreas)}`;
   return Array.isArray(parsed.exercises) ? parsed.exercises : [];
 }
 
+import {
+  CHALLENGE_TYPE_TEMPLATES,
+  type ChallengeType,
+  type DailyChallengeSummaryInput,
+} from '@/lib/daily-challenge';
+
+export async function generateDailyThinkingChallenge(
+  summary: DailyChallengeSummaryInput,
+  challengeType: ChallengeType,
+  recentChallenges: string[],
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+  const typeDef = CHALLENGE_TYPE_TEMPLATES[challengeType];
+  const grammarTopic = summary.grammarTopic ?? summary.lessonFocus ?? 'today\'s grammar';
+
+  const system = `You are Javi, a Spanish tutor helping a B1 learner build the habit of thinking in Spanish outside the app.
+Return ONLY the challenge text — one sentence, plain English, no markdown, no quotes, no labels.`;
+
+  const user = `Generate one micro Spanish thinking challenge for the user to do in their normal daily life today.
+
+CHALLENGE TYPE (required): ${challengeType}
+Template to follow closely: ${typeDef.template}
+Guidance: ${typeDef.hint}
+${
+  challengeType === 'GRAMMAR_APPLICATION'
+    ? `Replace [current week topic] with: ${grammarTopic}`
+    : ''
+}
+
+It must:
+- Take no more than 30 seconds of active effort
+- Relate to what was covered today
+- Help build the habit of thinking in Spanish outside the app
+- Be specific and actionable — fill in bracketed placeholders with concrete details from today
+- Follow the ${challengeType} format above (you may adapt wording slightly but keep the same challenge style)
+- Never repeat the last 7 challenges (see below)
+
+Recent challenges to avoid repeating:
+${recentChallenges.length ? recentChallenges.map((c, i) => `${i + 1}. ${c}`).join('\n') : '(none yet)'}
+
+Today's lesson summary:
+- Lesson type: ${summary.lessonType}
+- Focus: ${summary.lessonFocus ?? 'General practice'}
+- Overall score: ${summary.overallScore ?? 'n/a'}%
+- Strong areas: ${summary.strongAreas.join('; ') || 'n/a'}
+- Weak areas: ${summary.weakAreas.join('; ') || 'n/a'}
+- Focus next: ${summary.focusAreas.join('; ') || 'n/a'}
+- Javi's note: ${summary.encouragingMessage ?? 'n/a'}
+
+Return just the challenge text — one sentence, plain English, no markdown.`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 150,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response).replace(/^["']|["']$/g, '').trim();
+  if (text) return text;
+
+  switch (challengeType) {
+    case 'GRAMMAR_APPLICATION':
+      return `Use ${grammarTopic} in your internal monologue 3 times today.`;
+    case 'VOCABULARY':
+      return "Pick 3 words from today's lesson and use them in a sentence in your head before you sleep.";
+    case 'STRUCTURE':
+      return 'When you think of an English sentence today, flip the adjective to after the noun as Spanish does.';
+    case 'OBSERVATION':
+      return 'For the next hour when you see any object say its Spanish name in your head.';
+    case 'DECISION':
+      return 'Make your next small decision in Spanish — Prefiero... Quiero... Voy a...';
+    case 'EMOTION':
+      return 'Next time you feel any emotion say it in Spanish first — Estoy... Tengo... Qué...';
+    default:
+      return 'When you make your next drink narrate each step in Spanish internally.';
+  }
+}
+
 export async function checkDrillAnswer(
   lessonType: LessonType,
   exercise: DrillExerciseJson,
@@ -925,7 +1005,21 @@ export type QuickFireQuestion = {
   expectedAnswer: string;
   acceptableAnswers?: string[];
   targetsErrorDna?: boolean;
+  wordOrderSubtype?: WordOrderSubtype;
+  constructionTag?: string;
 };
+
+export const WORD_ORDER_SUBTYPES = [
+  'jumbled_words',
+  'spot_error',
+  'adjective_placement',
+  'object_pronoun',
+  'double_negative',
+  'question_formation',
+  'gustar_construction',
+] as const;
+
+export type WordOrderSubtype = (typeof WORD_ORDER_SUBTYPES)[number];
 
 export type VocabLookupJson = {
   spanish: string;
@@ -1161,6 +1255,208 @@ Valid type values: ${GRAMMAR_DRILL_TYPES.join(', ')}`;
       type: GRAMMAR_DRILL_TYPES.includes(q.type as QuickFireQuestionType)
         ? (q.type as QuickFireQuestionType)
         : GRAMMAR_DRILL_TYPES[i % GRAMMAR_DRILL_TYPES.length],
+      prompt: q.prompt.trim(),
+      expectedAnswer: q.expectedAnswer.trim(),
+      acceptableAnswers: Array.isArray(q.acceptableAnswers)
+        ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+        : undefined,
+      targetsErrorDna: Boolean(q.targetsErrorDna),
+    }));
+}
+
+const WORD_ORDER_SUBTYPE_SET = new Set<string>(WORD_ORDER_SUBTYPES);
+
+export async function generateWordOrderDrillQuestions(
+  count = 10,
+  errorDnaTargets: ErrorDNAInput[] = [],
+): Promise<QuickFireQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const errorDnaBlock =
+    errorDnaTargets.length > 0
+      ? `
+Exactly 2 of the ${count} questions MUST target these recurring word-order errors (match constructionTag to the pattern):
+${formatErrorDnaForDrillPrompt(errorDnaTargets)}
+For those 2 questions set "targetsErrorDna": true.`
+      : '';
+
+  const system = `You are Javi, a Spanish tutor creating word-order quick-fire drills for a B1 learner.
+Return ONLY valid JSON. No markdown. No extra keys.`;
+
+  const user = `Generate exactly ${count} word-order drill questions for a B1 Spanish learner.
+Rotate through ALL 7 subtypes below — use each at least once when count is 10; for ${count} questions distribute evenly.
+${errorDnaBlock}
+
+SUBTYPES (set wordOrderSubtype and constructionTag on every question):
+
+1. jumbled_words (constructionTag: "jumbled_words")
+   Give 4-6 Spanish words out of order separated by " / ".
+   User types the correct sentence.
+   Example prompt: "Put in order: rojo / el / coche / es" → "El coche es rojo"
+   Example prompt: "Put in order: gusta / me / el / café" → "Me gusta el café"
+
+2. spot_error (constructionTag: "spot_error")
+   Give a Spanish sentence with a word-order mistake; user fixes it.
+   Example: "Fix: Yo veo lo" → "Lo veo"
+   Also use correct sentences occasionally and ask why wrong order fails — e.g. "Why is 'Una grande casa' wrong?" → "Una casa grande"
+
+3. adjective_placement (constructionTag: "adjective_placement")
+   English phrase with adjective before noun → Spanish with adjective after noun (colours, sizes, nationalities after; numbers/possessives before).
+   Example: "The red car" → "El coche rojo"
+   Example: "A tall man" → "Un hombre alto"
+
+4. object_pronoun (constructionTag: "object_pronouns")
+   Sentence with object pronoun in wrong position; user corrects.
+   Example: "Fix: Veo lo todos los días" → "Lo veo todos los días"
+   Example: "Fix: Quiero lo hacer" → "Lo quiero hacer" (acceptableAnswers: ["Quiero hacerlo"])
+
+5. double_negative (constructionTag: "double_negatives")
+   English with single negative → Spanish double negative.
+   Example: "I don't want anything" → "No quiero nada"
+   Example: "I never go there" → "No voy nunca allí" (acceptableAnswers: ["Nunca voy allí"])
+
+6. question_formation (constructionTag: "question_formation")
+   English question → Spanish without auxiliary verb.
+   Example: "Do you want coffee?" → "¿Quieres café?"
+   Example: "Are you coming tomorrow?" → "¿Vienes mañana?"
+
+7. gustar_construction (constructionTag: "gustar_construction")
+   English with like/love/hate → Spanish gustar-type construction.
+   Example: "I like coffee" → "Me gusta el café"
+   Example: "They love Spanish films" → "Les encantan las películas españolas"
+
+Rules:
+- Short prompts. Answers 1-10 words usually.
+- expectedAnswer is the primary correct answer.
+- acceptableAnswers: optional valid variants (accents, word order alternatives).
+- type: use "reorder_words" for jumbled_words; "spot_structure_error" for spot_error and object_pronoun; "quick_translate" for adjective_placement, double_negative, question_formation, gustar_construction.
+- Every question MUST include wordOrderSubtype and constructionTag.
+
+Return JSON exactly:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "reorder_words",
+      "wordOrderSubtype": "jumbled_words",
+      "constructionTag": "jumbled_words",
+      "prompt": "...",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."],
+      "targetsErrorDna": false
+    }
+  ]
+}
+
+Valid wordOrderSubtype values: ${WORD_ORDER_SUBTYPES.join(', ')}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1600,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as { questions: QuickFireQuestion[] };
+  if (!Array.isArray(parsed.questions)) return [];
+
+  return parsed.questions
+    .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
+    .slice(0, count)
+    .map((q, i) => {
+      const subtype = WORD_ORDER_SUBTYPE_SET.has(String(q.wordOrderSubtype))
+        ? (q.wordOrderSubtype as WordOrderSubtype)
+        : WORD_ORDER_SUBTYPES[i % WORD_ORDER_SUBTYPES.length];
+      return {
+        id: String(q.id ?? i + 1),
+        type: QUICK_FIRE_TYPES.includes(q.type as QuickFireQuestionType)
+          ? (q.type as QuickFireQuestionType)
+          : 'reorder_words',
+        prompt: q.prompt.trim(),
+        expectedAnswer: q.expectedAnswer.trim(),
+        acceptableAnswers: Array.isArray(q.acceptableAnswers)
+          ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+          : undefined,
+        targetsErrorDna: Boolean(q.targetsErrorDna),
+        wordOrderSubtype: subtype,
+        constructionTag: String(q.constructionTag ?? subtype).trim(),
+      };
+    });
+}
+
+export async function generateFluencyDrillQuestions(
+  prioritizedWeakAreas: PrioritizedWeakAreaInput[],
+  count = 10,
+  errorDnaTargets: ErrorDNAInput[] = [],
+): Promise<QuickFireQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+  const errorDnaBlock =
+    errorDnaTargets.length > 0
+      ? `
+Exactly 2 of the ${count} questions MUST target these recurring user errors:
+${formatErrorDnaForDrillPrompt(errorDnaTargets)}
+For those 2 questions set "targetsErrorDna": true.`
+      : '';
+
+  const system = `You are Javi, a Spanish tutor creating fluency quick-fire drills for a B1 learner.
+Return ONLY valid JSON. No markdown. No extra keys.`;
+
+  const user = `Generate exactly ${count} fluency-focused quick-fire questions for a B1 learner.
+
+Focus on natural spoken flow, connectors, fillers, and quick production — not tense tables.
+Target weak areas: ${JSON.stringify(prioritizedWeakAreas)}
+${errorDnaBlock}
+
+Use these types evenly:
+- quick_translate: natural conversational sentences
+- fill_blank: common spoken phrases and connectors
+- choose_word: natural collocation / register
+- correct_mistake: unnatural or stilted phrasing
+
+Rules:
+- Short prompts. Brief answers.
+- Tie to weak areas where possible.
+
+Return JSON exactly:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "quick_translate",
+      "prompt": "...",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."],
+      "targetsErrorDna": false
+    }
+  ]
+}
+
+Valid type values: quick_translate, fill_blank, choose_word, correct_mistake`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1400,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as { questions: QuickFireQuestion[] };
+  if (!Array.isArray(parsed.questions)) return [];
+
+  const fluencyTypes: QuickFireQuestionType[] = ['quick_translate', 'fill_blank', 'choose_word', 'correct_mistake'];
+
+  return parsed.questions
+    .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
+    .slice(0, count)
+    .map((q, i) => ({
+      id: String(q.id ?? i + 1),
+      type: fluencyTypes.includes(q.type as QuickFireQuestionType)
+        ? (q.type as QuickFireQuestionType)
+        : fluencyTypes[i % fluencyTypes.length],
       prompt: q.prompt.trim(),
       expectedAnswer: q.expectedAnswer.trim(),
       acceptableAnswers: Array.isArray(q.acceptableAnswers)
