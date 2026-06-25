@@ -17,6 +17,17 @@ export async function addGems(amount: number): Promise<number> {
   return next;
 }
 
+export async function deductGems(amount: number): Promise<{ success: boolean; total: number }> {
+  const cost = Math.max(0, Math.trunc(amount));
+  const current = await getTotalGems();
+  if (cost > current) {
+    return { success: false, total: current };
+  }
+  const next = current - cost;
+  await AsyncStorage.setItem(TOTAL_GEMS_KEY, String(next));
+  return { success: true, total: next };
+}
+
 /** Gems for hitting a streak milestone (7, 14, or 30 days). */
 export function gemsForStreakMilestone(day: number): number {
   if (day === 7) return 5;

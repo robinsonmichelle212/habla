@@ -45,6 +45,7 @@ import {
   getCoveredVocabThemes,
   getLessonHistory,
 } from '@/lib/practice-storage';
+import { getProfileBadges, type ProfileBadge } from '@/lib/profile-badges';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
@@ -105,6 +106,7 @@ export default function LevelScreen() {
   const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
+  const [profileBadges, setProfileBadges] = useState<ProfileBadge[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -122,6 +124,7 @@ export default function LevelScreen() {
             words,
             activeErrors,
             archivedErrors,
+            badges,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredVocabThemesFromStorage(),
@@ -131,6 +134,7 @@ export default function LevelScreen() {
             getSavedVocabulary(),
             getErrorDNA(),
             getArchivedErrorDNA(),
+            getProfileBadges(),
           ]);
           if (cancelled) return;
 
@@ -151,6 +155,7 @@ export default function LevelScreen() {
           setSavedWords(words);
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
+          setProfileBadges(badges);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -212,6 +217,10 @@ export default function LevelScreen() {
             <Text style={styles.progressLinkHint}>Score trends · activity · streaks</Text>
           </Pressable>
 
+          {profileBadges.length > 0 ? (
+            <ProfileBadgesSection badges={profileBadges} />
+          ) : null}
+
           {barometer ? (
             <LevelBarometerSection
               barometer={barometer}
@@ -255,6 +264,25 @@ export default function LevelScreen() {
         />
       ) : null}
     </SafeAreaView>
+  );
+}
+
+function ProfileBadgesSection({ badges }: { badges: ProfileBadge[] }) {
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Badges</Text>
+      <View style={styles.card}>
+        <View style={styles.badgeRow}>
+          {badges.map((badge) => (
+            <View key={badge.id} style={styles.badgePill}>
+              <Text style={styles.badgeEmoji}>{badge.emoji}</Text>
+              <Text style={styles.badgeLabel}>{badge.label}</Text>
+              <Text style={styles.badgeDate}>{badge.earnedAt}</Text>
+            </View>
+          ))}
+        </View>
+      </View>
+    </View>
   );
 }
 
@@ -691,6 +719,24 @@ const styles = StyleSheet.create({
     borderColor: palette.surfaceBorder,
     padding: 16,
   },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  badgePill: {
+    backgroundColor: 'rgba(255, 122, 89, 0.12)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 122, 89, 0.35)',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    minWidth: 100,
+  },
+  badgeEmoji: { fontSize: 28, marginBottom: 4 },
+  badgeLabel: { fontSize: 13, fontWeight: '800', color: palette.text, textAlign: 'center' },
+  badgeDate: { fontSize: 11, fontWeight: '600', color: palette.muted, marginTop: 2 },
   currentBand: { fontSize: 28, fontWeight: '900', color: palette.text, marginBottom: 4 },
   currentBandTappable: { color: palette.accent },
   tapHint: { fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 8 },

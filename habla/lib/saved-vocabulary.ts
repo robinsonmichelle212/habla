@@ -10,7 +10,7 @@ const LONGEST_MASTERY_STREAK_KEY = 'vocabLongestMasteryStreak';
 
 export type VocabDifficulty = 'B1' | 'B2';
 
-export type VocabSource = 'lesson' | 'reading';
+export type VocabSource = 'lesson' | 'reading' | 'slang' | 'music';
 
 export type SavedVocabWord = {
   spanish: string;
@@ -67,7 +67,16 @@ function normalizeWord(raw: unknown): SavedVocabWord | null {
     timesSeen: Math.max(0, Math.trunc(Number(o.timesSeen) || 0)),
     consecutiveCorrect: Math.max(0, Math.trunc(Number(o.consecutiveCorrect) || 0)),
     mastered: Boolean(o.mastered),
-    source: o.source === 'reading' ? 'reading' : o.source === 'lesson' ? 'lesson' : undefined,
+    source:
+      o.source === 'reading'
+        ? 'reading'
+        : o.source === 'slang'
+          ? 'slang'
+          : o.source === 'music'
+            ? 'music'
+            : o.source === 'lesson'
+              ? 'lesson'
+              : undefined,
     needsReview: Boolean(o.needsReview),
   };
 }

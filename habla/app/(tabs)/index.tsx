@@ -22,6 +22,11 @@ import { completeDailyChallenge, getTodaysChallenge, type DailyChallenge } from 
 import { getProgressionLevel } from '@/lib/level-progress';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
 import { addGems, getTotalGems } from '@/lib/gems';
+import {
+  dismissShopBadgeForSession,
+  getAffordableLockedRounds,
+  shouldShowShopBadge,
+} from '@/lib/gem-shop';
 import { monthLabel } from '@/lib/wrapped-data';
 import { ensurePreviousMonthWrapped, getUnreadWrappedMonth } from '@/lib/wrapped-storage';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
@@ -63,6 +68,7 @@ export default function HomeScreen() {
   const [challengeGemToast, setChallengeGemToast] = useState(0);
   const [completingChallenge, setCompletingChallenge] = useState(false);
   const [wrappedBannerMonth, setWrappedBannerMonth] = useState<string | null>(null);
+  const [showShopBadge, setShowShopBadge] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -97,6 +103,11 @@ export default function HomeScreen() {
           setTotalGems(gems);
           setLast7Days(full.last7Days);
           setDailyChallenge(challenge);
+
+          const affordable = await getAffordableLockedRounds(gems);
+          if (!cancelled) {
+            setShowShopBadge(shouldShowShopBadge(gems, affordable));
+          }
 
           setTodaysScoreInfo(getTodayScoreInfo(history, drills));
           setTopScoreWeek(getTopScoreThisWeek(history, drills));
@@ -199,11 +210,33 @@ export default function HomeScreen() {
               </Text>
             </View>
 
-            <View style={styles.gemsWrap} accessibilityLabel="Total gems">
-              <Text style={styles.gemEmoji}>💎</Text>
-              <Text style={styles.gemCount}>{streakHydrated ? String(totalGems) : '—'}</Text>
+            <View style={styles.gemsRow}>
+              <View style={styles.gemsWrap} accessibilityLabel="Total gems">
+                <Text style={styles.gemEmoji}>💎</Text>
+                <Text style={styles.gemCount}>{streakHydrated ? String(totalGems) : '—'}</Text>
+              </View>
+              <Pressable
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  dismissShopBadgeForSession();
+                  setShowShopBadge(false);
+                  router.push('/gem-shop');
+                }}
+                style={({ pressed }) => [styles.shopBtn, pressed && styles.shopBtnPressed]}>
+                <Text style={styles.shopBtnText}>Gem Shop 💎</Text>
+                {showShopBadge ? (
+                  <View style={styles.shopBadge}>
+                    <Text style={styles.shopBadgeText}>!</Text>
+                  </View>
+                ) : null}
+              </Pressable>
             </View>
           </View>
+          {showShopBadge ? (
+            <Text style={styles.shopHint}>💎 You can unlock something new!</Text>
+          ) : null}
 
           <Text style={styles.streakLabel}>{streakLabel}</Text>
 
@@ -470,6 +503,11 @@ const styles = StyleSheet.create({
     letterSpacing: 0.3,
     marginBottom: 12,
   },
+  gemsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
   gemsWrap: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -488,6 +526,36 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     color: '#A78BFA',
+  },
+  shopBtn: {
+    backgroundColor: palette.surface,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    position: 'relative',
+  },
+  shopBtnPressed: { opacity: 0.9 },
+  shopBtnText: { fontSize: 13, fontWeight: '800', color: palette.text },
+  shopBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: palette.accent,
+    borderRadius: 8,
+    minWidth: 18,
+    height: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  shopBadgeText: { fontSize: 11, fontWeight: '900', color: '#0B0F14' },
+  shopHint: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.accent,
+    marginBottom: 8,
   },
   dotsRow: {
     flexDirection: 'row',

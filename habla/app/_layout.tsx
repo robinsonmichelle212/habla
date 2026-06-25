@@ -61,6 +61,8 @@ export default function RootLayout() {
         <Stack.Screen name="read-lesson" options={{ headerShown: false }} />
         <Stack.Screen name="summary" options={{ headerShown: false }} />
         <Stack.Screen name="wrapped" options={{ headerShown: false }} />
+        <Stack.Screen name="gem-shop" options={{ headerShown: false }} />
+        <Stack.Screen name="bonus-round" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
