@@ -1,5 +1,6 @@
 import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
+import { GrammarCurriculumSection } from '@/components/grammar-curriculum-section';
 import { LevelDetailModal, LevelProgressionList } from '@/components/level-detail-modal';
 import {
   getArchivedErrorDNA,
@@ -8,14 +9,8 @@ import {
   type ErrorDNAItem,
 } from '@/lib/error-dna';
 import {
-  GRAMMAR_WEEK_DEFINITIONS,
-  TOTAL_CURRICULUM_WEEKS,
-  daysRemainingInWeek,
-  isWeekCompleted,
-  isWeekLocked,
   resolveGrammarCurriculum,
   resetGrammarCurriculum,
-  weekLabel,
   type GrammarCurriculumState,
 } from '@/lib/grammar-curriculum';
 import {
@@ -228,6 +223,7 @@ export default function LevelScreen() {
               <GrammarCurriculumSection
                 curriculum={grammarCurriculum}
                 history={history}
+                errors={errorDna}
                 onReset={handleResetCurriculum}
               />
               <ErrorDnaSection errors={errorDna} archived={archivedErrorDna} history={history} />
@@ -424,75 +420,6 @@ function BandPill({
         {passed ? '✓ ' : ''}{short}
       </Text>
     </Pressable>
-  );
-}
-
-function GrammarCurriculumSection({
-  curriculum,
-  history,
-  onReset,
-}: {
-  curriculum: GrammarCurriculumState | null;
-  history: Awaited<ReturnType<typeof getLessonHistory>>;
-  onReset: () => void;
-}) {
-  if (!curriculum) return null;
-
-  const daysLeft = daysRemainingInWeek(curriculum);
-  const weekDef = GRAMMAR_WEEK_DEFINITIONS[curriculum.currentWeek - 1];
-  const progressPercent = Math.round((curriculum.currentWeek / TOTAL_CURRICULUM_WEEKS) * 100);
-
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Grammar curriculum</Text>
-      <View style={styles.card}>
-        <Text style={styles.focusLine}>
-          Week {curriculum.currentWeek} of {TOTAL_CURRICULUM_WEEKS}: {curriculum.currentTopic}
-        </Text>
-        <Text style={styles.progressLabel}>
-          {daysLeft} day{daysLeft === 1 ? '' : 's'} remaining this week
-        </Text>
-        <View style={styles.progressTrack}>
-          <View style={[styles.progressFill, { width: `${progressPercent}%` }]} />
-        </View>
-        <Text style={styles.progressLabel}>Week {curriculum.currentWeek} of 20</Text>
-
-        <Text style={styles.focusVerbsLabel}>Focus verbs</Text>
-        <Text style={styles.focusVerbsText}>{curriculum.currentFocusVerbs.join(' · ')}</Text>
-
-        <View style={styles.topicList}>
-          {GRAMMAR_WEEK_DEFINITIONS.map((week) => {
-            const done = isWeekCompleted(curriculum, week.week);
-            const locked = isWeekLocked(curriculum, week.week);
-            const isCurrent = week.week === curriculum.currentWeek;
-            const avg = done ? averageScoreForTopic(history, week.topic, 'grammar') : null;
-
-            return (
-              <View key={week.week} style={[styles.topicRow, isCurrent && styles.topicRowFocus]}>
-                <Text style={styles.topicIcon}>
-                  {done ? '✅' : locked ? '⬜' : isCurrent ? '▶️' : '⬜'}
-                </Text>
-                <Text style={[styles.topicLabel, locked && styles.topicLabelLocked]} numberOfLines={2}>
-                  {weekLabel(week)}
-                  {isCurrent ? ' · now' : locked ? ' · locked' : ''}
-                </Text>
-                {done && avg != null ? (
-                  <Text style={[styles.topicScore, { color: scoreColor(avg) }]}>{avg}%</Text>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-
-        {weekDef ? (
-          <Text style={styles.weekSummary}>{weekDef.summary}</Text>
-        ) : null}
-
-        <Pressable onPress={onReset} style={styles.resetButton} accessibilityRole="button">
-          <Text style={styles.resetButtonText}>Reset curriculum</Text>
-        </Pressable>
-      </View>
-    </View>
   );
 }
 

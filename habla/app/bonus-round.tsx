@@ -31,7 +31,7 @@ import {
   eliteBadgeId,
   eliteBadgeLabel,
   getRoundDef,
-  isRoundLevelUnlocked,
+  isRoundLevelPlayable,
   parseRoundLevel,
   recordLevelCompleted,
   recordRoundPlayed,
@@ -224,9 +224,9 @@ export default function BonusRoundScreen() {
       return;
     }
     void (async () => {
-      const unlocked = await isRoundLevelUnlocked(roundId, roundLevel);
-      if (!unlocked) {
-        Alert.alert('Unlock first', `Purchase Level ${roundLevel} in the Gem Shop.`, [
+      const playable = await isRoundLevelPlayable(roundId, roundLevel);
+      if (!playable) {
+        Alert.alert('Unlock first', `Purchase Level ${roundLevel} in the Gem Shop — you have 24 hours to complete it.`, [
           { text: 'OK', onPress: () => router.replace('/gem-shop') },
         ]);
         return;

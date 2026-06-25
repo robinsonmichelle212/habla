@@ -8,14 +8,21 @@ import {
   getNextUnlockLevel,
   getRoundDef,
   isLevelCompleted,
-  isLevelUnlocked,
+  isLevelPlayable,
   purchaseLevel,
   ROUND_LEVELS,
+  takeExpiredNotices,
   TOTAL_LEVEL_SLOTS,
   type BonusRoundId,
+  type ExpiredUnlockNotice,
   type GemShopProgress,
   type RoundLevel,
 } from '@/lib/gem-shop';
+import {
+  formatExpiryCountdown,
+  getActivePendingUnlock,
+  getExpiryUrgency,
+} from '@/lib/gem-shop-expiry';
 import { getShopRecommendation, type ShopRecommendation } from '@/lib/gem-shop-recommendations';
 import { getTotalGems } from '@/lib/gems';
 import { useRouter } from 'expo-router';
@@ -24,7 +31,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -44,9 +51,17 @@ const palette = {
   gem: '#A78BFA',
   green: '#34D399',
   amber: '#FBBF24',
+  red: '#F87171',
 };
 
 type PurchasingKey = `${BonusRoundId}-${RoundLevel}`;
+
+type PendingUnlock = {
+  roundId: BonusRoundId;
+  level: RoundLevel;
+};
+
+type SuccessUnlock = PendingUnlock;
 
 export default function GemShopScreen() {
   const router = useRouter();
@@ -57,6 +72,10 @@ export default function GemShopScreen() {
   const [recommendation, setRecommendation] = useState<ShopRecommendation | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchasing, setPurchasing] = useState<PurchasingKey | null>(null);
+  const [pendingUnlock, setPendingUnlock] = useState<PendingUnlock | null>(null);
+  const [successUnlock, setSuccessUnlock] = useState<SuccessUnlock | null>(null);
+  const [expiredNotices, setExpiredNotices] = useState<ExpiredUnlockNotice[]>([]);
+  const [tick, setTick] = useState(() => Date.now());
 
   const load = useCallback(async () => {
     const [g, p, s] = await Promise.all([
@@ -65,12 +84,35 @@ export default function GemShopScreen() {
       getGemShopStats(),
     ]);
     const rec = await getShopRecommendation(g);
+    const expired = takeExpiredNotices();
+    if (expired.length) {
+      setExpiredNotices((prev) => [...prev, ...expired]);
+    }
     setGems(g);
     setProgress(p);
     setStats(s);
     setRecommendation(rec);
     setLoading(false);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTick(now);
+      if (!progress) return;
+      const hasPending = BONUS_ROUNDS.some((round) =>
+        getActivePendingUnlock(progress[round.id].unlocks, now),
+      );
+      if (!hasPending) return;
+      const anyJustExpired = BONUS_ROUNDS.some((round) =>
+        progress[round.id].unlocks.some((u) => !u.completed && u.expiresAt <= now),
+      );
+      if (anyJustExpired) {
+        void load();
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [load, progress]);
 
   useEffect(() => {
     void (async () => {
@@ -85,36 +127,52 @@ export default function GemShopScreen() {
     router.push({ pathname: '/bonus-round', params: { round: roundId, level: String(level) } });
   };
 
-  const handleUnlock = (roundId: BonusRoundId, level: RoundLevel) => {
-    const def = getRoundDef(roundId);
+  const requestUnlock = (roundId: BonusRoundId, level: RoundLevel) => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    setPendingUnlock({ roundId, level });
+  };
+
+  const cancelUnlock = () => {
+    setPendingUnlock(null);
+  };
+
+  const confirmUnlock = () => {
+    if (!pendingUnlock) return;
+    const { roundId, level } = pendingUnlock;
     const cost = getLevelCost(roundId, level);
-    Alert.alert(
-      `Spend ${cost} 💎 gems on ${def.name} Level ${level}?`,
-      'You can replay this level for free anytime with fresh content.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          onPress: () => {
-            void (async () => {
-              setPurchasing(`${roundId}-${level}`);
-              const result = await purchaseLevel(roundId, level);
-              setPurchasing(null);
-              if (!result.success) {
-                Alert.alert('Not enough gems', `You need ${cost - gems} more gems.`);
-                return;
-              }
-              if (Platform.OS !== 'web') {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              }
-              setGems(result.gemsRemaining ?? 0);
-              await load();
-              launchRound(roundId, level);
-            })();
-          },
-        },
-      ],
-    );
+
+    void (async () => {
+      setPurchasing(`${roundId}-${level}`);
+      const result = await purchaseLevel(roundId, level);
+      setPurchasing(null);
+
+      if (!result.success) {
+        setPendingUnlock(null);
+        return;
+      }
+
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+
+      setGems(result.gemsRemaining ?? 0);
+      setPendingUnlock(null);
+      setSuccessUnlock({ roundId, level });
+      await load();
+    })();
+  };
+
+  const handlePlayLater = () => {
+    setSuccessUnlock(null);
+  };
+
+  const handlePlayNow = () => {
+    if (!successUnlock) return;
+    const { roundId, level } = successUnlock;
+    setSuccessUnlock(null);
+    launchRound(roundId, level);
   };
 
   const handlePlay = (roundId: BonusRoundId, level: RoundLevel) => {
@@ -125,19 +183,17 @@ export default function GemShopScreen() {
   };
 
   const renderLevelButton = (roundId: BonusRoundId, level: RoundLevel, roundProgress: GemShopProgress[BonusRoundId]) => {
-    const unlocked = isLevelUnlocked(progress!, roundId, level);
+    const playable = isLevelPlayable(progress!, roundId, level, tick);
     const completed = isLevelCompleted(progress!, roundId, level);
-    const nextUnlock = getNextUnlockLevel(progress!, roundId);
+    const pending = getActivePendingUnlock(roundProgress.unlocks, tick);
+    const nextUnlock = getNextUnlockLevel(progress!, roundId, tick);
     const isNext = nextUnlock === level;
-    const isCurrent =
-      unlocked &&
-      level === roundProgress.highestLevel &&
-      !completed;
+    const isCurrent = pending?.level === level;
     const cost = getLevelCost(roundId, level);
     const busy = purchasing === `${roundId}-${level}`;
     const canAfford = gems >= cost;
 
-    if (unlocked) {
+    if (playable) {
       return (
         <Pressable
           key={level}
@@ -157,7 +213,7 @@ export default function GemShopScreen() {
       return (
         <Pressable
           key={level}
-          onPress={() => (canAfford ? handleUnlock(roundId, level) : undefined)}
+          onPress={() => (canAfford ? requestUnlock(roundId, level) : undefined)}
           disabled={busy || !canAfford}
           style={[
             styles.levelPill,
@@ -186,6 +242,15 @@ export default function GemShopScreen() {
       </View>
     );
   };
+
+  const pendingDef = pendingUnlock ? getRoundDef(pendingUnlock.roundId) : null;
+  const pendingCost = pendingUnlock
+    ? getLevelCost(pendingUnlock.roundId, pendingUnlock.level)
+    : 0;
+  const successDef = successUnlock ? getRoundDef(successUnlock.roundId) : null;
+  const confirmBusy = pendingUnlock
+    ? purchasing === `${pendingUnlock.roundId}-${pendingUnlock.level}`
+    : false;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -229,7 +294,7 @@ export default function GemShopScreen() {
               </Text>
               {recommendation.canAfford && recommendation.cost > 0 ? (
                 <Pressable
-                  onPress={() => handleUnlock(recommendation.roundId, recommendation.level)}
+                  onPress={() => requestUnlock(recommendation.roundId, recommendation.level)}
                   style={styles.recBtn}>
                   <Text style={styles.recBtnText}>Unlock for {recommendation.cost} 💎</Text>
                 </Pressable>
@@ -246,11 +311,33 @@ export default function GemShopScreen() {
           ) : null}
 
           <Text style={styles.subtitle}>
-            Each round has 5 levels. Unlock in order — replay any unlocked level for free.
+            Each round has 5 levels. Unlock in order — complete within 24 hours. Replay completed levels for free.
           </Text>
+
+          {expiredNotices.map((notice) => {
+            const def = getRoundDef(notice.roundId);
+            return (
+              <View key={`${notice.roundId}-${notice.level}`} style={styles.expiredBanner}>
+                <Text style={styles.expiredBannerText}>
+                  ⏰ {def.name} Level {notice.level} expired. Unlock again to play.
+                </Text>
+                <Pressable
+                  onPress={() =>
+                    setExpiredNotices((prev) =>
+                      prev.filter((n) => !(n.roundId === notice.roundId && n.level === notice.level)),
+                    )
+                  }
+                  hitSlop={8}>
+                  <Text style={styles.expiredDismiss}>✕</Text>
+                </Pressable>
+              </View>
+            );
+          })}
 
           {BONUS_ROUNDS.map((round) => {
             const roundProgress = progress[round.id];
+            const pending = getActivePendingUnlock(roundProgress.unlocks, tick);
+            const expiryUrgency = pending ? getExpiryUrgency(pending.expiresAt, tick) : null;
             const isQuizGateway = round.id === 'quiz';
             return (
               <View key={round.id} style={styles.card}>
@@ -271,6 +358,18 @@ export default function GemShopScreen() {
                 <Text style={styles.cardDesc} numberOfLines={2}>
                   {round.description}
                 </Text>
+                {pending ? (
+                  <Pressable onPress={() => handlePlay(round.id, pending.level)}>
+                    <Text
+                      style={[
+                        styles.expiryBanner,
+                        expiryUrgency === 'amber' && styles.expiryBannerAmber,
+                        expiryUrgency === 'red' && styles.expiryBannerRed,
+                      ]}>
+                      ⏰ Expires in {formatExpiryCountdown(pending.expiresAt, tick)} — Play now
+                    </Text>
+                  </Pressable>
+                ) : null}
                 {isQuizGateway ? (
                   <Text style={styles.gatewayHint}>
                     The perfect first round. Unlock with just 5 gems.
@@ -284,6 +383,94 @@ export default function GemShopScreen() {
           })}
         </ScrollView>
       )}
+
+      <Modal
+        visible={pendingUnlock != null && successUnlock == null}
+        transparent
+        animationType="fade"
+        onRequestClose={cancelUnlock}>
+        <View style={styles.modalBackdrop}>
+          <Pressable style={StyleSheet.absoluteFill} onPress={cancelUnlock} accessibilityLabel="Cancel unlock" />
+          <View style={[styles.modalCard, styles.modalCardElevated]}>
+            {pendingUnlock && pendingDef ? (
+              <>
+                <Text style={styles.modalEmoji}>{pendingDef.emoji}</Text>
+                <Text style={styles.modalTitle}>Are you sure?</Text>
+                <Text style={styles.modalRoundName}>
+                  {pendingDef.name} · Level {pendingUnlock.level}
+                </Text>
+                <Text style={styles.modalSpend}>
+                  This will spend {pendingCost} 💎 gems
+                </Text>
+                <View style={styles.modalBalanceBox}>
+                  <Text style={styles.modalBalanceLine}>
+                    Your current gem balance: {gems} 💎
+                  </Text>
+                  <Text style={styles.modalBalanceLine}>
+                    Your balance after: {Math.max(0, gems - pendingCost)} 💎
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={confirmUnlock}
+                  disabled={confirmBusy || gems < pendingCost}
+                  style={({ pressed }) => [
+                    styles.modalConfirmBtn,
+                    pressed && styles.modalBtnPressed,
+                    (confirmBusy || gems < pendingCost) && styles.modalBtnDisabled,
+                  ]}>
+                  {confirmBusy ? (
+                    <ActivityIndicator color="#0B0F14" />
+                  ) : (
+                    <Text style={styles.modalConfirmText}>Yes, unlock it 🔓</Text>
+                  )}
+                </Pressable>
+                <Pressable
+                  onPress={cancelUnlock}
+                  disabled={confirmBusy}
+                  style={({ pressed }) => [
+                    styles.modalCancelBtn,
+                    pressed && styles.modalBtnPressed,
+                  ]}>
+                  <Text style={styles.modalCancelText}>Not yet</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={successUnlock != null}
+        transparent
+        animationType="fade"
+        onRequestClose={handlePlayLater}>
+        <View style={styles.modalBackdrop}>
+          <View style={[styles.successCard, styles.modalCardElevated]}>
+            {successUnlock && successDef ? (
+              <>
+                <Text style={styles.successEmoji}>{successDef.emoji}</Text>
+                <Text style={styles.successCelebration}>Unlocked! 🎉</Text>
+                <Text style={styles.successTitle}>
+                  🎉 {successDef.name} Level {successUnlock.level} Unlocked!
+                </Text>
+                <Text style={styles.successDeadline}>
+                  You have 24 hours to complete this round.
+                </Text>
+                <Pressable
+                  onPress={handlePlayNow}
+                  style={({ pressed }) => [styles.successPrimaryBtn, pressed && styles.modalBtnPressed]}>
+                  <Text style={styles.successPrimaryText}>Play Now ▶️</Text>
+                </Pressable>
+                <Pressable
+                  onPress={handlePlayLater}
+                  style={({ pressed }) => [styles.successSecondaryBtn, pressed && styles.modalBtnPressed]}>
+                  <Text style={styles.successSecondaryText}>Play Later ⏰</Text>
+                </Pressable>
+              </>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -384,6 +571,34 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   playedMeta: { fontSize: 12, fontWeight: '700', color: palette.green, marginTop: 2 },
+  expiredBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    backgroundColor: 'rgba(248, 113, 113, 0.12)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(248, 113, 113, 0.35)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  expiredBannerText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.red,
+    lineHeight: 20,
+  },
+  expiredDismiss: { fontSize: 16, fontWeight: '900', color: palette.muted },
+  expiryBanner: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+    lineHeight: 18,
+  },
+  expiryBannerAmber: { color: palette.amber },
+  expiryBannerRed: { color: palette.red },
   levelRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
   levelPill: {
     flex: 1,
@@ -418,4 +633,130 @@ const styles = StyleSheet.create({
   levelPillLabel: { fontSize: 11, fontWeight: '900', color: palette.text },
   levelPillCost: { fontSize: 9, fontWeight: '800', color: palette.gem },
   levelPillCostMuted: { fontSize: 9, fontWeight: '700', color: palette.muted },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: palette.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 24,
+    alignItems: 'center',
+    gap: 10,
+  },
+  modalCardElevated: { zIndex: 1 },
+  modalEmoji: { fontSize: 44, marginBottom: 4 },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: palette.text,
+    textAlign: 'center',
+  },
+  modalRoundName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.accent,
+    textAlign: 'center',
+  },
+  modalSpend: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.text,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  modalBalanceBox: {
+    width: '100%',
+    backgroundColor: palette.background,
+    borderRadius: 12,
+    padding: 14,
+    gap: 6,
+    marginVertical: 8,
+  },
+  modalBalanceLine: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+  },
+  modalConfirmBtn: {
+    width: '100%',
+    backgroundColor: palette.accent,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  modalConfirmText: { fontSize: 16, fontWeight: '900', color: '#0B0F14' },
+  modalCancelBtn: {
+    width: '100%',
+    backgroundColor: palette.background,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalCancelText: { fontSize: 15, fontWeight: '800', color: palette.muted },
+  modalBtnPressed: { opacity: 0.9 },
+  modalBtnDisabled: { opacity: 0.55 },
+  successCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: palette.surface,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(52, 211, 153, 0.45)',
+    padding: 28,
+    alignItems: 'center',
+    gap: 12,
+  },
+  successCelebration: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: palette.green,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+  },
+  successEmoji: { fontSize: 48 },
+  successTitle: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: palette.text,
+    textAlign: 'center',
+    lineHeight: 28,
+  },
+  successDeadline: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginBottom: 8,
+  },
+  successPrimaryBtn: {
+    width: '100%',
+    backgroundColor: palette.green,
+    borderRadius: 14,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  successPrimaryText: { fontSize: 16, fontWeight: '900', color: '#0B0F14' },
+  successSecondaryBtn: {
+    width: '100%',
+    backgroundColor: palette.background,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  successSecondaryText: { fontSize: 15, fontWeight: '800', color: palette.text },
 });

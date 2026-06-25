@@ -1,8 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import {
+  canPlayLevel as canPlayLevelInUnlocks,
+  getActivePendingUnlock,
+  getCompletedLevels,
+  highestCompletedLevel,
+  isLevelCompletedInUnlocks,
+  UNLOCK_WINDOW_MS,
+  type ExpiredUnlockNotice,
+} from '@/lib/gem-shop-expiry';
+import {
+  cancelUnlockExpiryWarning,
+  scheduleUnlockExpiryWarning,
+} from '@/lib/gem-shop-notifications';
 import { deductGems, getTotalGems } from '@/lib/gems';
 import { getProfileBadges } from '@/lib/profile-badges';
-import { formatLocalDate } from '@/lib/streak';
 
 const PROGRESS_KEY = 'gemShopProgress';
 const TOTAL_SPENT_KEY = 'gemShopTotalSpent';
@@ -94,11 +106,27 @@ export const BONUS_ROUNDS: BonusRoundDef[] = [
   },
 ];
 
+export type LevelUnlockRecord = {
+  level: RoundLevel;
+  unlockedAt: number;
+  expiresAt: number;
+  completed: boolean;
+};
+
 export type RoundProgress = {
-  highestLevel: number;
-  levelsCompleted: number[];
+  unlocks: LevelUnlockRecord[];
   totalPlays: number;
 };
+
+export type UrgentPendingUnlock = {
+  roundId: BonusRoundId;
+  roundName: string;
+  level: RoundLevel;
+  expiresAt: number;
+};
+
+export { UNLOCK_WINDOW_MS };
+export type { ExpiredUnlockNotice } from '@/lib/gem-shop-expiry';
 
 export type GemShopProgress = Record<BonusRoundId, RoundProgress>;
 
@@ -116,6 +144,7 @@ export type LevelUnlockTarget = {
 };
 
 let dismissedAffordableKey: string | null = null;
+let pendingExpiredNotices: ExpiredUnlockNotice[] = [];
 
 export function affordableTargetsKey(targets: LevelUnlockTarget[]): string {
   return targets
@@ -148,7 +177,111 @@ export function parseRoundLevel(value: string | number | undefined): RoundLevel 
 }
 
 function emptyRoundProgress(): RoundProgress {
-  return { highestLevel: 0, levelsCompleted: [], totalPlays: 0 };
+  return { unlocks: [], totalPlays: 0 };
+}
+
+function normalizeUnlockRecord(raw: unknown): LevelUnlockRecord | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<LevelUnlockRecord>;
+  const level = parseRoundLevel(obj.level);
+  if (!level) return null;
+  const unlockedAt = Math.trunc(Number(obj.unlockedAt) || 0);
+  const expiresAt = Math.trunc(Number(obj.expiresAt) || 0);
+  return {
+    level,
+    unlockedAt,
+    expiresAt,
+    completed: Boolean(obj.completed),
+  };
+}
+
+function migrateLegacyRoundProgress(raw: unknown): RoundProgress {
+  if (!raw || typeof raw !== 'object') return emptyRoundProgress();
+  const obj = raw as Record<string, unknown>;
+
+  if (Array.isArray(obj.unlocks)) {
+    const unlocks = obj.unlocks
+      .map(normalizeUnlockRecord)
+      .filter((u): u is LevelUnlockRecord => u != null);
+    return {
+      unlocks: dedupeUnlockRecords(unlocks),
+      totalPlays: Math.max(0, Math.trunc(Number(obj.totalPlays) || 0)),
+    };
+  }
+
+  const levelsCompleted = Array.isArray(obj.levelsCompleted)
+    ? [...new Set(obj.levelsCompleted.filter((n) => typeof n === 'number' && n >= 1 && n <= 5))]
+    : [];
+  const highestLevel = Math.max(
+    0,
+    Math.min(5, Math.trunc(Number(obj.highestLevel) || 0)),
+    ...(levelsCompleted as number[]),
+  );
+  const now = Date.now();
+  const unlocks: LevelUnlockRecord[] = [];
+
+  for (const level of levelsCompleted as RoundLevel[]) {
+    unlocks.push({ level, unlockedAt: now, expiresAt: now, completed: true });
+  }
+  for (let l = 1; l <= highestLevel; l++) {
+    if (!(levelsCompleted as number[]).includes(l)) {
+      unlocks.push({
+        level: l as RoundLevel,
+        unlockedAt: now,
+        expiresAt: now,
+        completed: true,
+      });
+    }
+  }
+
+  return {
+    unlocks: dedupeUnlockRecords(unlocks),
+    totalPlays: Math.max(0, Math.trunc(Number(obj.totalPlays) || 0)),
+  };
+}
+
+function dedupeUnlockRecords(unlocks: LevelUnlockRecord[]): LevelUnlockRecord[] {
+  const byLevel = new Map<RoundLevel, LevelUnlockRecord>();
+  for (const record of unlocks) {
+    const existing = byLevel.get(record.level);
+    if (!existing || (record.completed && !existing.completed) || record.unlockedAt > existing.unlockedAt) {
+      byLevel.set(record.level, record);
+    }
+  }
+  return [...byLevel.values()].sort((a, b) => a.level - b.level);
+}
+
+function applyRoundExpirations(
+  roundId: BonusRoundId,
+  round: RoundProgress,
+  now = Date.now(),
+): { round: RoundProgress; expired: ExpiredUnlockNotice[] } {
+  const expired: ExpiredUnlockNotice[] = [];
+  const kept: LevelUnlockRecord[] = [];
+
+  for (const record of round.unlocks) {
+    if (!record.completed && record.expiresAt <= now) {
+      expired.push({ roundId, level: record.level });
+      void cancelUnlockExpiryWarning(roundId, record.level);
+      continue;
+    }
+    kept.push(record);
+  }
+
+  return {
+    round: { ...round, unlocks: kept },
+    expired,
+  };
+}
+
+async function resyncUnlockExpiryNotifications(progress: GemShopProgress): Promise<void> {
+  const now = Date.now();
+  for (const round of BONUS_ROUNDS) {
+    const pending = getActivePendingUnlock(progress[round.id].unlocks, now);
+    if (pending) {
+      await scheduleUnlockExpiryWarning(round.id, pending.level, pending.expiresAt);
+    }
+  }
 }
 
 function emptyProgress(): GemShopProgress {
@@ -165,21 +298,7 @@ function emptyProgress(): GemShopProgress {
 }
 
 function normalizeRoundProgress(raw: unknown): RoundProgress {
-  if (!raw || typeof raw !== 'object') return emptyRoundProgress();
-  const obj = raw as Partial<RoundProgress>;
-  const levelsCompleted = Array.isArray(obj.levelsCompleted)
-    ? [...new Set(obj.levelsCompleted.filter((n) => n >= 1 && n <= 5))]
-    : [];
-  const highestLevel = Math.max(
-    0,
-    Math.min(5, Math.trunc(Number(obj.highestLevel) || 0)),
-    ...levelsCompleted,
-  );
-  return {
-    highestLevel,
-    levelsCompleted: levelsCompleted.sort((a, b) => a - b),
-    totalPlays: Math.max(0, Math.trunc(Number(obj.totalPlays) || 0)),
-  };
+  return migrateLegacyRoundProgress(raw);
 }
 
 async function migrateLegacyUnlocks(progress: GemShopProgress): Promise<GemShopProgress> {
@@ -194,10 +313,13 @@ async function migrateLegacyUnlocks(progress: GemShopProgress): Promise<GemShopP
       const roundId = entry?.roundId as BonusRoundId | undefined;
       if (!roundId || !(roundId in next)) continue;
       const existing = next[roundId];
-      if (existing.highestLevel >= 1) continue;
+      if (existing.unlocks.some((u) => u.level === 1)) continue;
+      const now = Date.now();
       next[roundId] = {
-        highestLevel: 1,
-        levelsCompleted: existing.levelsCompleted.length ? existing.levelsCompleted : [1],
+        unlocks: [
+          ...existing.unlocks,
+          { level: 1, unlockedAt: now, expiresAt: now, completed: true },
+        ],
         totalPlays: Math.max(existing.totalPlays, entry.playCount ?? 0),
       };
     }
@@ -207,6 +329,12 @@ async function migrateLegacyUnlocks(progress: GemShopProgress): Promise<GemShopP
   } catch {
     return progress;
   }
+}
+
+export function takeExpiredNotices(): ExpiredUnlockNotice[] {
+  const notices = pendingExpiredNotices;
+  pendingExpiredNotices = [];
+  return notices;
 }
 
 export async function getGemShopProgress(): Promise<GemShopProgress> {
@@ -222,7 +350,30 @@ export async function getGemShopProgress(): Promise<GemShopProgress> {
       progress = emptyProgress();
     }
   }
-  return migrateLegacyUnlocks(progress);
+  progress = await migrateLegacyUnlocks(progress);
+
+  const now = Date.now();
+  let changed = false;
+  const allExpired: ExpiredUnlockNotice[] = [];
+  const next = { ...progress };
+
+  for (const round of BONUS_ROUNDS) {
+    const { round: cleaned, expired } = applyRoundExpirations(round.id, next[round.id], now);
+    if (expired.length || cleaned.unlocks.length !== next[round.id].unlocks.length) {
+      changed = true;
+      next[round.id] = cleaned;
+      allExpired.push(...expired);
+    }
+  }
+
+  if (changed) {
+    await saveProgress(next);
+    pendingExpiredNotices.push(...allExpired);
+    progress = next;
+  }
+
+  await resyncUnlockExpiryNotifications(progress);
+  return progress;
 }
 
 async function saveProgress(progress: GemShopProgress): Promise<void> {
@@ -249,34 +400,90 @@ export async function getGemShopHistory(): Promise<{
   };
 }
 
-export function isLevelUnlocked(progress: GemShopProgress, roundId: BonusRoundId, level: RoundLevel): boolean {
-  return progress[roundId].highestLevel >= level;
+export function isLevelPlayable(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  level: RoundLevel,
+  now = Date.now(),
+): boolean {
+  return canPlayLevelInUnlocks(progress[roundId].unlocks, level, now);
+}
+
+/** @deprecated Use isLevelPlayable */
+export function isLevelUnlocked(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  level: RoundLevel,
+  now = Date.now(),
+): boolean {
+  return isLevelPlayable(progress, roundId, level, now);
 }
 
 export function isLevelCompleted(progress: GemShopProgress, roundId: BonusRoundId, level: RoundLevel): boolean {
-  return progress[roundId].levelsCompleted.includes(level);
+  return isLevelCompletedInUnlocks(progress[roundId].unlocks, level);
 }
 
-export function getNextUnlockLevel(progress: GemShopProgress, roundId: BonusRoundId): RoundLevel | null {
-  const next = (progress[roundId].highestLevel + 1) as RoundLevel;
+export function getNextUnlockLevel(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  now = Date.now(),
+): RoundLevel | null {
+  if (getActivePendingUnlock(progress[roundId].unlocks, now)) return null;
+  const next = (highestCompletedLevel(progress[roundId].unlocks) + 1) as RoundLevel;
   return next <= 5 ? next : null;
 }
 
-export function countUnlockedLevels(progress: GemShopProgress): number {
-  return BONUS_ROUNDS.reduce((sum, r) => sum + progress[r.id].highestLevel, 0);
+export function countUnlockedLevels(progress: GemShopProgress, now = Date.now()): number {
+  return BONUS_ROUNDS.reduce((sum, r) => {
+    const round = progress[r.id];
+    const completed = getCompletedLevels(round.unlocks).length;
+    const pending = getActivePendingUnlock(round.unlocks, now) ? 1 : 0;
+    return sum + completed + pending;
+  }, 0);
+}
+
+export function getUrgentPendingUnlock(
+  progress: GemShopProgress,
+  now = Date.now(),
+): UrgentPendingUnlock | null {
+  let best: UrgentPendingUnlock | null = null;
+
+  for (const round of BONUS_ROUNDS) {
+    const pending = getActivePendingUnlock(progress[round.id].unlocks, now);
+    if (!pending) continue;
+    const candidate: UrgentPendingUnlock = {
+      roundId: round.id,
+      roundName: round.name,
+      level: pending.level,
+      expiresAt: pending.expiresAt,
+    };
+    if (!best || candidate.expiresAt < best.expiresAt) {
+      best = candidate;
+    }
+  }
+
+  return best;
 }
 
 export async function isRoundUnlocked(roundId: BonusRoundId): Promise<boolean> {
   const progress = await getGemShopProgress();
-  return progress[roundId].highestLevel > 0;
+  return progress[roundId].unlocks.some((u) => u.completed || u.expiresAt > Date.now());
 }
 
-export async function isRoundLevelUnlocked(
+export async function isRoundLevelPlayable(
   roundId: BonusRoundId,
   level: RoundLevel,
 ): Promise<boolean> {
   const progress = await getGemShopProgress();
-  return isLevelUnlocked(progress, roundId, level);
+  return isLevelPlayable(progress, roundId, level);
+}
+
+/** @deprecated Use isRoundLevelPlayable */
+export async function isRoundLevelUnlocked(
+  roundId: BonusRoundId,
+  level: RoundLevel,
+): Promise<boolean> {
+  return isRoundLevelPlayable(roundId, level);
 }
 
 export async function purchaseLevel(
@@ -286,7 +493,7 @@ export async function purchaseLevel(
   const progress = await getGemShopProgress();
   const nextLevel = getNextUnlockLevel(progress, roundId);
 
-  if (isLevelUnlocked(progress, roundId, level)) {
+  if (isLevelPlayable(progress, roundId, level)) {
     return { success: true, gemsRemaining: await getTotalGems() };
   }
 
@@ -300,12 +507,22 @@ export async function purchaseLevel(
     return { success: false, error: 'Not enough gems' };
   }
 
+  const now = Date.now();
+  const record: LevelUnlockRecord = {
+    level,
+    unlockedAt: now,
+    expiresAt: now + UNLOCK_WINDOW_MS,
+    completed: false,
+  };
+
   const updated = { ...progress };
+  const round = updated[roundId];
   updated[roundId] = {
-    ...updated[roundId],
-    highestLevel: level,
+    ...round,
+    unlocks: [...round.unlocks.filter((u) => u.level !== level), record],
   };
   await saveProgress(updated);
+  await scheduleUnlockExpiryWarning(roundId, level, record.expiresAt);
 
   const spent = await getTotalGemsSpent();
   await AsyncStorage.setItem(TOTAL_SPENT_KEY, String(spent + cost));
@@ -331,15 +548,19 @@ export async function recordRoundPlayed(roundId: BonusRoundId, level: RoundLevel
 export async function recordLevelCompleted(roundId: BonusRoundId, level: RoundLevel): Promise<void> {
   const progress = await getGemShopProgress();
   const round = progress[roundId];
-  const levelsCompleted = round.levelsCompleted.includes(level)
-    ? round.levelsCompleted
-    : [...round.levelsCompleted, level].sort((a, b) => a - b);
+  const existing = round.unlocks.find((u) => u.level === level);
+  const now = Date.now();
+
+  const updatedRecord: LevelUnlockRecord = existing
+    ? { ...existing, completed: true }
+    : { level, unlockedAt: now, expiresAt: now, completed: true };
+
   progress[roundId] = {
     ...round,
-    levelsCompleted,
-    highestLevel: Math.max(round.highestLevel, level),
+    unlocks: [...round.unlocks.filter((u) => u.level !== level), updatedRecord],
   };
   await saveProgress(progress);
+  await cancelUnlockExpiryWarning(roundId, level);
 }
 
 export async function getGemShopStats(): Promise<GemShopStats> {

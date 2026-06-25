@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
@@ -10,8 +10,11 @@ import { completeDailyChallenge, getTodaysChallenge, type DailyChallenge } from 
 import {
   dismissShopBadge,
   getAffordableNextLevels,
+  getGemShopProgress,
+  getUrgentPendingUnlock,
   shouldShowShopBadge,
 } from '@/lib/gem-shop';
+import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
 import { getStreakState } from '@/lib/streak';
 
@@ -24,6 +27,8 @@ const palette = {
   accent: '#FF7A59',
   accentPressed: '#E86242',
   gem: '#A78BFA',
+  amber: '#FBBF24',
+  red: '#F87171',
 };
 
 export default function HomeScreen() {
@@ -36,6 +41,19 @@ export default function HomeScreen() {
   const [challengeGemToast, setChallengeGemToast] = useState(0);
   const [completingChallenge, setCompletingChallenge] = useState(false);
   const [showShopBadge, setShowShopBadge] = useState(false);
+  const [urgentUnlock, setUrgentUnlock] = useState<ReturnType<typeof getUrgentPendingUnlock>>(null);
+  const [tick, setTick] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      setTick(now);
+      if (urgentUnlock && urgentUnlock.expiresAt <= now) {
+        void getGemShopProgress().then((p) => setUrgentUnlock(getUrgentPendingUnlock(p, now)));
+      }
+    }, 30_000);
+    return () => clearInterval(interval);
+  }, [urgentUnlock]);
 
   const refreshShopBadge = useCallback(async (gems: number) => {
     const affordable = await getAffordableNextLevels(gems);
@@ -49,16 +67,18 @@ export default function HomeScreen() {
 
       void (async () => {
         try {
-          const [streak, gems, challenge] = await Promise.all([
+          const [streak, gems, challenge, shopProgress] = await Promise.all([
             getStreakState(),
             getTotalGems(),
             getTodaysChallenge(),
+            getGemShopProgress(),
           ]);
           if (cancelled) return;
 
           setCurrentStreak(streak.currentStreak);
           setTotalGems(gems);
           setDailyChallenge(challenge);
+          setUrgentUnlock(getUrgentPendingUnlock(shopProgress));
 
           await refreshShopBadge(gems);
         } finally {
@@ -193,6 +213,34 @@ export default function HomeScreen() {
             <Text style={styles.secondaryButtonText}>Practice</Text>
           </Pressable>
           <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
+
+          {urgentUnlock ? (
+            <Pressable
+              onPress={() => {
+                if (Platform.OS !== 'web') {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                }
+                router.push({
+                  pathname: '/bonus-round',
+                  params: { round: urgentUnlock.roundId, level: String(urgentUnlock.level) },
+                });
+              }}
+              style={({ pressed }) => [styles.urgentCard, pressed && styles.urgentCardPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`${urgentUnlock.roundName} level ${urgentUnlock.level} expires soon`}>
+              <Text
+                style={[
+                  styles.urgentCardText,
+                  urgentUnlock.expiresAt - tick < 60 * 60 * 1000 && styles.urgentCardTextRed,
+                  urgentUnlock.expiresAt - tick < 6 * 60 * 60 * 1000 &&
+                    urgentUnlock.expiresAt - tick >= 60 * 60 * 1000 &&
+                    styles.urgentCardTextAmber,
+                ]}>
+                ⏰ {urgentUnlock.roundName} Level {urgentUnlock.level} expires in{' '}
+                {formatExpiryCountdownShort(urgentUnlock.expiresAt, tick)} — Play now
+              </Text>
+            </Pressable>
+          ) : null}
         </View>
       </View>
     </SafeAreaView>
@@ -345,4 +393,23 @@ const styles = StyleSheet.create({
     color: palette.muted,
     textAlign: 'center',
   },
+  urgentCard: {
+    marginTop: 6,
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.4)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+  },
+  urgentCardPressed: { opacity: 0.9 },
+  urgentCardText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  urgentCardTextAmber: { color: palette.amber },
+  urgentCardTextRed: { color: palette.red },
 });

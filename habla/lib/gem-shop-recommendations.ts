@@ -6,9 +6,11 @@ import {
   getLevelCost,
   getNextUnlockLevel,
   getRoundDef,
+  isLevelPlayable,
   type BonusRoundId,
   type RoundLevel,
 } from '@/lib/gem-shop';
+import { getActivePendingUnlock } from '@/lib/gem-shop-expiry';
 import { getLevelBarometer } from '@/lib/level-progress';
 import { getLessonHistory } from '@/lib/practice-storage';
 
@@ -96,13 +98,16 @@ export async function getShopRecommendation(gemTotal: number): Promise<ShopRecom
   }
 
   const nextUnlock = getNextUnlockLevel(progress, roundId);
-  const level: RoundLevel =
-    nextUnlock ?? (Math.max(1, progress[roundId].highestLevel) as RoundLevel);
-  const cost = nextUnlock ? getLevelCost(roundId, nextUnlock) : 0;
+  const pending = getActivePendingUnlock(progress[roundId].unlocks);
+  const completed = progress[roundId].unlocks.filter((u) => u.completed).map((u) => u.level);
+  const replayLevel = completed.length ? (Math.max(...completed) as RoundLevel) : 1;
+  const level: RoundLevel = pending?.level ?? nextUnlock ?? replayLevel;
+  const cost = nextUnlock && !pending ? getLevelCost(roundId, nextUnlock) : 0;
 
   const def = getRoundDef(roundId);
   const weakLabel = ROUND_WEAK_AREA_LABEL[roundId] ?? 'your current weak areas';
   const affordableMatch = affordable.find((t) => t.roundId === roundId && t.level === level);
+  const playable = isLevelPlayable(progress, roundId, level);
 
   return {
     roundId,
@@ -110,7 +115,7 @@ export async function getShopRecommendation(gemTotal: number): Promise<ShopRecom
     roundEmoji: def.emoji,
     level,
     cost: affordableMatch?.cost ?? cost,
-    canAfford: Boolean(affordableMatch) || cost === 0,
+    canAfford: Boolean(affordableMatch) || playable,
     reason: `matches your ${weakLabel}`,
   };
 }

@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
+import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
 import { ensurePreviousMonthWrapped } from '@/lib/wrapped-storage';
 import { notifyWrappedReadyNow, scheduleWrappedMonthlyNotification } from '@/lib/wrapped-notifications';
 
@@ -37,6 +38,19 @@ function WrappedBootstrap() {
           router.push('/wrapped');
         }
       }
+      if (type === 'gem-unlock-expiry') {
+        const roundId = response.notification.request.content.data?.roundId;
+        const levelRaw = response.notification.request.content.data?.level;
+        const level = parseRoundLevel(levelRaw as string | number | undefined);
+        if (typeof roundId === 'string' && level) {
+          router.push({
+            pathname: '/bonus-round',
+            params: { round: roundId as BonusRoundId, level: String(level) },
+          });
+        } else {
+          router.push('/gem-shop');
+        }
+      }
     });
 
     return () => sub.remove();
@@ -63,6 +77,8 @@ export default function RootLayout() {
         <Stack.Screen name="wrapped" options={{ headerShown: false }} />
         <Stack.Screen name="gem-shop" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="bonus-round" options={{ headerShown: false }} />
+        <Stack.Screen name="conjugation-tables" options={{ headerShown: false }} />
+        <Stack.Screen name="tense-guide" options={{ headerShown: false }} />
       </Stack>
       <StatusBar style="auto" />
     </ThemeProvider>
