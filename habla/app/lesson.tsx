@@ -64,7 +64,7 @@ const palette = {
   green: '#34D399',
 };
 
-type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure';
+type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
 type LessonPhase = 'warmup' | 'writing' | 'speaking';
 
 type ChatMessage = {
@@ -82,6 +82,11 @@ const LESSON_OPTIONS: { id: LessonKind; label: string; subtitle?: string }[] = [
     id: 'structure',
     label: 'Structure 🏗️',
     subtitle: 'Word order · Object pronouns · Natural Spanish',
+  },
+  {
+    id: 'read',
+    label: 'Read 📖',
+    subtitle: 'Real Spanish texts — news, recipes, stories',
   },
 ];
 
@@ -644,7 +649,13 @@ export default function LessonScreen() {
               return (
                 <Pressable
                   key={opt.id}
-                  onPress={() => setLessonKind(opt.id)}
+                  onPress={() => {
+                    if (opt.id === 'read') {
+                      router.push('/read-lesson');
+                      return;
+                    }
+                    setLessonKind(opt.id);
+                  }}
                   disabled={phase !== 'warmup' || warmUpMessages.length > 1}
                   style={[
                     styles.lessonChip,

@@ -291,7 +291,7 @@ export async function hasWordOrderPatterns(): Promise<boolean> {
 }
 
 export async function getTopErrorsForLesson(
-  lessonKind: 'grammar' | 'vocabulary' | 'your-day' | 'structure',
+  lessonKind: 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read',
   count = 3,
 ): Promise<ErrorDNAItem[]> {
   const items = await getErrorDNA();

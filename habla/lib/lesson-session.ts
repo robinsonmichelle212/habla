@@ -1,4 +1,5 @@
 import type { LessonType, JaviMessage } from '@/lib/claude';
+import type { ReadComprehensionEvaluation, ReadingSessionContent } from '@/lib/read-with-javi';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 
 export type LessonConversationTurn = {
@@ -47,6 +48,14 @@ export type LessonBreakdown = {
     details: string[];
     lessonDescription?: string;
     wordOrderMistakes?: { mistake: string; correction: string; explanation: string }[];
+  };
+  reading?: {
+    score: number;
+    topic: string;
+    textType: string;
+    details: string[];
+    wordsLearned?: { spanish: string; english: string }[];
+    grammarPatterns?: string[];
   };
 };
 
@@ -111,6 +120,10 @@ export type LessonSessionState = {
   writingTask?: WritingTask;
   writingEvaluation?: WritingEvaluation;
   speakingEvaluation?: SpeakingEvaluation;
+  readingSession?: ReadingSessionContent;
+  comprehensionEvaluation?: ReadComprehensionEvaluation;
+  culturalNoteSaved?: string;
+  wordsSavedFromReading?: { spanish: string; english: string }[];
 };
 
 let state: LessonSessionState = {

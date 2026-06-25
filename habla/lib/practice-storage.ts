@@ -61,12 +61,20 @@ export type StructureBreakdown = ScoreBreakdownSection & {
   wordOrderMistakes?: GrammarMistake[];
 };
 
+export type ReadingBreakdown = ScoreBreakdownSection & {
+  topic: string;
+  textType: string;
+  wordsLearned?: { spanish: string; english: string }[];
+  grammarPatterns?: string[];
+};
+
 export type LessonBreakdown = {
   grammar: GrammarBreakdown;
   vocabulary: VocabularyBreakdown;
   fluency: FluencyBreakdown;
   writing: WritingBreakdown;
   structure?: StructureBreakdown;
+  reading?: ReadingBreakdown;
 };
 
 export type LessonHistoryEntry = {
@@ -244,6 +252,18 @@ function normalizeBreakdown(
     };
   }
 
+  const readingRaw = (obj.reading ?? {}) as Partial<ReadingBreakdown>;
+  if (obj.reading != null || readingRaw.topic || readingRaw.score != null) {
+    const readingBase = normalizeSection(readingRaw, w, 'Reading');
+    breakdown.reading = {
+      ...readingBase,
+      topic: readingBase.topic ?? 'Reading',
+      textType: typeof readingRaw.textType === 'string' ? readingRaw.textType : 'Reading',
+      wordsLearned: normalizeVocabWords(readingRaw.wordsLearned),
+      grammarPatterns: toStringList(readingRaw.grammarPatterns),
+    };
+  }
+
   return breakdown;
 }
 
@@ -334,6 +354,8 @@ export function lessonTypeLabel(lessonType: LessonType): string {
       return 'Your Day';
     case 'Structure':
       return 'Structure';
+    case 'Read':
+      return 'Read';
   }
 }
 

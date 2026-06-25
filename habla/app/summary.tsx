@@ -295,9 +295,51 @@ export default function SummaryScreen() {
           </View>
         ) : mode === 'summary' ? (
           <>
+            {lessonType === 'Read' && analysis?.breakdown.reading ? (
+              <View style={styles.writingCard}>
+                <Text style={styles.writingTitle}>Reading comprehension 📖</Text>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Score</Text>
+                  <Text style={styles.writingValue}>{Math.round(analysis.breakdown.reading.score)}%</Text>
+                </View>
+                <View style={styles.writingRow}>
+                  <Text style={styles.writingLabel}>Text type</Text>
+                  <Text style={styles.writingValue}>{analysis.breakdown.reading.textType}</Text>
+                </View>
+                {analysis.breakdown.reading.wordsLearned?.length ? (
+                  <View style={styles.readWordsBlock}>
+                    <Text style={styles.readWordsTitle}>Words from this text</Text>
+                    {analysis.breakdown.reading.wordsLearned.map((w) => (
+                      <Text key={w.spanish} style={styles.readWordLine}>
+                        {w.spanish} — {w.english}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+                {analysis.breakdown.reading.grammarPatterns?.length ? (
+                  <View style={styles.readWordsBlock}>
+                    <Text style={styles.readWordsTitle}>Grammar patterns</Text>
+                    {analysis.breakdown.reading.grammarPatterns.map((p) => (
+                      <Text key={p} style={styles.readWordLine}>
+                        · {p}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+                {session.culturalNoteSaved ? (
+                  <View style={styles.culturalNoteBlock}>
+                    <Text style={styles.readWordsTitle}>Cultural note 🌍</Text>
+                    <Text style={styles.culturalNoteText}>{session.culturalNoteSaved}</Text>
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+
             {writing ? (
               <View style={styles.writingCard}>
-                <Text style={styles.writingTitle}>Writing scores</Text>
+                <Text style={styles.writingTitle}>
+                  {lessonType === 'Read' ? 'Comprehension responses' : 'Writing scores'}
+                </Text>
                 <View style={styles.writingRow}>
                   <Text style={styles.writingLabel}>Grammar</Text>
                   <Text style={styles.writingValue}>{Math.round(writing.grammarScore)}%</Text>
@@ -347,7 +389,9 @@ export default function SummaryScreen() {
               <View style={styles.scoreBlock}>
                 <Text style={styles.scoreLabel}>Overall lesson score</Text>
                 <Text style={styles.scoreValue}>{Math.round(analysis.overallScore)}%</Text>
-                <Text style={styles.scoreHint}>writing + speaking combined</Text>
+                <Text style={styles.scoreHint}>
+                  {lessonType === 'Read' ? 'comprehension + discussion' : 'writing + speaking combined'}
+                </Text>
               </View>
             ) : null}
 
@@ -616,6 +660,40 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '900',
     color: palette.text,
+  },
+  readWordsBlock: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: palette.surfaceBorder,
+    gap: 4,
+  },
+  readWordsTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  readWordLine: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.text,
+    lineHeight: 20,
+  },
+  culturalNoteBlock: {
+    marginTop: 12,
+    paddingTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: palette.surfaceBorder,
+    gap: 6,
+  },
+  culturalNoteText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.text,
+    lineHeight: 20,
   },
   speakingNotes: {
     fontSize: 13,

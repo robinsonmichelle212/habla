@@ -8,6 +8,11 @@ import {
   type StructureTopic,
 } from '@/lib/sentence-structure';
 import {
+  READ_TEXT_TYPE_LABELS,
+  selectReadTextType,
+  type ReadTextType,
+} from '@/lib/read-with-javi';
+import {
   getWeekDefinition,
   resolveGrammarCurriculum,
   type GrammarCurriculumState,
@@ -21,6 +26,7 @@ const KEY_COVERED_VOCAB_THEMES = 'coveredVocabThemes';
 const KEY_COVERED_YOUR_DAY_TOPICS = 'coveredYourDayTopics';
 const KEY_LAST_STRUCTURE_TOPIC = 'lastStructureTopic';
 const KEY_COVERED_STRUCTURE_TOPICS = 'coveredStructureTopics';
+const KEY_COVERED_READ_TOPICS = 'coveredReadTopics';
 
 export type { GrammarTopic } from '@/lib/grammar-curriculum';
 export {
@@ -83,7 +89,8 @@ export type LessonFocusContext =
     }
   | { kind: 'vocabulary'; theme: VocabTheme; themeSpanish: string }
   | { kind: 'your-day'; starter: YourDayTopic; starterSpanish: string }
-  | { kind: 'structure'; topic: StructureTopic };
+  | { kind: 'structure'; topic: StructureTopic }
+  | { kind: 'read'; textType: ReadTextType; textTypeLabel: string; levelBandLabel: string };
 
 const VOCAB_THEME_SPANISH: Record<VocabTheme, string> = {
   'Food and cooking': 'la comida y la cocina',
@@ -155,6 +162,9 @@ async function recordFocusCoverage(focus: LessonFocusContext): Promise<void> {
       break;
     case 'structure':
       await addToCoveredList(KEY_COVERED_STRUCTURE_TOPICS, focus.topic.title);
+      break;
+    case 'read':
+      await addToCoveredList(KEY_COVERED_READ_TOPICS, `${focus.textTypeLabel}: ${focus.textType}`);
       break;
   }
 }
@@ -277,9 +287,30 @@ export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<Less
       focus = { kind: 'structure', topic };
       break;
     }
+    case 'read': {
+      const textType = await selectReadTextType();
+      focus = {
+        kind: 'read',
+        textType,
+        textTypeLabel: READ_TEXT_TYPE_LABELS[textType],
+        levelBandLabel: 'B1',
+      };
+      break;
+    }
   }
   await recordFocusCoverage(focus);
   return focus;
+}
+
+export async function getCoveredReadTopicsFromStorage(): Promise<string[]> {
+  const raw = await AsyncStorage.getItem(KEY_COVERED_READ_TOPICS);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 export function vocabThemeRotation(
@@ -302,6 +333,8 @@ export function lessonFocusLabel(focus: LessonFocusContext): string {
       return focus.starter;
     case 'structure':
       return structureTopicLabel(focus.topic);
+    case 'read':
+      return focus.textTypeLabel;
   }
 }
 
@@ -329,6 +362,11 @@ export function buildLessonOpening(focus: LessonFocusContext): {
       return {
         spanish: `Hoy practicamos estructura: ${focus.topic.title}.`,
         translation: `Today we're practising sentence structure: ${focus.topic.title}. ${focus.topic.summary}`,
+      };
+    case 'read':
+      return {
+        spanish: 'Lee el texto con calma. Toca cualquier palabra para ver su significado.',
+        translation: 'Read the text at your own pace. Tap any word to see its meaning.',
       };
   }
 }

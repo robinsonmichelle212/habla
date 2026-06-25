@@ -4,11 +4,18 @@ import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dn
 
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
+import {
+  READ_TEXT_TYPE_LABELS,
+  type ReadComprehensionEvaluation,
+  type ReadDifficultySpec,
+  type ReadTextType,
+  type ReadingSessionContent,
+} from '@/lib/read-with-javi';
 
 /** Matches the lesson chips on the lesson screen. */
-export type LessonType = 'Grammar' | 'Vocab' | 'Your Day' | 'Structure';
+export type LessonType = 'Grammar' | 'Vocab' | 'Your Day' | 'Structure' | 'Read';
 
-export type LessonKindId = 'grammar' | 'vocabulary' | 'your-day' | 'structure';
+export type LessonKindId = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
 
 export function lessonKindToLessonType(kind: LessonKindId): LessonType {
   switch (kind) {
@@ -20,6 +27,8 @@ export function lessonKindToLessonType(kind: LessonKindId): LessonType {
       return 'Your Day';
     case 'structure':
       return 'Structure';
+    case 'read':
+      return 'Read';
   }
 }
 
@@ -105,6 +114,13 @@ PHASE 1 — EXPLAIN (warm-up messages):
 - Keep each message to 2 short Spanish sentences + Translate: line.
 - Do NOT drill yet — teach the concept simply in ~4 messages.
 - Stay on this structure topic only for the whole lesson.`;
+    case 'read':
+      return `READ WITH JAVI — Text type: ${focus.textTypeLabel}
+- Learner level band: ${focus.levelBandLabel}
+- This is a reading comprehension lesson. The learner has read an authentic Spanish text.
+- Discuss the text, introduce 2–3 vocabulary items from it using memorable keyword mnemonics.
+- Add cultural context where relevant. Ask for opinions and personal connections.
+- Do NOT read the full text aloud — reading comprehension is the skill.`;
   }
 }
 
@@ -245,6 +261,14 @@ export type LessonBreakdownJson = {
     details: string[];
     lessonDescription: string;
     wordOrderMistakes: { mistake: string; correction: string; explanation: string }[];
+  };
+  reading?: {
+    score: number;
+    topic: string;
+    textType: string;
+    details: string[];
+    wordsLearned: { spanish: string; english: string }[];
+    grammarPatterns: string[];
   };
 };
 
@@ -743,6 +767,8 @@ function writingTaskFocusLine(focus: LessonFocusContext): string {
 Ask the learner to rewrite exactly 5 English sentences in correct Spanish word order.
 ${focus.topic.writingHint}
 List the 5 English sentences clearly numbered 1–5 in the prompt. Each tests today's structure point: ${focus.topic.focus}`;
+    case 'read':
+      return `Reading text type: ${focus.textTypeLabel}. The learner reads authentic Spanish texts — comprehension is handled in the Read lesson flow.`;
   }
 }
 
@@ -1464,6 +1490,316 @@ Valid type values: quick_translate, fill_blank, choose_word, correct_mistake`;
         : undefined,
       targetsErrorDna: Boolean(q.targetsErrorDna),
     }));
+}
+
+function readTextTypePromptBlock(textType: ReadTextType): string {
+  switch (textType) {
+    case 'news':
+      return `NEWS HEADLINE AND SUMMARY: A short news-style paragraph on a current or evergreen topic — festival, cultural event, food trend, travel, sports. Factual and interesting. NOT political.`;
+    case 'recipe':
+      return `RECIPE: A simple Spanish recipe with ingredients list and method steps. Great for food vocabulary and imperative forms.`;
+    case 'story':
+      return `SHORT STORY EXCERPT: 3-4 paragraphs of simple narrative. Natural Spanish, high-frequency vocabulary. Mix present for action, imperfect for description.`;
+    case 'social':
+      return `SOCIAL MEDIA POST: Short informal Spanish as if from a social media post. Include colloquial language, contractions, informal expressions.`;
+    case 'letter':
+      return `LETTER OR EMAIL: Short formal or informal letter in Spanish. Clear register — formal vs informal.`;
+    case 'lyrics':
+      return `SONG LYRICS EXCERPT: 3-4 lines from a famous Spanish-language song style (Rosalía, Alejandro Sanz, Shakira, C. Tangana, Bad Bunny, Jorge Drexler — inspired by, not copied).`;
+  }
+}
+
+export async function generateReadingSession(
+  textType: ReadTextType,
+  difficulty: ReadDifficultySpec,
+  recentTopics: string[],
+  levelBandLabel: string,
+): Promise<ReadingSessionContent> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, creating authentic Spanish reading texts for B1–B2 learners.
+Return ONLY valid JSON. No markdown. Use natural, authentic Spanish.
+
+${CORE_VOCABULARY_PROMPT}`;
+
+  const user = `Create a fresh reading session for a ${levelBandLabel} learner.
+
+Text type: ${READ_TEXT_TYPE_LABELS[textType]}
+${readTextTypePromptBlock(textType)}
+
+Difficulty (${difficulty.tier}):
+- Word count: ${difficulty.wordCountMin}–${difficulty.wordCountMax} words
+- Tenses: ${difficulty.tenseGuidance}
+- Vocabulary: ${difficulty.vocabGuidance}
+- Sentences: ${difficulty.sentenceGuidance}
+- Topics: ${difficulty.topicGuidance}
+
+Avoid repeating these recent topics: ${recentTopics.length ? recentTopics.join('; ') : 'none yet'}
+
+Return JSON exactly:
+{
+  "title": "short Spanish title",
+  "topic": "one-line English topic label for tracking",
+  "spanishText": "full text in Spanish — use line breaks between paragraphs",
+  "vocabularyHighlights": [
+    { "spanish": "word", "english": "meaning", "keywordMnemonic": "optional memorable hook" }
+  ],
+  "comprehensionQuestions": [
+    { "id": "1", "promptSpanish": "question in Spanish", "promptEnglish": "optional English hint" }
+  ],
+  "grammarPatterns": ["short note on a grammar pattern in the text"],
+  "culturalNote": "optional brief cultural note in English and Spanish if relevant, or omit"
+}
+
+Rules:
+- Exactly 2-3 comprehension questions testing understanding (not just memory): gist, opinion, personal connection.
+- vocabularyHighlights: exactly 3 useful words from the text.
+- grammarPatterns: 1-2 patterns worth noticing.
+- culturalNote: only if text involves Spanish culture, food, places or people.
+- Authentic natural Spanish. Not political.`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 2000,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as Partial<ReadingSessionContent>;
+
+  return {
+    textType,
+    title: String(parsed.title ?? 'Lectura').trim(),
+    topic: String(parsed.topic ?? READ_TEXT_TYPE_LABELS[textType]).trim(),
+    spanishText: String(parsed.spanishText ?? '').trim(),
+    vocabularyHighlights: Array.isArray(parsed.vocabularyHighlights)
+      ? parsed.vocabularyHighlights
+          .filter((v) => v && typeof v.spanish === 'string')
+          .slice(0, 5)
+          .map((v) => ({
+            spanish: String(v.spanish).trim(),
+            english: String(v.english ?? '').trim(),
+            keywordMnemonic: v.keywordMnemonic ? String(v.keywordMnemonic).trim() : undefined,
+          }))
+      : [],
+    comprehensionQuestions: Array.isArray(parsed.comprehensionQuestions)
+      ? parsed.comprehensionQuestions
+          .filter((q) => q && typeof q.promptSpanish === 'string')
+          .slice(0, 3)
+          .map((q, i) => ({
+            id: String(q.id ?? i + 1),
+            promptSpanish: String(q.promptSpanish).trim(),
+            promptEnglish: q.promptEnglish ? String(q.promptEnglish).trim() : undefined,
+          }))
+      : [],
+    grammarPatterns: Array.isArray(parsed.grammarPatterns)
+      ? parsed.grammarPatterns.map((g) => String(g).trim()).filter(Boolean).slice(0, 3)
+      : [],
+    culturalNote: parsed.culturalNote ? String(parsed.culturalNote).trim() : undefined,
+  };
+}
+
+export async function evaluateReadComprehension(
+  session: ReadingSessionContent,
+  responses: { questionId: string; answer: string }[],
+): Promise<ReadComprehensionEvaluation> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi evaluating reading comprehension responses from a B1–B2 learner.
+Return ONLY valid JSON. Be encouraging but honest.`;
+
+  const user = `Text title: ${session.title}
+Text (Spanish):
+${session.spanishText}
+
+Questions and learner answers:
+${session.comprehensionQuestions
+  .map((q) => {
+    const answer = responses.find((r) => r.questionId === q.id)?.answer ?? '';
+    return `Q (${q.id}): ${q.promptSpanish}\nA: ${answer}`;
+  })
+  .join('\n\n')}
+
+Return JSON:
+{
+  "score": 0-100 integer overall comprehension score,
+  "feedback": "2-3 sentences feedback in English with brief Spanish encouragement",
+  "responses": [
+    { "questionId": "1", "score": 0-100, "feedback": "short per-question feedback" }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 800,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as ReadComprehensionEvaluation;
+  return {
+    score: Math.max(0, Math.min(100, Math.round(Number(parsed.score) || 0))),
+    feedback: String(parsed.feedback ?? '').trim(),
+    responses: Array.isArray(parsed.responses)
+      ? parsed.responses.map((r) => ({
+          questionId: String(r.questionId),
+          score: Math.max(0, Math.min(100, Math.round(Number(r.score) || 0))),
+          feedback: String(r.feedback ?? '').trim(),
+        }))
+      : [],
+  };
+}
+
+export async function generateReadDiscussionOpening(
+  session: ReadingSessionContent,
+  focus: LessonFocusContext,
+  topErrors: ErrorDNAInput[] = [],
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+  const vocabList = session.vocabularyHighlights.map((v) => v.spanish).join(', ');
+
+  const system = `${buildSystemPrompt('Read', focus, topErrors)}
+
+The learner has read the text and answered comprehension questions. Start the voice discussion phase.
+Introduce 2-3 vocabulary words from the text using keyword mnemonics: ${vocabList}
+Ask an opinion question related to the topic. End with Translate: line.`;
+
+  const user = `Text read: "${session.title}"
+Topic: ${session.topic}
+Type: ${READ_TEXT_TYPE_LABELS[session.textType]}
+
+Open the discussion warmly in Spanish. Reference the text without re-reading it all.`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 500,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+  return extractText(response);
+}
+
+export async function askJaviReadDiscussion(
+  session: ReadingSessionContent,
+  focus: LessonFocusContext,
+  conversation: JaviMessage[],
+  topErrors: ErrorDNAInput[] = [],
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `${buildSystemPrompt('Read', focus, topErrors)}
+
+READING DISCUSSION — continue the conversation about this text:
+Title: ${session.title}
+Topic: ${session.topic}
+
+Keep responses to 2-3 Spanish sentences + Translate: line.
+Discuss cultural context, opinions, and vocabulary from the text.
+If slang or informal expressions appear, explain them briefly.`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 500,
+    system,
+    messages: conversation.map((m) => ({ role: m.role, content: m.content })),
+  });
+  return extractText(response);
+}
+
+export async function analyzeReadLesson(
+  session: ReadingSessionContent,
+  comprehensionScore: number,
+  comprehensionFeedback: string,
+  speakingConversation: JaviMessage[],
+  speakingScore: number,
+  wordsSaved: { spanish: string; english: string }[],
+): Promise<LessonAnalysisJson> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi summarising a Read with Javi lesson.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Reading session:
+- Title: ${session.title}
+- Type: ${READ_TEXT_TYPE_LABELS[session.textType]}
+- Topic: ${session.topic}
+- Comprehension score: ${comprehensionScore}%
+- Comprehension feedback: ${comprehensionFeedback}
+- Speaking score: ${speakingScore}%
+- Words saved: ${wordsSaved.map((w) => w.spanish).join(', ') || 'none'}
+- Grammar patterns in text: ${session.grammarPatterns.join('; ')}
+
+Discussion transcript:
+${speakingConversation.map((m) => `${m.role}: ${m.content}`).join('\n')}
+
+Return JSON:
+{
+  "strongAreas": ["2 strengths"],
+  "weakAreas": ["2 areas to improve"],
+  "focusAreas": ["2 focus topics for next time"],
+  "correctnessScore": 0-100,
+  "overallScore": 0-100 average of comprehension, vocabulary use, fluency in discussion,
+  "encouragingMessage": "Spanish / English motivational line",
+  "errorDNA": [],
+  "breakdown": {
+    "grammar": { "score": 0-100, "topic": "Reading", "details": ["2 notes"], "lessonDescription": "...", "mistakes": [] },
+    "vocabulary": { "score": 0-100, "topic": "${session.topic}", "details": ["2 notes"], "wordsCorrect": [], "wordsToRevisit": [] },
+    "fluency": { "score": ${speakingScore}, "details": ["2 notes"], "description": "...", "positivePatterns": [], "negativePatterns": [], "sentenceNotes": [], "weeklyTips": [] },
+    "writing": { "score": ${comprehensionScore}, "details": ["comprehension notes"] },
+    "reading": {
+      "score": ${comprehensionScore},
+      "topic": "${session.topic}",
+      "textType": "${READ_TEXT_TYPE_LABELS[session.textType]}",
+      "details": ["2 reading comprehension notes"],
+      "wordsLearned": ${JSON.stringify(wordsSaved.slice(0, 5))},
+      "grammarPatterns": ${JSON.stringify(session.grammarPatterns)}
+    }
+  }
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1200,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as LessonAnalysisJson;
+  const readingScore = Math.round(
+    (comprehensionScore + speakingScore + (parsed.breakdown?.vocabulary?.score ?? comprehensionScore)) / 3,
+  );
+  return {
+    ...parsed,
+    overallScore: Math.round(
+      (comprehensionScore + speakingScore + (parsed.overallScore ?? comprehensionScore)) / 2,
+    ),
+    breakdown: {
+      ...parsed.breakdown,
+      reading: {
+        ...(parsed.breakdown?.reading ?? {
+          score: comprehensionScore,
+          topic: session.topic,
+          textType: READ_TEXT_TYPE_LABELS[session.textType],
+          details: [],
+          wordsLearned: wordsSaved,
+          grammarPatterns: session.grammarPatterns,
+        }),
+        score: readingScore,
+        wordsLearned: wordsSaved.length ? wordsSaved : parsed.breakdown?.reading?.wordsLearned ?? [],
+        grammarPatterns: session.grammarPatterns,
+      },
+      writing: {
+        ...parsed.breakdown?.writing,
+        score: comprehensionScore,
+      },
+    },
+  };
 }
 
 export async function generatePracticeExercises(

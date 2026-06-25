@@ -118,6 +118,8 @@ export function preferredChallengeTypeForLesson(lessonType: LessonType): Challen
       return 'STRUCTURE';
     case 'Your Day':
       return 'NARRATION';
+    case 'Read':
+      return 'VOCABULARY';
   }
 }
 

@@ -10,6 +10,8 @@ const LONGEST_MASTERY_STREAK_KEY = 'vocabLongestMasteryStreak';
 
 export type VocabDifficulty = 'B1' | 'B2';
 
+export type VocabSource = 'lesson' | 'reading';
+
 export type SavedVocabWord = {
   spanish: string;
   english: string;
@@ -21,6 +23,8 @@ export type SavedVocabWord = {
   timesSeen: number;
   consecutiveCorrect: number;
   mastered: boolean;
+  source?: VocabSource;
+  needsReview?: boolean;
 };
 
 export type SavedVocabQuestion = {
@@ -63,6 +67,8 @@ function normalizeWord(raw: unknown): SavedVocabWord | null {
     timesSeen: Math.max(0, Math.trunc(Number(o.timesSeen) || 0)),
     consecutiveCorrect: Math.max(0, Math.trunc(Number(o.consecutiveCorrect) || 0)),
     mastered: Boolean(o.mastered),
+    source: o.source === 'reading' ? 'reading' : o.source === 'lesson' ? 'lesson' : undefined,
+    needsReview: Boolean(o.needsReview),
   };
 }
 
@@ -83,7 +89,13 @@ async function saveAll(words: SavedVocabWord[]): Promise<void> {
 }
 
 export function getActiveVocabulary(words: SavedVocabWord[]): SavedVocabWord[] {
-  return words.filter((w) => !w.mastered);
+  return words
+    .filter((w) => !w.mastered)
+    .sort((a, b) => {
+      if (a.needsReview && !b.needsReview) return -1;
+      if (!a.needsReview && b.needsReview) return 1;
+      return 0;
+    });
 }
 
 export function getMasteredVocabulary(words: SavedVocabWord[]): SavedVocabWord[] {
@@ -110,7 +122,10 @@ function wordKey(spanish: string): string {
   return spanish.trim().toLowerCase();
 }
 
-export async function saveVocabularyWord(spanishInput: string): Promise<{
+export async function saveVocabularyWord(
+  spanishInput: string,
+  options?: { source?: VocabSource; needsReview?: boolean; english?: string; exampleSpanish?: string },
+): Promise<{
   word: SavedVocabWord;
   alreadyExists: boolean;
 }> {
@@ -118,10 +133,27 @@ export async function saveVocabularyWord(spanishInput: string): Promise<{
   const existing = await getSavedVocabulary();
   const dup = existing.find((w) => wordKey(w.spanish) === wordKey(spanish));
   if (dup) {
+    if (options?.source === 'reading' && dup.source !== 'reading') {
+      const updated = existing.map((w) =>
+        wordKey(w.spanish) === wordKey(spanish)
+          ? { ...w, source: 'reading' as const, needsReview: options.needsReview ?? w.needsReview }
+          : w,
+      );
+      await saveAll(updated);
+      return { word: updated.find((w) => wordKey(w.spanish) === wordKey(spanish))!, alreadyExists: true };
+    }
     return { word: dup, alreadyExists: true };
   }
 
-  const lookup = await lookupVocabularyWord(spanish);
+  const lookup = options?.english
+    ? {
+        spanish,
+        english: options.english,
+        exampleSpanish: options.exampleSpanish ?? '',
+        exampleEnglish: '',
+        difficulty: 'B1' as const,
+      }
+    : await lookupVocabularyWord(spanish);
   const word: SavedVocabWord = {
     spanish: lookup.spanish || spanish,
     english: lookup.english,
@@ -133,10 +165,27 @@ export async function saveVocabularyWord(spanishInput: string): Promise<{
     timesSeen: 0,
     consecutiveCorrect: 0,
     mastered: false,
+    source: options?.source,
+    needsReview: options?.needsReview,
   };
   await saveAll([...existing, word]);
   await addGems(1);
   return { word, alreadyExists: false };
+}
+
+export async function saveReadingVocabularyWords(
+  words: { spanish: string; english: string }[],
+): Promise<SavedVocabWord[]> {
+  const saved: SavedVocabWord[] = [];
+  for (const item of words) {
+    const result = await saveVocabularyWord(item.spanish, {
+      source: 'reading',
+      needsReview: true,
+      english: item.english,
+    });
+    saved.push(result.word);
+  }
+  return saved;
 }
 
 const QUESTION_FORMATS: SavedVocabQuestion['type'][] = [

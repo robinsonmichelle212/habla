@@ -1,3 +1,4 @@
+import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
 import { LevelDetailModal, LevelProgressionList } from '@/components/level-detail-modal';
 import {
@@ -227,6 +228,7 @@ export default function LevelScreen() {
               <ErrorDnaSection errors={errorDna} archived={archivedErrorDna} history={history} />
               <VocabSection covered={vocabCovered} coveredCount={vocabCoveredCount} history={history} />
               <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} />
+              <CulturalNotesSection />
               {nextReq ? <NextLevelSection requirements={nextReq} /> : null}
             </>
           ) : (
@@ -600,7 +602,9 @@ function VocabWordRow({ word, mastered = false }: { word: SavedVocabWord; master
         <Text style={styles.vocabExample}>{word.exampleSpanish}</Text>
       ) : null}
       <Text style={styles.vocabMeta}>
-        {word.difficulty} · seen {word.timesSeen}× · {word.timesCorrect} correct
+        {word.difficulty}
+        {word.source === 'reading' ? ' · from reading 📖' : ''}
+        {' · '}seen {word.timesSeen}× · {word.timesCorrect} correct
       </Text>
     </View>
   );
