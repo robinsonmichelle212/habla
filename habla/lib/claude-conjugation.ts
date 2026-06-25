@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import type { VerbConjugationEntry } from '@/lib/conjugation-data';
-import { normalizeSearchVerb } from '@/lib/conjugation-data';
+import { enrichVerbEnglishForms, normalizeSearchVerb } from '@/lib/conjugation-data';
 import { cacheConjugation, getCachedConjugation } from '@/lib/conjugation-cache';
 import type { GrammarTopic } from '@/lib/grammar-curriculum';
 import { TENSE_LABELS, tensesForTopic, type TenseKey } from '@/lib/grammar-tenses';
@@ -86,7 +86,7 @@ JSON shape:
       "tenseKey": one of ${JSON.stringify(tenseKeys)},
       "tenseLabel": "label matching the tense",
       "forms": [
-        { "person": "yo", "form": "...", "argentinaNote": "(vos ...)" or omit, "irregular": true or false },
+        { "person": "yo", "form": "...", "englishForm": "I ...", "argentinaNote": "(vos ...)" or omit, "irregular": true or false },
         { "person": "tú", ... },
         { "person": "él/ella", ... },
         { "person": "nosotros", ... },
@@ -100,6 +100,7 @@ JSON shape:
 Rules:
 - Use correct Spanish accents and spelling.
 - Mark irregular stems/forms with "irregular": true.
+- Include natural English translations in "englishForm" for every row (e.g. "I am", "you are").
 - For Argentina, put vos forms in argentinaNote on the tú row only, in brackets.
 - Spain uses vosotros; include vosotros forms.
 - No markdown, no commentary — JSON only.`,
@@ -112,7 +113,7 @@ Rules:
     .map((block) => block.text)
     .join('\n');
 
-  const parsed = extractFirstJsonObject(text) as VerbConjugationEntry;
+  const parsed = enrichVerbEnglishForms(extractFirstJsonObject(text) as VerbConjugationEntry);
   if (!parsed?.infinitive || !Array.isArray(parsed.tenses)) {
     throw new Error('Could not parse conjugation.');
   }

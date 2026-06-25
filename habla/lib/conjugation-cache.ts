@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { VerbConjugationEntry } from '@/lib/conjugation-data';
-import { normalizeSearchVerb } from '@/lib/conjugation-data';
+import { enrichVerbEnglishForms, normalizeSearchVerb } from '@/lib/conjugation-data';
 
 const CACHE_KEY = 'conjugationLookupCache';
 
@@ -26,13 +26,15 @@ export async function getCachedConjugation(verb: string): Promise<VerbConjugatio
   const key = normalizeSearchVerb(verb);
   if (!key) return null;
   const cache = await readCache();
-  return cache[key] ?? null;
+  const entry = cache[key];
+  if (!entry) return null;
+  return enrichVerbEnglishForms(entry);
 }
 
 export async function cacheConjugation(verb: string, entry: VerbConjugationEntry): Promise<void> {
   const key = normalizeSearchVerb(verb);
   if (!key) return;
   const cache = await readCache();
-  cache[key] = entry;
+  cache[key] = enrichVerbEnglishForms(entry);
   await writeCache(cache);
 }

@@ -32,8 +32,9 @@ function TenseGrid({ table }: { table: ConjugationTenseTable }) {
       <Text style={styles.tenseTitle}>{table.tenseLabel}</Text>
       <View style={styles.grid}>
         <View style={[styles.gridRow, styles.gridHeader]}>
-          <Text style={[styles.cell, styles.headerCell, styles.personCol]}>Person</Text>
-          <Text style={[styles.cell, styles.headerCell, styles.formCol]}>Form</Text>
+          <Text style={[styles.cell, styles.headerCell, styles.personCol]}>Pronoun</Text>
+          <Text style={[styles.cell, styles.headerCell, styles.formCol]}>Conjugation</Text>
+          <Text style={[styles.cell, styles.headerCell, styles.englishCol]}>English</Text>
         </View>
         {table.forms.map((row) => (
           <View key={`${table.tenseKey}-${row.person}`} style={styles.gridRow}>
@@ -48,6 +49,9 @@ function TenseGrid({ table }: { table: ConjugationTenseTable }) {
                 <Text style={styles.argentinaNote}>{row.argentinaNote}</Text>
               ) : null}
             </Pressable>
+            <Text style={[styles.cell, styles.englishCol, styles.englishText]} numberOfLines={3}>
+              {row.englishForm}
+            </Text>
           </View>
         ))}
       </View>
@@ -144,11 +148,12 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.4,
   },
-  personCol: { width: '34%' },
+  personCol: { width: '26%' },
   formCol: { flex: 1 },
+  englishCol: { flex: 1.15 },
   personText: {
-    fontSize: 15,
-    fontWeight: '700',
+    fontSize: 14,
+    fontWeight: '600',
     color: palette.muted,
   },
   formPressable: { justifyContent: 'center' },
@@ -158,6 +163,13 @@ const styles = StyleSheet.create({
     color: palette.text,
   },
   irregularForm: { color: palette.accent },
+  englishText: {
+    fontSize: 14,
+    fontWeight: '500',
+    fontStyle: 'italic',
+    color: 'rgba(139, 149, 165, 0.72)',
+    lineHeight: 19,
+  },
   argentinaNote: {
     fontSize: 12,
     fontWeight: '600',

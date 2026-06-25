@@ -1,4 +1,5 @@
 import type { GrammarTopic } from '@/lib/grammar-curriculum';
+import { resolveEnglishForms } from '@/lib/conjugation-english';
 import {
   ESSENTIAL_TENSE_KEYS,
   ESSENTIAL_VERB_INFINITIVES,
@@ -13,6 +14,7 @@ import {
 export type ConjugationFormRow = {
   person: PersonLabel;
   form: string;
+  englishForm: string;
   argentinaNote?: string;
   irregular?: boolean;
 };
@@ -41,6 +43,7 @@ function buildForms(input: RowInput): ConjugationFormRow[] {
   return PERSON_LABELS.map((person, i) => ({
     person,
     form: input.spain[i] ?? '',
+    englishForm: '',
     argentinaNote: input.argentina?.[i] ? `(${input.argentina[i]})` : undefined,
     irregular: input.irregular?.includes(i) ?? false,
   }));
@@ -61,7 +64,33 @@ function entry(
   tables: ConjugationTenseTable[],
   regionNote?: string,
 ): VerbConjugationEntry {
-  return { infinitive, english, regular, regionNote, tenses: tables };
+  return enrichVerbEnglishForms({ infinitive, english, regular, regionNote, tenses: tables });
+}
+
+export function enrichVerbEnglishForms(verb: VerbConjugationEntry): VerbConjugationEntry {
+  return {
+    ...verb,
+    tenses: verb.tenses.map((table) => {
+      const explicit =
+        table.forms.length === 6 && table.forms.every((f) => f.englishForm?.trim())
+          ? table.forms.map((f) => f.englishForm)
+          : undefined;
+      const englishForms = resolveEnglishForms(
+        verb.infinitive,
+        verb.english,
+        table.tenseKey,
+        table.forms.map((f) => f.form),
+        explicit,
+      );
+      return {
+        ...table,
+        forms: table.forms.map((row, i) => ({
+          ...row,
+          englishForm: row.englishForm?.trim() || englishForms[i] || '',
+        })),
+      };
+    }),
+  };
 }
 
 const VERB_DICTIONARY: Record<string, VerbConjugationEntry> = {
