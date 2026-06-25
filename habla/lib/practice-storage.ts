@@ -77,6 +77,14 @@ export type LessonBreakdown = {
   reading?: ReadingBreakdown;
 };
 
+export type SpeakingHistoryRecord = {
+  attempt1Score: number;
+  attempt2Score: number | null;
+  combinedScore: number;
+  improved: boolean;
+  javiFeedback: string;
+};
+
 export type LessonHistoryEntry = {
   date: string; // YYYY-MM-DD
   overallScore: number;
@@ -84,6 +92,7 @@ export type LessonHistoryEntry = {
   weakAreas: string[];
   focusAreas: string[];
   lessonType: string;
+  speaking?: SpeakingHistoryRecord;
   /** @deprecated legacy flat scores — kept for old entries */
   scores?: {
     grammar: number;
@@ -303,6 +312,22 @@ export function getCoveredVocabThemes(history: LessonHistoryEntry[]): string[] {
   return themes;
 }
 
+function normalizeSpeakingRecord(raw: unknown): SpeakingHistoryRecord | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Partial<SpeakingHistoryRecord>;
+  if (obj.attempt1Score == null && obj.combinedScore == null) return undefined;
+  return {
+    attempt1Score: toScore(obj.attempt1Score ?? 0),
+    attempt2Score:
+      obj.attempt2Score == null || obj.attempt2Score === undefined
+        ? null
+        : toScore(obj.attempt2Score),
+    combinedScore: toScore(obj.combinedScore ?? obj.attempt1Score ?? 0),
+    improved: Boolean(obj.improved),
+    javiFeedback: typeof obj.javiFeedback === 'string' ? obj.javiFeedback : '',
+  };
+}
+
 function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
   if (!Array.isArray(raw)) return [];
   return raw
@@ -338,6 +363,7 @@ function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
         weakAreas: toStringList(obj?.weakAreas),
         focusAreas: toStringList(obj?.focusAreas),
         lessonType: typeof obj?.lessonType === 'string' ? obj.lessonType : 'Lesson',
+        speaking: normalizeSpeakingRecord(obj.speaking),
         scores: legacyScores,
       };
     })

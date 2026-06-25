@@ -144,6 +144,15 @@ export default function SummaryScreen() {
             weakAreas: analysis.weakAreas ?? [],
             focusAreas: analysis.focusAreas ?? [],
             lessonType: lessonTypeLabel(lessonType),
+            speaking: speaking
+              ? {
+                  attempt1Score: speaking.attempt1Score,
+                  attempt2Score: speaking.attempt2Score,
+                  combinedScore: speaking.combinedScore,
+                  improved: speaking.improved,
+                  javiFeedback: speaking.javiFeedback,
+                }
+              : undefined,
           };
           console.log('[Habla] Saving to lessonHistory:', JSON.stringify(lessonHistoryEntry, null, 2));
 
@@ -549,9 +558,27 @@ export default function SummaryScreen() {
                   <View style={[styles.writingCard, styles.supplementaryCard]}>
                     <Text style={styles.writingTitle}>Speaking scores</Text>
                     <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Overall speaking</Text>
-                      <Text style={styles.writingValue}>{Math.round(speaking.score)}%</Text>
+                      <Text style={styles.writingLabel}>Attempt 1</Text>
+                      <Text style={styles.writingValue}>{Math.round(speaking.attempt1Score)}%</Text>
                     </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Attempt 2</Text>
+                      <Text style={styles.writingValue}>
+                        {speaking.attempt2Score != null
+                          ? `${Math.round(speaking.attempt2Score)}%`
+                          : 'Skipped'}
+                      </Text>
+                    </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Combined</Text>
+                      <Text style={styles.writingValue}>
+                        {Math.round(speaking.combinedScore)}%
+                        {speaking.improved ? ' · Improved' : ''}
+                      </Text>
+                    </View>
+                    {speaking.javiFeedback ? (
+                      <Text style={styles.speakingFeedback}>{speaking.javiFeedback}</Text>
+                    ) : null}
                   </View>
                 ) : null}
 

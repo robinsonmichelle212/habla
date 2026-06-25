@@ -355,6 +355,11 @@ export default function ReadLessonScreen() {
         wordsSavedFromReading: savedWords.map((w) => ({ spanish: w.spanish, english: w.english })),
         culturalNoteSaved,
         speakingEvaluation: {
+          attempt1Score: speakingScore,
+          attempt2Score: null,
+          combinedScore: speakingScore,
+          improved: false,
+          javiFeedback: 'Good discussion about the reading.',
           score: speakingScore,
           accuracyVsWritten: compScore,
           correctionsApplied: true,

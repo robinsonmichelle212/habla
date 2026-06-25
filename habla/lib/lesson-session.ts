@@ -100,12 +100,18 @@ export type WritingEvaluation = {
 };
 
 export type SpeakingEvaluation = {
+  attempt1Score: number;
+  attempt2Score: number | null;
+  combinedScore: number;
+  improved: boolean;
+  javiFeedback: string;
+  /** Overall speaking score — same as combinedScore */
   score: number;
-  accuracyVsWritten: number;
-  correctionsApplied: boolean;
-  pronunciationNotes: string[];
-  feedback: string;
-  exchangeCount: number;
+  accuracyVsWritten?: number;
+  correctionsApplied?: boolean;
+  pronunciationNotes?: string[];
+  feedback?: string;
+  exchangeCount?: number;
 };
 
 export type LessonSessionState = {

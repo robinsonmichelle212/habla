@@ -558,6 +558,110 @@ ${lessonType === 'Structure' ? '\nThis is a Sentence Structure lesson — also e
   return extractFirstJsonObject(text) as SpeakingEvaluationJson;
 }
 
+export type SpeakingAttempt1Json = {
+  score: number;
+  correct: string[];
+  incorrect: string[];
+  improvementTip: string;
+  javiFeedbackSpanish: string;
+  javiFeedbackTranslation: string;
+};
+
+export async function evaluateSpeakingAttempt1(
+  lessonType: LessonType,
+  taskPrompt: string,
+  writtenOriginal: string,
+  writtenCorrected: string,
+  writingCorrections: { mistake: string; correction: string; explanation: string }[],
+  transcript: string,
+): Promise<SpeakingAttempt1Json> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi evaluating a learner's first spoken attempt at B1 Spanish.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Evaluate the learner's FIRST speaking attempt.
+
+Return JSON exactly:
+{
+  "score": 0-100 integer (accuracy vs written/corrected version, grammar, natural delivery),
+  "correct": array of 1-3 short English phrases for what they got right (prefix with meaning, e.g. "Good use of past tense"),
+  "incorrect": array of 0-3 short English phrases for mistakes (e.g. "Wrong verb: said 'fui' instead of 'era'"),
+  "improvementTip": one specific actionable tip for their second attempt,
+  "javiFeedbackSpanish": 2 short spoken sentences in Spanish — praise one thing, note one fix, encourage retry. Plain Spanish, no markdown.
+  "javiFeedbackTranslation": English translation of javiFeedbackSpanish
+}
+
+Lesson type: ${lessonType}
+Writing task: ${taskPrompt}
+Written (original): ${writtenOriginal}
+Written (corrected): ${writtenCorrected}
+Writing corrections: ${JSON.stringify(writingCorrections)}
+Whisper transcript (what they said): ${transcript}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 800,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  return extractFirstJsonObject(extractText(response)) as SpeakingAttempt1Json;
+}
+
+export type SpeakingAttempt2Json = {
+  score: number;
+  comparison: 'better' | 'same' | 'worse';
+  appliedCorrection: boolean;
+  javiFeedbackSpanish: string;
+  javiFeedbackTranslation: string;
+};
+
+export async function evaluateSpeakingAttempt2(
+  lessonType: LessonType,
+  taskPrompt: string,
+  writtenCorrected: string,
+  attempt1Transcript: string,
+  attempt1Score: number,
+  attempt1ImprovementTip: string,
+  attempt2Transcript: string,
+): Promise<SpeakingAttempt2Json> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi evaluating a learner's second spoken attempt at B1 Spanish.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Compare the learner's SECOND speaking attempt to their first.
+
+Return JSON exactly:
+{
+  "score": 0-100 integer (overall quality of attempt 2),
+  "comparison": "better" | "same" | "worse" (vs attempt 1),
+  "appliedCorrection": boolean (did they apply the improvement tip?),
+  "javiFeedbackSpanish": 2 short encouraging sentences in Spanish comparing both attempts. Plain Spanish, no markdown.
+  "javiFeedbackTranslation": English translation
+}
+
+Lesson type: ${lessonType}
+Writing task: ${taskPrompt}
+Target text: ${writtenCorrected}
+Attempt 1 transcript: ${attempt1Transcript}
+Attempt 1 score: ${attempt1Score}
+Improvement tip given: ${attempt1ImprovementTip}
+Attempt 2 transcript: ${attempt2Transcript}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 700,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  return extractFirstJsonObject(extractText(response)) as SpeakingAttempt2Json;
+}
+
 export async function analyzeLessonPhases(
   lessonType: LessonType,
   warmUpConversation: JaviMessage[],

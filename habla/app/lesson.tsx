@@ -1,23 +1,28 @@
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
+import { SpeakingFeedbackCard } from '@/components/speaking-feedback-card';
+import { SpeakingScaffold } from '@/components/speaking-scaffold';
 import { TextMessageBubble } from '@/components/text-message-bubble';
 import { VoiceConversationLog } from '@/components/voice-conversation-log';
 import {
   analyzeLessonPhases,
-  askJaviSpeaking,
   askJaviWarmUp,
-  evaluateSpeakingPhase,
+  evaluateSpeakingAttempt1,
+  evaluateSpeakingAttempt2,
   evaluateWriting,
   generateSpeakingIntro,
   generateWarmUpOpening,
   generateWritingTask,
   lessonKindToLessonType,
   type JaviMessage,
+  type SpeakingAttempt1Json,
+  type SpeakingAttempt2Json,
 } from '@/lib/claude';
 import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
 import { mergeErrorDnaFromLesson, getTopErrorsForLesson, type ErrorDNAItem } from '@/lib/error-dna';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
+import { getLevelBarometer } from '@/lib/level-progress';
 import {
   conversationToJaviMessages,
   setLessonSession,
@@ -26,6 +31,12 @@ import {
   type WritingEvaluation,
 } from '@/lib/lesson-session';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
+import { getLessonHistory } from '@/lib/practice-storage';
+import { scaffoldSecondsForBand, shouldShowSpeakingScaffold } from '@/lib/speaking-scaffold';
+import {
+  computeCombinedSpeakingScore,
+  speakingPhaseSummaryLabel,
+} from '@/lib/speaking-score';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import {
   MIN_RECORDING_MS,
@@ -66,6 +77,13 @@ const palette = {
 
 type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
 type LessonPhase = 'warmup' | 'writing' | 'speaking';
+type SpeakingStep =
+  | 'intro'
+  | 'scaffold'
+  | 'attempt1'
+  | 'attempt1-feedback'
+  | 'attempt2'
+  | 'phase-summary';
 
 type ChatMessage = {
   id: string;
@@ -91,9 +109,8 @@ const LESSON_OPTIONS: { id: LessonKind; label: string; subtitle?: string }[] = [
 ];
 
 const WARMUP_JAVI_TARGET = 4;
-const SPEAKING_END_TURNS = 3;
-const SPEAKING_AUTO_END_TURNS = 4;
 const HEARD_TRANSCRIPT_MS = 5000;
+const PHASE_SUMMARY_MS = 2000;
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -128,6 +145,7 @@ export default function LessonScreen() {
   const scrollRef = useRef<ScrollView>(null);
   const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
+  const speakingStepRef = useRef<SpeakingStep>('intro');
 
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
   const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
@@ -146,8 +164,13 @@ export default function LessonScreen() {
   const [writingResult, setWritingResult] = useState<WritingEvaluation | null>(null);
 
   const [speakingMessages, setSpeakingMessages] = useState<ChatMessage[]>([]);
-  const [speakingTranscripts, setSpeakingTranscripts] = useState<string[]>([]);
-  const [speakingUserTurns, setSpeakingUserTurns] = useState(0);
+  const [speakingStep, setSpeakingStep] = useState<SpeakingStep>('intro');
+  const [scaffoldSeconds, setScaffoldSeconds] = useState(0);
+  const [attempt1Eval, setAttempt1Eval] = useState<SpeakingAttempt1Json | null>(null);
+  const [attempt1Transcript, setAttempt1Transcript] = useState('');
+  const [attempt2Eval, setAttempt2Eval] = useState<SpeakingAttempt2Json | null>(null);
+  const [attempt2Transcript, setAttempt2Transcript] = useState('');
+  const [phaseSummaryText, setPhaseSummaryText] = useState('');
   const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
@@ -157,6 +180,7 @@ export default function LessonScreen() {
   const [finishing, setFinishing] = useState(false);
 
   voiceStateRef.current = voiceState;
+  speakingStepRef.current = speakingStep;
 
   const javiWarmUpCount = warmUpMessages.filter((m) => m.role === 'assistant').length;
   const warmUpComplete = javiWarmUpCount >= WARMUP_JAVI_TARGET;
@@ -164,9 +188,12 @@ export default function LessonScreen() {
 
   const indicatorStep = useMemo(() => {
     if (phase === 'warmup' || phase === 'writing') return 0;
-    if (phase === 'speaking') return speakingUserTurns < 1 ? 1 : 2;
+    if (phase === 'speaking') {
+      if (speakingStep === 'attempt2' || speakingStep === 'attempt1-feedback') return 2;
+      return 1;
+    }
     return 0;
-  }, [phase, speakingUserTurns]);
+  }, [phase, speakingStep]);
 
   const latestSpeakingJaviId = useMemo(() => {
     for (let i = speakingMessages.length - 1; i >= 0; i -= 1) {
@@ -221,8 +248,13 @@ export default function LessonScreen() {
     setWritingText('');
     setWritingResult(null);
     setSpeakingMessages([]);
-    setSpeakingTranscripts([]);
-    setSpeakingUserTurns(0);
+    setSpeakingStep('intro');
+    setScaffoldSeconds(0);
+    setAttempt1Eval(null);
+    setAttempt1Transcript('');
+    setAttempt2Eval(null);
+    setAttempt2Transcript('');
+    setPhaseSummaryText('');
     setSpeakingIntroDone(false);
     setHeardTranscript(null);
     setVoiceError(null);
@@ -410,12 +442,22 @@ export default function LessonScreen() {
 
     setPhase('speaking');
     setSpeakingMessages([]);
-    setSpeakingTranscripts([]);
-    setSpeakingUserTurns(0);
+    setSpeakingStep('intro');
+    setAttempt1Eval(null);
+    setAttempt1Transcript('');
+    setAttempt2Eval(null);
+    setAttempt2Transcript('');
+    setPhaseSummaryText('');
     setSpeakingIntroDone(false);
     setVoiceError(null);
 
     try {
+      const history = await getLessonHistory();
+      const barometer = getLevelBarometer(history);
+      const bandId = barometer?.band.id ?? 'b1-beginner';
+      const seconds = scaffoldSecondsForBand(bandId);
+      setScaffoldSeconds(seconds);
+
       const introText = await generateSpeakingIntro(lessonType, writingPrompt, lessonFocus, topErrorDna);
       const parsed = parseJaviResponse(introText);
       const introMsg: ChatMessage = {
@@ -429,54 +471,142 @@ export default function LessonScreen() {
       if (Platform.OS !== 'web') {
         await speakJaviMessage(parsed.spanish);
       }
+
+      if (shouldShowSpeakingScaffold(bandId)) {
+        setSpeakingStep('scaffold');
+      } else {
+        setSpeakingStep('attempt1');
+      }
     } catch {
       Alert.alert('Connection issue', 'Check your internet and try again.');
     }
   };
 
-  const sendSpeakingTranscription = async (trimmed: string) => {
-    if (!lessonFocus || !writingResult) return;
+  const onScaffoldComplete = useCallback(() => {
+    setSpeakingStep('attempt1');
+  }, []);
 
-    const prior: JaviMessage[] = speakingMessages.map((m) => ({
-      role: m.role,
-      content: m.role === 'user' ? m.spanish : safeSpanish(m.spanish),
-    }));
+  const showPhaseSummaryAndFinish = (
+    attempt1Score: number,
+    attempt2Score: number | null,
+    improved: boolean,
+    javiFeedback: string,
+    correctionsApplied: boolean,
+  ) => {
+    setPhaseSummaryText(speakingPhaseSummaryLabel(attempt1Score, attempt2Score, improved));
+    setSpeakingStep('phase-summary');
+    setTimeout(() => {
+      void finishLesson({
+        attempt1Score,
+        attempt2Score,
+        improved,
+        javiFeedback,
+        correctionsApplied,
+      });
+    }, PHASE_SUMMARY_MS);
+  };
 
-    const nextTurn = speakingUserTurns + 1;
+  const processAttempt1 = async (trimmed: string) => {
+    if (!lessonFocus || !writingResult || !writingPrompt) return;
+
+    setAttempt1Transcript(trimmed);
     setSpeakingMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
-    setSpeakingTranscripts((prev) => [...prev, trimmed]);
-    setSpeakingUserTurns(nextTurn);
 
     try {
-      const javiText = await askJaviSpeaking(
+      const evalJson = await evaluateSpeakingAttempt1(
         lessonType,
+        writingPrompt,
+        writingResult.originalText,
+        writingResult.correctedText,
+        writingResult.corrections,
         trimmed,
-        prior,
-        lessonFocus,
-        {
-          originalText: writingResult.originalText,
-          correctedText: writingResult.correctedText,
-          corrections: writingResult.corrections,
-        },
-        topErrorDna,
       );
-      const parsed = parseJaviResponse(javiText);
+      setAttempt1Eval(evalJson);
       setSpeakingMessages((prev) => [
         ...prev,
-        { id: newId(), role: 'assistant', spanish: parsed.spanish, translation: parsed.translation },
+        {
+          id: newId(),
+          role: 'assistant',
+          spanish: evalJson.javiFeedbackSpanish,
+          translation: evalJson.javiFeedbackTranslation,
+        },
       ]);
-      await speakJaviMessage(parsed.spanish);
-
-      if (nextTurn >= SPEAKING_AUTO_END_TURNS) {
-        void finishLesson();
-      }
+      await speakJaviMessage(evalJson.javiFeedbackSpanish);
+      setSpeakingStep('attempt1-feedback');
     } catch {
       setVoiceError('Connection issue — check your internet');
       setVoiceStateSafe('idle');
     }
   };
 
-  const finishLesson = async () => {
+  const processAttempt2 = async (trimmed: string) => {
+    if (!lessonFocus || !writingResult || !writingPrompt || !attempt1Eval) return;
+
+    setAttempt2Transcript(trimmed);
+    setSpeakingMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
+
+    try {
+      const evalJson = await evaluateSpeakingAttempt2(
+        lessonType,
+        writingPrompt,
+        writingResult.correctedText,
+        attempt1Transcript,
+        attempt1Eval.score,
+        attempt1Eval.improvementTip,
+        trimmed,
+      );
+      setAttempt2Eval(evalJson);
+      setSpeakingMessages((prev) => [
+        ...prev,
+        {
+          id: newId(),
+          role: 'assistant',
+          spanish: evalJson.javiFeedbackSpanish,
+          translation: evalJson.javiFeedbackTranslation,
+        },
+      ]);
+      await speakJaviMessage(evalJson.javiFeedbackSpanish);
+
+      const { improved } = computeCombinedSpeakingScore(attempt1Eval.score, evalJson.score);
+      const feedback = [attempt1Eval.javiFeedbackTranslation, evalJson.javiFeedbackTranslation]
+        .filter(Boolean)
+        .join(' ');
+      showPhaseSummaryAndFinish(
+        attempt1Eval.score,
+        evalJson.score,
+        improved,
+        feedback,
+        evalJson.appliedCorrection,
+      );
+    } catch {
+      setVoiceError('Connection issue — check your internet');
+      setVoiceStateSafe('idle');
+    }
+  };
+
+  const skipSecondAttempt = () => {
+    if (!attempt1Eval) return;
+    showPhaseSummaryAndFinish(
+      attempt1Eval.score,
+      null,
+      false,
+      attempt1Eval.javiFeedbackTranslation,
+      false,
+    );
+  };
+
+  const startSecondAttempt = () => {
+    setSpeakingStep('attempt2');
+    setVoiceError(null);
+  };
+
+  const finishLesson = async (speakingOverride?: {
+    attempt1Score: number;
+    attempt2Score: number | null;
+    improved: boolean;
+    javiFeedback: string;
+    correctionsApplied: boolean;
+  }) => {
     if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
     setFinishing(true);
     stopJaviSpeech();
@@ -485,23 +615,47 @@ export default function LessonScreen() {
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
 
-      const speakingEvalJson = await evaluateSpeakingPhase(
-        lessonType,
-        writingPrompt,
-        writingResult.originalText,
-        writingResult.correctedText,
-        writingResult.corrections,
-        speakingTranscripts,
-        conversationToJaviMessages(speakingTurns),
+      const attempt1Score = Math.round(
+        speakingOverride?.attempt1Score ?? attempt1Eval?.score ?? 0,
+      );
+      const attempt2Score =
+        speakingOverride?.attempt2Score !== undefined
+          ? speakingOverride.attempt2Score
+          : attempt2Eval != null
+            ? Math.round(attempt2Eval.score)
+            : null;
+      const { combinedScore, improved } = computeCombinedSpeakingScore(
+        attempt1Score,
+        attempt2Score,
       );
 
+      const javiFeedback =
+        speakingOverride?.javiFeedback ??
+        [attempt1Eval?.javiFeedbackTranslation, attempt2Eval?.javiFeedbackTranslation]
+          .filter(Boolean)
+          .join(' ');
+
+      const speakingEvalJson = {
+        score: combinedScore,
+        accuracyVsWritten: attempt2Score ?? attempt1Score,
+        correctionsApplied:
+          speakingOverride?.correctionsApplied ?? attempt2Eval?.appliedCorrection ?? false,
+        pronunciationNotes: [] as string[],
+        feedback: javiFeedback,
+      };
+
       const speakingEvaluation: SpeakingEvaluation = {
-        score: speakingEvalJson.score,
+        attempt1Score,
+        attempt2Score,
+        combinedScore,
+        improved: speakingOverride?.improved ?? improved,
+        javiFeedback,
+        score: combinedScore,
         accuracyVsWritten: speakingEvalJson.accuracyVsWritten,
         correctionsApplied: speakingEvalJson.correctionsApplied,
-        pronunciationNotes: speakingEvalJson.pronunciationNotes ?? [],
-        feedback: speakingEvalJson.feedback,
-        exchangeCount: speakingUserTurns,
+        pronunciationNotes: [],
+        feedback: javiFeedback,
+        exchangeCount: attempt2Score != null ? 2 : 1,
       };
 
       const writingScores = {
@@ -565,7 +719,15 @@ export default function LessonScreen() {
   };
 
   const handlePressIn = async () => {
-    if (phase !== 'speaking' || voiceStateRef.current !== 'idle' || !lessonFocus || finishing) return;
+    if (
+      phase !== 'speaking' ||
+      (speakingStep !== 'attempt1' && speakingStep !== 'attempt2') ||
+      voiceStateRef.current !== 'idle' ||
+      !lessonFocus ||
+      finishing
+    ) {
+      return;
+    }
     if (Platform.OS === 'web') {
       setVoiceError('Voice works on iOS and Android.');
       return;
@@ -614,7 +776,14 @@ export default function LessonScreen() {
       }
 
       showHeardTranscript(result.text);
-      await sendSpeakingTranscription(result.text);
+      const step = speakingStepRef.current;
+      if (step === 'attempt1') {
+        await processAttempt1(result.text);
+      } else if (step === 'attempt2') {
+        await processAttempt2(result.text);
+      } else {
+        setVoiceStateSafe('idle');
+      }
     } catch {
       setVoiceStateSafe('idle');
       setVoiceError('Connection issue — check your internet');
@@ -624,14 +793,28 @@ export default function LessonScreen() {
   const micDisabled =
     phase !== 'speaking' ||
     !speakingIntroDone ||
+    speakingStep === 'intro' ||
+    speakingStep === 'scaffold' ||
+    speakingStep === 'attempt1-feedback' ||
+    speakingStep === 'phase-summary' ||
+    (speakingStep !== 'attempt1' && speakingStep !== 'attempt2') ||
     finishing ||
     !lessonFocus ||
     !micGranted ||
     voiceState === 'processing' ||
     voiceState === 'javi-speaking';
 
-  const canEndSpeaking =
-    phase === 'speaking' && speakingUserTurns >= SPEAKING_END_TURNS && !finishing;
+  const voiceHint = (() => {
+    if (!speakingIntroDone || speakingStep === 'intro') return 'Javi is speaking…';
+    if (speakingStep === 'scaffold') return 'Memorise your response…';
+    if (speakingStep === 'attempt1-feedback') return 'Review Javi\'s feedback';
+    if (speakingStep === 'phase-summary') return 'Wrapping up speaking…';
+    if (voiceState === 'recording') return 'Release when finished';
+    if (voiceState === 'processing') return 'Processing…';
+    if (voiceState === 'javi-speaking') return 'Listen to Javi…';
+    if (speakingStep === 'attempt2') return 'Now try again — apply Javi\'s feedback 🎤';
+    return 'Now say it — Javi is listening 🎤';
+  })();
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -792,21 +975,37 @@ export default function LessonScreen() {
                 latestJaviId={latestSpeakingJaviId}
                 voiceSyncLatest={voiceState === 'javi-speaking'}
               />
-              {canEndSpeaking ? (
-                <Pressable
-                  onPress={() => void finishLesson()}
-                  disabled={finishing}
-                  style={({ pressed }) => [
-                    styles.secondaryButton,
-                    finishing && styles.primaryButtonDisabled,
-                    pressed && styles.primaryButtonPressed,
-                  ]}>
-                  {finishing ? (
-                    <ActivityIndicator color={palette.text} />
-                  ) : (
-                    <Text style={styles.secondaryButtonText}>End lesson</Text>
-                  )}
-                </Pressable>
+              {speakingStep === 'attempt1-feedback' && attempt1Eval ? (
+                <SpeakingFeedbackCard
+                  correct={attempt1Eval.correct}
+                  incorrect={attempt1Eval.incorrect}
+                  improvementTip={attempt1Eval.improvementTip}
+                />
+              ) : null}
+              {speakingStep === 'attempt1-feedback' ? (
+                <View style={styles.speakingActions}>
+                  <Pressable
+                    onPress={startSecondAttempt}
+                    style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
+                    <Text style={styles.primaryButtonText}>Try again 🎤</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={skipSecondAttempt}
+                    disabled={finishing}
+                    style={({ pressed }) => [
+                      styles.secondaryButton,
+                      finishing && styles.primaryButtonDisabled,
+                      pressed && styles.primaryButtonPressed,
+                    ]}>
+                    <Text style={styles.secondaryButtonText}>Move on →</Text>
+                  </Pressable>
+                </View>
+              ) : null}
+              {speakingStep === 'phase-summary' && phaseSummaryText ? (
+                <View style={styles.phaseSummaryCard}>
+                  <Text style={styles.phaseSummaryTitle}>Speaking complete</Text>
+                  <Text style={styles.phaseSummaryText}>{phaseSummaryText}</Text>
+                </View>
               ) : null}
             </>
           ) : null}
@@ -844,6 +1043,13 @@ export default function LessonScreen() {
 
         {phase === 'speaking' ? (
           <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+            {speakingStep === 'scaffold' && writingResult ? (
+              <SpeakingScaffold
+                writtenText={writingResult.originalText}
+                countdownSeconds={scaffoldSeconds}
+                onComplete={onScaffoldComplete}
+              />
+            ) : null}
             {heardTranscript ? (
               <Text style={styles.heardText} numberOfLines={2}>
                 Javi heard: {heardTranscript}
@@ -856,17 +1062,7 @@ export default function LessonScreen() {
               onPressIn={() => void handlePressIn()}
               onPressOut={() => void handlePressOut()}
             />
-            <Text style={styles.voiceHint}>
-              {!speakingIntroDone
-                ? 'Javi is speaking…'
-                : voiceState === 'recording'
-                  ? 'Release when finished'
-                  : voiceState === 'processing'
-                    ? 'Processing…'
-                    : voiceState === 'javi-speaking'
-                      ? 'Listen to Javi…'
-                      : `Hold to speak (${speakingUserTurns}/${SPEAKING_AUTO_END_TURNS})`}
-            </Text>
+            <Text style={styles.voiceHint}>{voiceHint}</Text>
           </View>
         ) : null}
       </KeyboardAvoidingView>
@@ -1022,5 +1218,30 @@ const styles = StyleSheet.create({
   },
   heardText: { fontSize: 13, color: palette.muted, textAlign: 'center' },
   errorText: { fontSize: 13, color: palette.error, textAlign: 'center' },
-  voiceHint: { fontSize: 13, fontWeight: '600', color: palette.muted },
+  voiceHint: { fontSize: 13, fontWeight: '600', color: palette.muted, textAlign: 'center' },
+  speakingActions: { gap: 0, marginTop: 4 },
+  phaseSummaryCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginTop: 12,
+    alignItems: 'center',
+    gap: 8,
+  },
+  phaseSummaryTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: palette.accent,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  phaseSummaryText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.text,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
 });
