@@ -34,6 +34,8 @@ function categoryStyle(category: ErrorDNAItem['category']) {
       return styles.badgeVocabulary;
     case 'speaking':
       return styles.badgeSpeaking;
+    case 'structure':
+      return styles.badgeStructure;
   }
 }
 
@@ -242,6 +244,10 @@ const styles = StyleSheet.create({
   badgeSpeaking: {
     backgroundColor: 'rgba(255, 122, 89, 0.12)',
     borderColor: 'rgba(255, 122, 89, 0.45)',
+  },
+  badgeStructure: {
+    backgroundColor: 'rgba(167, 139, 250, 0.12)',
+    borderColor: 'rgba(167, 139, 250, 0.45)',
   },
   errorTitle: {
     fontSize: 15,

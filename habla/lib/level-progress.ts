@@ -26,7 +26,7 @@ export type LevelBarometer = {
 };
 
 export type SkillSnapshot = {
-  skill: 'Grammar' | 'Vocabulary' | 'Fluency' | 'Writing';
+  skill: 'Grammar' | 'Vocabulary' | 'Fluency' | 'Writing' | 'Structure';
   average: number;
   status: 'strong' | 'needs-work' | 'weak';
 };
@@ -115,12 +115,17 @@ export function getSkillSnapshots(history: LessonHistoryEntry[]): SkillSnapshot[
   const recent = history.slice(-RECENT_SESSION_COUNT);
   if (!recent.length) return [];
 
-  const sums = { grammar: 0, vocabulary: 0, fluency: 0, writing: 0 };
+  const sums = { grammar: 0, vocabulary: 0, fluency: 0, writing: 0, structure: 0 };
+  let structureCount = 0;
   for (const entry of recent) {
     sums.grammar += entry.breakdown.grammar.score;
     sums.vocabulary += entry.breakdown.vocabulary.score;
     sums.fluency += entry.breakdown.fluency.score;
     sums.writing += entry.breakdown.writing.score;
+    if (entry.breakdown.structure) {
+      sums.structure += entry.breakdown.structure.score;
+      structureCount += 1;
+    }
   }
   const n = recent.length;
   const skills: SkillSnapshot[] = [
@@ -129,6 +134,13 @@ export function getSkillSnapshots(history: LessonHistoryEntry[]): SkillSnapshot[
     { skill: 'Fluency', average: clampScore(sums.fluency / n), status: 'needs-work' },
     { skill: 'Writing', average: clampScore(sums.writing / n), status: 'needs-work' },
   ];
+  if (structureCount > 0) {
+    skills.push({
+      skill: 'Structure',
+      average: clampScore(sums.structure / structureCount),
+      status: 'needs-work',
+    });
+  }
   return skills.map((s) => ({ ...s, status: skillStatus(s.average) }));
 }
 

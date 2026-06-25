@@ -64,7 +64,7 @@ const palette = {
   green: '#34D399',
 };
 
-type LessonKind = 'grammar' | 'vocabulary' | 'your-day';
+type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure';
 type LessonPhase = 'warmup' | 'writing' | 'speaking';
 
 type ChatMessage = {
@@ -74,10 +74,15 @@ type ChatMessage = {
   translation?: string;
 };
 
-const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
+const LESSON_OPTIONS: { id: LessonKind; label: string; subtitle?: string }[] = [
   { id: 'grammar', label: 'Grammar' },
   { id: 'vocabulary', label: 'Vocabulary' },
   { id: 'your-day', label: 'Your day' },
+  {
+    id: 'structure',
+    label: 'Structure 🏗️',
+    subtitle: 'Word order · Object pronouns · Natural Spanish',
+  },
 ];
 
 const WARMUP_JAVI_TARGET = 4;
@@ -367,12 +372,14 @@ export default function LessonScreen() {
         grammarScore: evalJson.grammarScore,
         vocabularyScore: evalJson.vocabularyScore,
         fluencyScore: evalJson.fluencyScore,
+        structureScore: evalJson.structureScore,
         feedback: evalJson.feedback,
         corrections: Array.isArray(evalJson.corrections) ? evalJson.corrections : [],
         accentIssues: Array.isArray(evalJson.accentIssues) ? evalJson.accentIssues : [],
         structuralFeedback: Array.isArray(evalJson.structuralFeedback)
           ? evalJson.structuralFeedback
           : [],
+        wordOrderErrors: Array.isArray(evalJson.wordOrderErrors) ? evalJson.wordOrderErrors : [],
       };
 
       setWritingResult(evaluation);
@@ -493,6 +500,7 @@ export default function LessonScreen() {
         grammarScore: writingResult.grammarScore,
         vocabularyScore: writingResult.vocabularyScore,
         fluencyScore: writingResult.fluencyScore,
+        structureScore: writingResult.structureScore,
       };
 
       const analysisJson = await analyzeLessonPhases(
@@ -638,10 +646,17 @@ export default function LessonScreen() {
                   key={opt.id}
                   onPress={() => setLessonKind(opt.id)}
                   disabled={phase !== 'warmup' || warmUpMessages.length > 1}
-                  style={[styles.lessonChip, selected && styles.lessonChipSelected]}>
+                  style={[
+                    styles.lessonChip,
+                    opt.subtitle && styles.lessonChipWide,
+                    selected && styles.lessonChipSelected,
+                  ]}>
                   <Text style={[styles.lessonChipText, selected && styles.lessonChipTextSelected]}>
                     {opt.label}
                   </Text>
+                  {opt.subtitle && selected ? (
+                    <Text style={styles.lessonChipSubtitle}>{opt.subtitle}</Text>
+                  ) : null}
                 </Pressable>
               );
             })}
@@ -723,6 +738,9 @@ export default function LessonScreen() {
                       <Text style={styles.phaseTitle}>Javi&apos;s feedback</Text>
                       <ProgressBar label="Grammar" value={writingResult.grammarScore} />
                       <ProgressBar label="Vocabulary" value={writingResult.vocabularyScore} />
+                      {lessonKind === 'structure' && writingResult.structureScore != null ? (
+                        <ProgressBar label="Structure" value={writingResult.structureScore} />
+                      ) : null}
                       <View style={styles.feedbackCard}>
                         <Text style={styles.feedbackLabel}>Corrected version</Text>
                         <Text style={styles.feedbackText}>{writingResult.correctedText}</Text>
@@ -859,7 +877,15 @@ const styles = StyleSheet.create({
     borderColor: palette.surfaceBorder,
   },
   lessonChipSelected: { backgroundColor: palette.accentMuted, borderColor: palette.accent },
+  lessonChipWide: { minWidth: '46%' },
   lessonChipText: { fontSize: 14, fontWeight: '600', color: palette.muted },
+  lessonChipSubtitle: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 4,
+    lineHeight: 14,
+  },
   lessonChipTextSelected: { color: palette.text },
   screenTitle: {
     fontSize: 24,

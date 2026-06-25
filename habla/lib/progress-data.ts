@@ -19,6 +19,7 @@ export const SKILL_COLORS = {
   vocabulary: '#34D399',
   fluency: '#FBBF24',
   writing: '#FF7A59',
+  structure: '#A78BFA',
 } as const;
 
 export const GAP_BREAK_DAYS = 2;
@@ -174,14 +175,22 @@ export function buildSkillTrends(
     { key: 'vocabulary', label: 'Vocabulary', field: 'vocabulary' },
     { key: 'fluency', label: 'Fluency', field: 'fluency' },
     { key: 'writing', label: 'Writing', field: 'writing' },
+    { key: 'structure', label: 'Structure', field: 'structure' },
   ];
 
-  return skills.map(({ key, label, field }) => {
-    const points: ScoreTrendPoint[] = filtered.map((entry) => ({
-      date: entry.date,
-      score: entry.breakdown[field].score,
-      isPersonalBest: false,
-    }));
+  return skills
+    .filter(({ field }) => field !== 'structure' || filtered.some((e) => e.breakdown.structure))
+    .map(({ key, label, field }) => {
+    const points: ScoreTrendPoint[] = filtered
+      .filter((entry) => (field === 'structure' ? entry.breakdown.structure : true))
+      .map((entry) => ({
+        date: entry.date,
+        score:
+          field === 'structure'
+            ? (entry.breakdown.structure?.score ?? 0)
+            : entry.breakdown[field as 'grammar' | 'vocabulary' | 'fluency' | 'writing'].score,
+        isPersonalBest: false,
+      }));
     return {
       key,
       label,

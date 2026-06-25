@@ -6,9 +6,9 @@ import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 
 /** Matches the lesson chips on the lesson screen. */
-export type LessonType = 'Grammar' | 'Vocab' | 'Your Day';
+export type LessonType = 'Grammar' | 'Vocab' | 'Your Day' | 'Structure';
 
-export type LessonKindId = 'grammar' | 'vocabulary' | 'your-day';
+export type LessonKindId = 'grammar' | 'vocabulary' | 'your-day' | 'structure';
 
 export function lessonKindToLessonType(kind: LessonKindId): LessonType {
   switch (kind) {
@@ -18,6 +18,8 @@ export function lessonKindToLessonType(kind: LessonKindId): LessonType {
       return 'Vocab';
     case 'your-day':
       return 'Your Day';
+    case 'structure':
+      return 'Structure';
   }
 }
 
@@ -91,6 +93,18 @@ ${
 - Angle: ${focus.starter}
 - Open and follow up with natural questions about the learner's life along this angle.
 - Keep the chat personal, warm, and conversational.`;
+    case 'structure':
+      return `SENTENCE STRUCTURE LESSON — Topic ${focus.topic.id}: ${focus.topic.title}
+- Core idea: ${focus.topic.summary}
+- Teaching focus: ${focus.topic.focus}
+- Examples to use: ${focus.topic.examples.join(' · ')}
+
+PHASE 1 — EXPLAIN (warm-up messages):
+- Explain WHY Spanish works this way, not just the rule.
+- Use clear English and Spanish examples side by side.
+- Keep each message to 2 short Spanish sentences + Translate: line.
+- Do NOT drill yet — teach the concept simply in ~4 messages.
+- Stay on this structure topic only for the whole lesson.`;
   }
 }
 
@@ -225,11 +239,18 @@ export type LessonBreakdownJson = {
     score: number;
     details: string[];
   };
+  structure?: {
+    score: number;
+    topic: string;
+    details: string[];
+    lessonDescription: string;
+    wordOrderMistakes: { mistake: string; correction: string; explanation: string }[];
+  };
 };
 
 export type ErrorDNAAnalysisItem = {
   error: string;
-  category: 'grammar' | 'writing' | 'vocabulary' | 'speaking';
+  category: 'grammar' | 'writing' | 'vocabulary' | 'speaking' | 'structure';
   occurrences: number;
   example: string;
   correction: string;
@@ -255,10 +276,12 @@ export type WritingEvaluationJson = {
   grammarScore: number;
   vocabularyScore: number;
   fluencyScore: number;
+  structureScore?: number;
   feedback: string;
   corrections: { mistake: string; correction: string; explanation: string }[];
   accentIssues: string[];
   structuralFeedback: string[];
+  wordOrderErrors?: { mistake: string; correction: string; explanation: string }[];
 };
 
 export type DrillExerciseJson = {
@@ -348,6 +371,11 @@ export async function generateWarmUpOpening(
   const anthropic = getClient();
   const model = getModel();
 
+  const openingPrompt =
+    focus.kind === 'structure'
+      ? `Start the warm-up. Message 1 of 4. Explain today's structure point (${focus.topic.title}): ${focus.topic.summary}. Use clear English and Spanish examples. Explain WHY, not just the rule. End with Translate: line.`
+      : 'Start the warm-up. Message 1 of 4. Introduce today\'s topic, focus area, and 2–3 verbs or structures to practise. End with Translate: line.';
+
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
@@ -355,8 +383,7 @@ export async function generateWarmUpOpening(
     messages: [
       {
         role: 'user',
-        content:
-          'Start the warm-up. Message 1 of 4. Introduce today\'s topic, focus area, and 2–3 verbs or structures to practise. End with Translate: line.',
+        content: openingPrompt,
       },
     ],
   });
@@ -492,7 +519,8 @@ Written (original): ${writtenOriginal}
 Written (corrected): ${writtenCorrected}
 Writing corrections: ${JSON.stringify(writingCorrections)}
 Whisper transcripts (what they actually said): ${JSON.stringify(speakingTranscripts)}
-Speaking conversation: ${JSON.stringify(speakingConversation)}`;
+Speaking conversation: ${JSON.stringify(speakingConversation)}
+${lessonType === 'Structure' ? '\nThis is a Sentence Structure lesson — also evaluate natural word order and rhythm in speech.' : ''}`;
 
   const response = await anthropic.messages.create({
     model,
@@ -509,7 +537,12 @@ export async function analyzeLessonPhases(
   lessonType: LessonType,
   warmUpConversation: JaviMessage[],
   speakingConversation: JaviMessage[],
-  writingScores: { grammarScore: number; vocabularyScore: number; fluencyScore: number },
+  writingScores: {
+    grammarScore: number;
+    vocabularyScore: number;
+    fluencyScore: number;
+    structureScore?: number;
+  },
   speakingEvaluation: SpeakingEvaluationJson,
   lessonFocusLabel?: string,
 ): Promise<LessonAnalysisJson> {
@@ -525,7 +558,23 @@ export async function analyzeLessonPhases(
   const writingAvg = Math.round(
     (writingScores.grammarScore + writingScores.vocabularyScore + writingScores.fluencyScore) / 3,
   );
-  const overallScore = Math.round((writingAvg + speakingScore) / 2);
+  const isStructure = lessonType === 'Structure';
+  const structureScore = Math.round(writingScores.structureScore ?? analysis.breakdown.structure?.score ?? 0);
+
+  let overallScore: number;
+  if (isStructure) {
+    const parts = [
+      analysis.breakdown.grammar.score,
+      analysis.breakdown.vocabulary.score,
+      analysis.breakdown.fluency.score,
+      analysis.breakdown.writing.score,
+      structureScore || analysis.breakdown.structure?.score || writingAvg,
+      speakingScore,
+    ];
+    overallScore = Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
+  } else {
+    overallScore = Math.round((writingAvg + speakingScore) / 2);
+  }
 
   const weakFromSpeaking = speakingEvaluation.correctionsApplied
     ? []
@@ -539,6 +588,31 @@ export async function analyzeLessonPhases(
     weakAreas,
     breakdown: {
       ...analysis.breakdown,
+      ...(isStructure
+        ? {
+            structure: {
+              ...(analysis.breakdown.structure ?? {
+                score: structureScore,
+                topic: lessonFocusLabel ?? 'Sentence structure',
+                details: [],
+                lessonDescription: '',
+                wordOrderMistakes: [],
+              }),
+              score: Math.round(
+                (structureScore +
+                  (analysis.breakdown.structure?.score ?? structureScore) +
+                  speakingEvaluation.accuracyVsWritten) /
+                  3,
+              ),
+              details: [
+                ...(analysis.breakdown.structure?.details ?? []).slice(0, 1),
+                speakingEvaluation.correctionsApplied
+                  ? 'Word order carried into speech'
+                  : 'Focus on word order when speaking corrected sentences',
+              ].filter(Boolean),
+            },
+          }
+        : {}),
       fluency: {
         ...analysis.breakdown.fluency,
         score: Math.round((analysis.breakdown.fluency.score + speakingScore) / 2),
@@ -559,9 +633,26 @@ export async function analyzeLessonPhases(
 export async function analyzeConversation(
   lessonType: LessonType,
   conversation: JaviMessage[],
-  writingScores?: { grammarScore: number; vocabularyScore: number; fluencyScore: number },
+  writingScores?: {
+    grammarScore: number;
+    vocabularyScore: number;
+    fluencyScore: number;
+    structureScore?: number;
+  },
   lessonFocusLabel?: string,
 ): Promise<LessonAnalysisJson> {
+  const isStructure = lessonType === 'Structure';
+  const structureBlock = isStructure
+    ? `
+  - structure: {
+      score: 0-100 integer (sentence structure and word order — use structureScore from writing if provided),
+      topic: string (today's structure topic),
+      details: array of exactly 2 short notes on word order / structure,
+      lessonDescription: 2 sentences on what structure point was practised,
+      wordOrderMistakes: array of up to 4 word-order or construction mistakes, each { mistake, correction, explanation }
+    }`
+    : '';
+
   const anthropic = getClient();
   const model = getModel();
 
@@ -571,13 +662,14 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
   const user = `Analyze this lesson conversation and return a JSON object with exactly these keys:
 - strongAreas: array of 3 things the user did well
 - weakAreas: array of 3 things the user struggled with
-- focusAreas: array of 2 specific grammar or vocabulary topics to practise next
+- focusAreas: array of 2 specific ${isStructure ? 'sentence structure' : 'grammar or vocabulary'} topics to practise next
 - correctnessScore: integer percent (0-100) for overall Spanish correctness
-- overallScore: integer percent (0-100) average across grammar, vocabulary, fluency, and writing in breakdown
+- overallScore: integer percent (0-100) average across ${isStructure ? 'grammar, vocabulary, fluency, writing, and structure' : 'grammar, vocabulary, fluency, and writing'} in breakdown
 - encouragingMessage: one short motivational sentence in Spanish then English (same line, separated by " / ")
 - errorDNA: array of specific recurring mistake patterns from this lesson (empty array if none). Each item:
-  { error: string (concise pattern description), category: "grammar"|"writing"|"vocabulary"|"speaking", occurrences: 1, example: string (real mistake from this lesson), correction: string (how to fix + brief explanation) }
+  { error: string (concise pattern description), category: "grammar"|"writing"|"vocabulary"|"speaking"|"structure", occurrences: 1, example: string (real mistake from this lesson), correction: string (how to fix + brief explanation) }
   Only include precise, repeatable mistakes — not vague weak areas. Set occurrences to 1 for each new pattern found today.
+  ${isStructure ? 'Tag word-order and construction mistakes as category "structure".' : ''}
 - breakdown: object with:
   - grammar: {
       score: 0-100 integer,
@@ -605,7 +697,7 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
   - writing: {
       score: 0-100 integer,
       details: array of exactly 2 short notes about writing (use writing scores if provided)
-    }
+    }${structureBlock}
 
 Lesson type: ${lessonType}
 Lesson focus / topic context: ${lessonFocusLabel ?? 'General B1 practice'}
@@ -616,8 +708,9 @@ ${writingScores ? JSON.stringify(writingScores) : 'null'}
 Rules:
 - Use writing scores to set breakdown.grammar.score, breakdown.vocabulary.score, breakdown.fluency.score where appropriate.
 - breakdown.writing.score should reflect writing quality (use writing scores as a guide).
+${isStructure ? '- breakdown.structure.score must use structureScore from writing scores when provided.\n- breakdown.structure.topic must match the lesson focus.\n- Tag word-order patterns in errorDNA as category "structure".' : ''}
 - breakdown.grammar.topic and breakdown.vocabulary.topic must reflect what was practised in this lesson.
-- overallScore must be the rounded average of the four breakdown scores.
+- overallScore must be the rounded average of the ${isStructure ? 'five' : 'four'} breakdown scores${isStructure ? ' (grammar, vocabulary, fluency, writing, structure)' : ''}.
 - weakAreas and focusAreas must align with breakdown details.
 - Populate ALL nested breakdown fields with real observations from the conversation — never leave arrays empty; use best-effort inference if needed.
 - wordsCorrect / wordsToRevisit must use real Spanish words from the conversation where possible.
@@ -645,6 +738,11 @@ function writingTaskFocusLine(focus: LessonFocusContext): string {
       return `Vocabulary theme: ${focus.theme}. Ask the learner to write a short paragraph using 5 words from this theme that came up in the conversation.`;
     case 'your-day':
       return `Conversation angle: ${focus.starter}. Ask the learner to write 4–5 sentences in Spanish about this topic.`;
+    case 'structure':
+      return `Structure topic: ${focus.topic.title} — ${focus.topic.summary}
+Ask the learner to rewrite exactly 5 English sentences in correct Spanish word order.
+${focus.topic.writingHint}
+List the 5 English sentences clearly numbered 1–5 in the prompt. Each tests today's structure point: ${focus.topic.focus}`;
   }
 }
 
@@ -695,19 +793,23 @@ export async function evaluateWriting(
 Return ONLY valid JSON. No markdown. No extra keys.
 Be encouraging and specific.`;
 
+  const isStructure = lessonType === 'Structure';
+
   const user = `Evaluate the learner's writing for this task.
 Provide corrections and short feedback.
+${isStructure ? 'PRIORITY: evaluate Spanish WORD ORDER and sentence structure for today\'s topic. Flag pronoun placement, adjective position, gustar-type order, double negatives, etc. separately in wordOrderErrors.' : ''}
 
 Return JSON exactly with these keys:
 - correctedText: the corrected version of the user's writing
 - grammarScore: integer 0-100
 - vocabularyScore: integer 0-100
 - fluencyScore: integer 0-100
+${isStructure ? '- structureScore: integer 0-100 (word order and sentence construction for today\'s structure topic)\n- wordOrderErrors: array of word-order mistakes { mistake, correction, explanation }' : ''}
 - feedback: 2-3 sentences of encouraging, specific feedback from Javi
 - corrections: array of specific mistakes with why it was wrong, with objects:
   { "mistake": "...", "correction": "...", "explanation": "..." }
 - accentIssues: array of accent/tilde mistakes flagged separately (e.g. "café written as cafe")
-- structuralFeedback: array of 2-3 notes on paragraph structure, connectors, or sentence variety
+- structuralFeedback: array of 2-3 notes on ${isStructure ? 'word order and Spanish sentence construction' : 'paragraph structure, connectors, or sentence variety'}
 
 Lesson type: ${lessonType}
 Task prompt: ${taskPrompt}
@@ -803,7 +905,11 @@ export type QuickFireQuestionType =
   | 'quick_translate'
   | 'conjugate'
   | 'choose_tense'
-  | 'translate_tense';
+  | 'translate_tense'
+  | 'reorder_words'
+  | 'spot_structure_error'
+  | 'complete_structure'
+  | 'choose_construction';
 
 export type GrammarDrillContext = {
   topic: string;
@@ -871,9 +977,10 @@ const QUICK_FIRE_TYPES: QuickFireQuestionType[] = [
   'correct_mistake',
   'choose_word',
   'quick_translate',
-  'conjugate',
-  'choose_tense',
-  'translate_tense',
+  'reorder_words',
+  'spot_structure_error',
+  'complete_structure',
+  'choose_construction',
 ];
 
 const GRAMMAR_DRILL_TYPES: QuickFireQuestionType[] = [
@@ -918,6 +1025,12 @@ Use exactly 2 questions of each type when count is 10; for ${count} questions va
 - correct_mistake: e.g. "Yo soy hambre" → answer: "Yo tengo hambre"
 - choose_word: e.g. "Ser or Estar? Yo ___ cansado" → answer: "estoy"
 - quick_translate: e.g. "How do you say this sentence in Spanish: I went to the shop"
+- reorder_words: e.g. "Put in order: rojo / el / coche / es" → "El coche es rojo"
+- spot_structure_error: e.g. "Fix: Yo veo lo" → "Lo veo"
+- complete_structure: e.g. "No quiero ___ (nothing)" → "nada"
+- choose_construction: e.g. "Me gusta OR Yo gusto el café?" → "Me gusta"
+
+Include exactly 2 sentence-structure questions (reorder_words, spot_structure_error, complete_structure, or choose_construction) in the ${count} questions.
 
 Rules:
 - Short prompts only. Answers must be brief (1–6 words usually).

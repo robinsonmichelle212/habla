@@ -2,6 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { LessonKindId } from '@/lib/claude';
 import {
+  getStructureTopic,
+  STRUCTURE_TOPICS,
+  structureTopicLabel,
+  type StructureTopic,
+} from '@/lib/sentence-structure';
+import {
   getWeekDefinition,
   resolveGrammarCurriculum,
   type GrammarCurriculumState,
@@ -13,6 +19,8 @@ const KEY_LAST_YOUR_DAY_TOPIC = 'lastYourDayTopic';
 const KEY_COVERED_GRAMMAR_TOPICS = 'coveredGrammarTopics';
 const KEY_COVERED_VOCAB_THEMES = 'coveredVocabThemes';
 const KEY_COVERED_YOUR_DAY_TOPICS = 'coveredYourDayTopics';
+const KEY_LAST_STRUCTURE_TOPIC = 'lastStructureTopic';
+const KEY_COVERED_STRUCTURE_TOPICS = 'coveredStructureTopics';
 
 export type { GrammarTopic } from '@/lib/grammar-curriculum';
 export {
@@ -60,6 +68,8 @@ export const YOUR_DAY_TOPICS = [
 export type VocabTheme = (typeof VOCAB_THEMES)[number];
 export type YourDayTopic = (typeof YOUR_DAY_TOPICS)[number];
 
+export type StructureTopicId = StructureTopic['id'];
+
 export type LessonFocusContext =
   | {
       kind: 'grammar';
@@ -72,7 +82,8 @@ export type LessonFocusContext =
       curriculum: GrammarCurriculumState;
     }
   | { kind: 'vocabulary'; theme: VocabTheme; themeSpanish: string }
-  | { kind: 'your-day'; starter: YourDayTopic; starterSpanish: string };
+  | { kind: 'your-day'; starter: YourDayTopic; starterSpanish: string }
+  | { kind: 'structure'; topic: StructureTopic };
 
 const VOCAB_THEME_SPANISH: Record<VocabTheme, string> = {
   'Food and cooking': 'la comida y la cocina',
@@ -142,6 +153,9 @@ async function recordFocusCoverage(focus: LessonFocusContext): Promise<void> {
     case 'your-day':
       await addToCoveredList(KEY_COVERED_YOUR_DAY_TOPICS, focus.starter);
       break;
+    case 'structure':
+      await addToCoveredList(KEY_COVERED_STRUCTURE_TOPICS, focus.topic.title);
+      break;
   }
 }
 
@@ -205,6 +219,22 @@ async function selectYourDayTopic(): Promise<YourDayTopic> {
   return starter;
 }
 
+async function selectStructureTopic(): Promise<StructureTopic> {
+  const lastRaw = await AsyncStorage.getItem(KEY_LAST_STRUCTURE_TOPIC);
+  const lastId = lastRaw ? Number(lastRaw) : null;
+  const lastTopic =
+    lastId != null && STRUCTURE_TOPICS.some((t) => t.id === lastId)
+      ? getStructureTopic(lastId)
+      : null;
+  const ids = STRUCTURE_TOPICS.map((t) => t.id);
+  const nextId = lastTopic
+    ? ids[(ids.indexOf(lastTopic.id) + 1) % ids.length]
+    : ids[0];
+  const topic = getStructureTopic(nextId);
+  await AsyncStorage.setItem(KEY_LAST_STRUCTURE_TOPIC, String(topic.id));
+  return topic;
+}
+
 /** Resolves and persists the focus for a lesson type (grammar weekly, vocab/your-day per lesson). */
 export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<LessonFocusContext> {
   let focus: LessonFocusContext;
@@ -242,6 +272,11 @@ export async function prepareLessonFocus(lessonKind: LessonKindId): Promise<Less
       };
       break;
     }
+    case 'structure': {
+      const topic = await selectStructureTopic();
+      focus = { kind: 'structure', topic };
+      break;
+    }
   }
   await recordFocusCoverage(focus);
   return focus;
@@ -265,6 +300,8 @@ export function lessonFocusLabel(focus: LessonFocusContext): string {
       return focus.theme;
     case 'your-day':
       return focus.starter;
+    case 'structure':
+      return structureTopicLabel(focus.topic);
   }
 }
 
@@ -287,6 +324,11 @@ export function buildLessonOpening(focus: LessonFocusContext): {
       return {
         spanish: focus.starterSpanish,
         translation: focus.starter,
+      };
+    case 'structure':
+      return {
+        spanish: `Hoy practicamos estructura: ${focus.topic.title}.`,
+        translation: `Today we're practising sentence structure: ${focus.topic.title}. ${focus.topic.summary}`,
       };
   }
 }

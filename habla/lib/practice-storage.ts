@@ -55,11 +55,18 @@ export type WritingBreakdown = ScoreBreakdownSection & {
   writingPrompt?: string;
 };
 
+export type StructureBreakdown = ScoreBreakdownSection & {
+  topic: string;
+  lessonDescription?: string;
+  wordOrderMistakes?: GrammarMistake[];
+};
+
 export type LessonBreakdown = {
   grammar: GrammarBreakdown;
   vocabulary: VocabularyBreakdown;
   fluency: FluencyBreakdown;
   writing: WritingBreakdown;
+  structure?: StructureBreakdown;
 };
 
 export type LessonHistoryEntry = {
@@ -183,13 +190,15 @@ function normalizeBreakdown(
   const vocabularyRaw = (obj.vocabulary ?? {}) as Partial<VocabularyBreakdown>;
   const fluencyRaw = (obj.fluency ?? {}) as Partial<FluencyBreakdown>;
   const writingRaw = (obj.writing ?? {}) as Partial<WritingBreakdown>;
+  const structureRaw = (obj.structure ?? {}) as Partial<StructureBreakdown>;
 
   const grammarBase = normalizeSection(grammarRaw, g, 'Grammar');
   const vocabularyBase = normalizeSection(vocabularyRaw, v, 'Vocabulary');
   const fluencyBase = normalizeSection(fluencyRaw, f);
   const writingBase = normalizeSection(writingRaw, w);
+  const structureBase = normalizeSection(structureRaw, w, 'Structure');
 
-  return {
+  const breakdown: LessonBreakdown = {
     grammar: {
       ...grammarBase,
       topic: grammarBase.topic ?? 'Grammar',
@@ -224,6 +233,18 @@ function normalizeBreakdown(
       writingPrompt: typeof writingRaw.writingPrompt === 'string' ? writingRaw.writingPrompt : undefined,
     },
   };
+
+  if (obj.structure != null || structureRaw.topic || structureRaw.score != null) {
+    breakdown.structure = {
+      ...structureBase,
+      topic: structureBase.topic ?? 'Sentence structure',
+      lessonDescription:
+        typeof structureRaw.lessonDescription === 'string' ? structureRaw.lessonDescription : undefined,
+      wordOrderMistakes: normalizeMistakes(structureRaw.wordOrderMistakes),
+    };
+  }
+
+  return breakdown;
 }
 
 /** Previous lesson entry before a given date (for fluency comparison). */
@@ -279,13 +300,16 @@ function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
       const overallScore =
         obj.overallScore != null
           ? toScore(obj.overallScore)
-          : Math.round(
-              (breakdown.grammar.score +
-                breakdown.vocabulary.score +
-                breakdown.fluency.score +
-                breakdown.writing.score) /
-                4,
-            );
+          : (() => {
+              const parts = [
+                breakdown.grammar.score,
+                breakdown.vocabulary.score,
+                breakdown.fluency.score,
+                breakdown.writing.score,
+              ];
+              if (breakdown.structure) parts.push(breakdown.structure.score);
+              return Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
+            })();
 
       return {
         date: typeof obj?.date === 'string' ? obj.date : '',
@@ -308,6 +332,8 @@ export function lessonTypeLabel(lessonType: LessonType): string {
       return 'Vocabulary';
     case 'Your Day':
       return 'Your Day';
+    case 'Structure':
+      return 'Structure';
   }
 }
 

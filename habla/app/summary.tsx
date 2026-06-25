@@ -267,6 +267,12 @@ export default function SummaryScreen() {
                   <Text style={styles.writingLabel}>Fluency</Text>
                   <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
                 </View>
+                {writing.structureScore != null ? (
+                  <View style={styles.writingRow}>
+                    <Text style={styles.writingLabel}>Structure</Text>
+                    <Text style={styles.writingValue}>{Math.round(writing.structureScore)}%</Text>
+                  </View>
+                ) : null}
               </View>
             ) : null}
 

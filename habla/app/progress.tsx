@@ -135,7 +135,7 @@ export default function ProgressScreen() {
 
             <ChartSection
               title="Skills breakdown over time"
-              description="Grammar, vocabulary, fluency, and writing scores from each lesson.">
+              description="Grammar, vocabulary, fluency, writing, and structure scores from each lesson.">
               <DateRangeToggle value={range} onChange={setRange} />
               <View style={styles.chartSpacer} />
               <ProgressLineChart

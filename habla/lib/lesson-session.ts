@@ -41,6 +41,13 @@ export type LessonBreakdown = {
     structuralFeedback?: string[];
     writingPrompt?: string;
   };
+  structure?: {
+    score: number;
+    topic: string;
+    details: string[];
+    lessonDescription?: string;
+    wordOrderMistakes?: { mistake: string; correction: string; explanation: string }[];
+  };
 };
 
 export type LessonAnalysis = {
@@ -72,13 +79,15 @@ export type WritingCorrection = {
 export type WritingEvaluation = {
   originalText: string;
   correctedText: string;
-  grammarScore: number; // 0-100
-  vocabularyScore: number; // 0-100
-  fluencyScore: number; // 0-100
+  grammarScore: number;
+  vocabularyScore: number;
+  fluencyScore: number;
+  structureScore?: number;
   feedback: string;
   corrections: WritingCorrection[];
   accentIssues?: string[];
   structuralFeedback?: string[];
+  wordOrderErrors?: WritingCorrection[];
 };
 
 export type SpeakingEvaluation = {

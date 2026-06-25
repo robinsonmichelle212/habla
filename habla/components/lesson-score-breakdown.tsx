@@ -173,6 +173,14 @@ export function LessonScoreBreakdownModal({
                     tappable={enableScoreDetails && !!entry}
                     onPress={() => setDetailTab('writing')}
                   />
+                  {breakdown.structure ? (
+                    <BreakdownBar
+                      label="Structure"
+                      section={breakdown.structure}
+                      showTopic
+                      tappable={false}
+                    />
+                  ) : null}
                 </View>
               ) : null}
 

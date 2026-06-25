@@ -598,6 +598,14 @@ function formatPracticeQuestionType(q: PracticeQuestion): string {
       return 'Choose the tense';
     case 'translate_tense':
       return 'Translate using target tense';
+    case 'reorder_words':
+      return 'Reorder the words';
+    case 'spot_structure_error':
+      return 'Fix the structure';
+    case 'complete_structure':
+      return 'Complete the sentence';
+    case 'choose_construction':
+      return 'Choose the construction';
     default:
       return 'Grammar drill';
   }

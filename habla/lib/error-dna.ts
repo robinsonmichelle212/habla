@@ -3,7 +3,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getLessonHistory, type LessonHistoryEntry } from '@/lib/practice-storage';
 import { formatLocalDate } from '@/lib/streak';
 
-export type ErrorDNACategory = 'grammar' | 'writing' | 'vocabulary' | 'speaking';
+export type ErrorDNACategory = 'grammar' | 'writing' | 'vocabulary' | 'speaking' | 'structure';
 
 export type ErrorDNAInput = {
   error: string;
@@ -34,7 +34,7 @@ const MAX_ACTIVE_ERRORS = 20;
 const IMPROVING_SESSION_WINDOW = 5;
 const ARCHIVE_IMPROVING_MONTHS = 3;
 
-const VALID_CATEGORIES: ErrorDNACategory[] = ['grammar', 'writing', 'vocabulary', 'speaking'];
+const VALID_CATEGORIES: ErrorDNACategory[] = ['grammar', 'writing', 'vocabulary', 'speaking', 'structure'];
 
 function normalizeErrorKey(error: string): string {
   return error.trim().toLowerCase().replace(/\s+/g, ' ');
@@ -133,6 +133,8 @@ export function categoryLabel(category: ErrorDNACategory): string {
       return 'Vocabulary';
     case 'speaking':
       return 'Speaking';
+    case 'structure':
+      return 'Structure';
   }
 }
 
