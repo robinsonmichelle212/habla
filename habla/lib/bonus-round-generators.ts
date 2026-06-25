@@ -1,8 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 
+import {
+  calibrationJsonBlock,
+  levelContentGuide,
+  type RoundCalibration,
+} from '@/lib/bonus-round-calibration';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
-import { getLevelBarometer } from '@/lib/level-progress';
-import { getLessonHistory } from '@/lib/practice-storage';
 
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -24,10 +27,8 @@ function extractJson<T>(text: string): T {
   return JSON.parse(text.slice(start, end + 1)) as T;
 }
 
-async function levelHint(): Promise<string> {
-  const history = await getLessonHistory();
-  const bar = getLevelBarometer(history);
-  return bar?.band.label ?? 'B1 Confident';
+function calibrationBlock(cal: RoundCalibration): string {
+  return `Calibration:\n${calibrationJsonBlock(cal)}\n\nLevel guide: ${levelContentGuide(cal)}\nSession length: ${cal.sessionMinutes} minutes.`;
 }
 
 export type QuizQuestion = {
@@ -37,9 +38,9 @@ export type QuizQuestion = {
   correctIndex: number;
 };
 
-export async function generateQuizRound(): Promise<QuizQuestion[]> {
-  const level = await levelHint();
+export async function generateQuizRound(cal: RoundCalibration): Promise<QuizQuestion[]> {
   const client = getClient();
+  const count = cal.questionCount;
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 2000,
@@ -47,17 +48,18 @@ export async function generateQuizRound(): Promise<QuizQuestion[]> {
     messages: [
       {
         role: 'user',
-        content: `Generate 10 multiple choice questions in Spanish for level ${level}.
+        content: `${calibrationBlock(cal)}
+Generate ${count} multiple choice questions in Spanish.
 Topics: Spanish geography, culture, food, history, famous people.
 Each question: prompt in Spanish, exactly 4 options, correctIndex 0-3.
-B1 = simpler Spanish. B2 = more complex.
+Adjust vocabulary, sentence length, grammar complexity, and cultural depth per calibration.
 
 Return: { "questions": [{ "id":"1", "prompt":"...", "options":["a","b","c","d"], "correctIndex": 0 }] }`,
       },
     ],
   });
   const parsed = extractJson<{ questions: QuizQuestion[] }>(extractText(response));
-  return (parsed.questions ?? []).slice(0, 10).map((q, i) => ({
+  return (parsed.questions ?? []).slice(0, count).map((q, i) => ({
     id: String(q.id ?? i + 1),
     prompt: q.prompt,
     options: q.options,
@@ -78,7 +80,10 @@ export type SlangRoundContent = {
   slangCard: { spanish: string; english: string; exampleSpanish: string };
 };
 
-export async function generateSlangRound(): Promise<SlangRoundContent> {
+const SLANG_COUNTS = { 1: 3, 2: 5, 3: 7, 4: 8, 5: 10 } as const;
+
+export async function generateSlangRound(cal: RoundCalibration): Promise<SlangRoundContent> {
+  const exprCount = SLANG_COUNTS[cal.roundLevel];
   const client = getClient();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
@@ -87,7 +92,8 @@ export async function generateSlangRound(): Promise<SlangRoundContent> {
     messages: [
       {
         role: 'user',
-        content: `Generate a slang round with 5 expressions (Spain primary, Argentine equivalent noted).
+        content: `${calibrationBlock(cal)}
+Generate a slang round with ${exprCount} expressions (Spain primary, Argentine equivalent noted).
 Include drill: situation in Spanish, 4 slang options, correctIndex.
 Include slangCard: one key phrase to save to vocabulary.
 
@@ -122,7 +128,7 @@ export type RoleplayRoundContent = {
   goals: string[];
 };
 
-export async function generateRoleplayRound(): Promise<RoleplayRoundContent> {
+export async function generateRoleplayRound(cal: RoundCalibration): Promise<RoleplayRoundContent> {
   const scenario = ROLEPLAY_SCENARIOS[Math.floor(Math.random() * ROLEPLAY_SCENARIOS.length)];
   const client = getClient();
   const response = await client.messages.create({
@@ -132,7 +138,9 @@ export async function generateRoleplayRound(): Promise<RoleplayRoundContent> {
     messages: [
       {
         role: 'user',
-        content: `Role play scenario: ${scenario}
+        content: `${calibrationBlock(cal)}
+Role play scenario: ${scenario}
+Match pace, patience, register, and complexity to the level guide.
 Return JSON: { "scenario": "...", "characterName": "...", "characterRole": "...", "openingLine": "Spanish in character", "goals": ["goal1","goal2"] }`,
       },
     ],
@@ -167,9 +175,10 @@ export type ShadowingSentence = {
   english: string;
 };
 
-export async function generateShadowingRound(): Promise<ShadowingSentence[]> {
+export async function generateShadowingRound(cal: RoundCalibration): Promise<ShadowingSentence[]> {
   const curriculum = await resolveGrammarCurriculum();
   const week = getWeekDefinition(curriculum.currentWeek);
+  const count = cal.questionCount;
   const client = getClient();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
@@ -178,14 +187,16 @@ export async function generateShadowingRound(): Promise<ShadowingSentence[]> {
     messages: [
       {
         role: 'user',
-        content: `Generate 10 Spanish sentences for shadowing practice, progressively longer.
+        content: `${calibrationBlock(cal)}
+Generate ${count} Spanish sentences for shadowing practice, progressively longer.
 Grammar focus: ${week.topic}. Use focus verbs: ${week.focusVerbs.join(', ')}.
+Match speed and complexity to level guide.
 Return: { "sentences": [{ "id":"1", "spanish":"...", "english":"..." }] }`,
       },
     ],
   });
   const parsed = extractJson<{ sentences: ShadowingSentence[] }>(extractText(response));
-  return (parsed.sentences ?? []).slice(0, 10);
+  return (parsed.sentences ?? []).slice(0, count);
 }
 
 export async function compareShadowing(
@@ -227,7 +238,7 @@ export type CultureRoundContent = {
   culturalNote: string;
 };
 
-export async function generateCultureRound(): Promise<CultureRoundContent> {
+export async function generateCultureRound(cal: RoundCalibration): Promise<CultureRoundContent> {
   const topic = CULTURE_TOPICS[Math.floor(Math.random() * CULTURE_TOPICS.length)];
   const client = getClient();
   const response = await client.messages.create({
@@ -237,12 +248,13 @@ export async function generateCultureRound(): Promise<CultureRoundContent> {
     messages: [
       {
         role: 'user',
-        content: `Culture deep dive topic: ${topic}
+        content: `${calibrationBlock(cal)}
+Culture deep dive topic: ${topic}
 Return JSON:
 {
   "topic": "...",
-  "presentation": "2-3 paragraphs Spanish with key facts",
-  "discussionPrompts": ["3 questions in Spanish"],
+  "presentation": "Spanish paragraphs scaled to level — shorter for level 1",
+  "discussionPrompts": ["questions in Spanish"],
   "culturalNote": "Brief English+Spanish cultural note for encyclopedia"
 }`,
       },
@@ -272,7 +284,7 @@ const MUSIC_ROTATION = [
   { artist: 'Mercedes Sosa', song: 'Gracias a la Vida' },
 ];
 
-export async function generateMusicRound(): Promise<MusicRoundContent> {
+export async function generateMusicRound(cal: RoundCalibration): Promise<MusicRoundContent> {
   const pick = MUSIC_ROTATION[Math.floor(Math.random() * MUSIC_ROTATION.length)];
   const client = getClient();
   const response = await client.messages.create({
@@ -282,8 +294,9 @@ export async function generateMusicRound(): Promise<MusicRoundContent> {
     messages: [
       {
         role: 'user',
-        content: `Music round: ${pick.artist} — ${pick.song}
-Return JSON with context, 2-3 verses as text, lineByLine explanations, vocabDrill (5 words), theme.`,
+        content: `${calibrationBlock(cal)}
+Music round: ${pick.artist} — ${pick.song}
+Return JSON with context, verses as text (fewer/simpler at level 1), lineByLine explanations, vocabDrill (5 words), theme.`,
       },
     ],
   });
@@ -309,7 +322,7 @@ const FILM_ROTATION = [
   'Cuéntame cómo pasó',
 ];
 
-export async function generateFilmRound(): Promise<FilmRoundContent> {
+export async function generateFilmRound(cal: RoundCalibration): Promise<FilmRoundContent> {
   const title = FILM_ROTATION[Math.floor(Math.random() * FILM_ROTATION.length)];
   const client = getClient();
   const response = await client.messages.create({
@@ -319,8 +332,10 @@ export async function generateFilmRound(): Promise<FilmRoundContent> {
     messages: [
       {
         role: 'user',
-        content: `Film/TV round: ${title}
+        content: `${calibrationBlock(cal)}
+Film/TV round: ${title}
 Describe a scene in Spanish, key dialogue as text, vocabulary, discussion questions, Spain vs Argentina dialect notes.
+Match dialogue complexity and cultural depth to level guide.
 Return JSON.`,
       },
     ],
@@ -328,13 +343,12 @@ Return JSON.`,
   return extractJson<FilmRoundContent>(extractText(response));
 }
 
-export async function generateImmersionOpening(): Promise<string> {
-  const level = await levelHint();
+export async function generateImmersionOpening(cal: RoundCalibration): Promise<string> {
   const client = getClient();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 400,
-    system: `You are Javi. IMMERSION MODE: Spanish ONLY. No English. No Translate line. Level: ${level}.`,
+    system: `You are Javi. IMMERSION MODE: Spanish ONLY. No English. No Translate line. ${calibrationBlock(cal)}`,
     messages: [
       {
         role: 'user',
@@ -347,12 +361,13 @@ export async function generateImmersionOpening(): Promise<string> {
 
 export async function askImmersionJavi(
   conversation: { role: 'user' | 'assistant'; content: string }[],
+  cal: RoundCalibration,
 ): Promise<string> {
   const client = getClient();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 400,
-    system: `IMMERSION: Spanish only. If user writes English, respond exactly: "En español, por favor. / In Spanish please." then continue in Spanish.`,
+    system: `IMMERSION: Spanish only. ${calibrationBlock(cal)} If user writes English, respond exactly: "En español, por favor. / In Spanish please." then continue in Spanish.`,
     messages: conversation.map((m) => ({ role: m.role, content: m.content })),
   });
   return extractText(response);
@@ -408,12 +423,13 @@ export async function askCultureJavi(
 export async function askRoleplayJavi(
   content: RoleplayRoundContent,
   messages: { role: 'user' | 'assistant'; content: string }[],
+  cal: RoundCalibration,
 ): Promise<string> {
   const client = getClient();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 500,
-    system: `Stay in character as ${content.characterName} (${content.characterRole}). Scenario: ${content.scenario}. Spanish only in character.`,
+    system: `Stay in character as ${content.characterName} (${content.characterRole}). Scenario: ${content.scenario}. ${calibrationBlock(cal)} Spanish only in character.`,
     messages: messages.map((m) => ({ role: m.role, content: m.content })),
   });
   return extractText(response);
@@ -447,9 +463,11 @@ export async function askFilmJavi(
   return extractText(response);
 }
 
-export function quizRoundGems(score: number): number {
-  if (score >= 8) return 5;
-  if (score >= 5) return 2;
+export function quizRoundGems(score: number, totalQuestions = 10): number {
+  if (totalQuestions <= 0) return 0;
+  const ratio = score / totalQuestions;
+  if (ratio >= 0.8) return 5;
+  if (ratio >= 0.5) return 2;
   return 0;
 }
 

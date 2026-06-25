@@ -25,8 +25,18 @@ import {
   type ShadowingSentence,
   type SlangRoundContent,
 } from '@/lib/bonus-round-generators';
+import { buildRoundCalibration, type RoundCalibration } from '@/lib/bonus-round-calibration';
 import { addCulturalNote } from '@/lib/cultural-notes';
-import { getRoundDef, isRoundUnlocked, recordRoundPlayed, type BonusRoundId } from '@/lib/gem-shop';
+import {
+  eliteBadgeId,
+  eliteBadgeLabel,
+  getRoundDef,
+  isRoundLevelUnlocked,
+  parseRoundLevel,
+  recordLevelCompleted,
+  recordRoundPlayed,
+  type BonusRoundId,
+} from '@/lib/gem-shop';
 import { addGems } from '@/lib/gems';
 import { parseJaviResponse } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
@@ -63,7 +73,7 @@ const palette = {
   red: '#F87171',
 };
 
-const QUIZ_TIMER_SEC = 15;
+const QUIZ_TIMER_SEC_DEFAULT = 15;
 
 type Stage = 'gate' | 'loading' | 'play' | 'result';
 
@@ -75,10 +85,17 @@ function parseRoundId(value: string | undefined): BonusRoundId | null {
 export default function BonusRoundScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { round: roundParam } = useLocalSearchParams<{ round?: string }>();
+  const { round: roundParam, level: levelParam } = useLocalSearchParams<{
+    round?: string;
+    level?: string;
+  }>();
   const roundId = parseRoundId(typeof roundParam === 'string' ? roundParam : undefined);
+  const roundLevel = parseRoundLevel(typeof levelParam === 'string' ? levelParam : undefined) ?? 1;
 
   const [stage, setStage] = useState<Stage>('gate');
+  const [calibration, setCalibration] = useState<RoundCalibration | null>(null);
+  const [maxChatTurns, setMaxChatTurns] = useState(4);
+  const [quizTimerSec, setQuizTimerSec] = useState(QUIZ_TIMER_SEC_DEFAULT);
   const [gemsEarned, setGemsEarned] = useState(0);
   const [showGemToast, setShowGemToast] = useState(false);
   const [resultTitle, setResultTitle] = useState('');
@@ -88,7 +105,7 @@ export default function BonusRoundScreen() {
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizIdx, setQuizIdx] = useState(0);
   const [quizScore, setQuizScore] = useState(0);
-  const [quizTimer, setQuizTimer] = useState(QUIZ_TIMER_SEC);
+  const [quizTimer, setQuizTimer] = useState(QUIZ_TIMER_SEC_DEFAULT);
   const [quizLocked, setQuizLocked] = useState(false);
 
   // Generic chat
@@ -96,7 +113,6 @@ export default function BonusRoundScreen() {
   const [chatInput, setChatInput] = useState('');
   const [chatSending, setChatSending] = useState(false);
   const [chatTurns, setChatTurns] = useState(0);
-  const maxChatTurns = 4;
 
   // Slang
   const [slangContent, setSlangContent] = useState<SlangRoundContent | null>(null);
@@ -121,7 +137,13 @@ export default function BonusRoundScreen() {
 
   const finishRound = useCallback(
     async (title: string, detail: string, gems: number) => {
-      if (roundId) await recordRoundPlayed(roundId);
+      if (roundId) {
+        await recordRoundPlayed(roundId, roundLevel);
+        await recordLevelCompleted(roundId, roundLevel);
+        if (roundLevel === 5) {
+          await awardBadge(eliteBadgeId(roundId), eliteBadgeLabel(roundId), '🏆');
+        }
+      }
       if (gems > 0) {
         await addGems(gems);
         setGemsEarned(gems);
@@ -131,7 +153,7 @@ export default function BonusRoundScreen() {
       setResultDetail(detail);
       setStage('result');
     },
-    [roundId],
+    [roundId, roundLevel],
   );
 
   const submitQuizAnswer = useCallback(
@@ -146,9 +168,10 @@ export default function BonusRoundScreen() {
       setQuizScore(nextScore);
       setTimeout(() => {
         if (quizIdx >= quizQuestions.length - 1) {
-          const gems = quizRoundGems(nextScore);
+          const total = quizQuestions.length;
+          const gems = quizRoundGems(nextScore, total);
           void finishRound(
-            `Quiz complete: ${nextScore}/10`,
+            `Quiz complete: ${nextScore}/${total}`,
             correct ? '✅ Correct!' : `Answer: ${q.options[q.correctIndex]}`,
             gems,
           );
@@ -192,7 +215,7 @@ export default function BonusRoundScreen() {
         setChatSending(false);
       }
     },
-    [chatInput, chatSending, chatMessages, chatTurns, roundId],
+    [chatInput, chatSending, chatMessages, chatTurns, roundId, maxChatTurns],
   );
 
   useEffect(() => {
@@ -201,45 +224,50 @@ export default function BonusRoundScreen() {
       return;
     }
     void (async () => {
-      const unlocked = await isRoundUnlocked(roundId);
+      const unlocked = await isRoundLevelUnlocked(roundId, roundLevel);
       if (!unlocked) {
-        Alert.alert('Unlock first', 'Purchase this round in the Gem Shop.', [
+        Alert.alert('Unlock first', `Purchase Level ${roundLevel} in the Gem Shop.`, [
           { text: 'OK', onPress: () => router.replace('/gem-shop') },
         ]);
         return;
       }
       setStage('loading');
       try {
+        const cal = await buildRoundCalibration(roundId, roundLevel);
+        setCalibration(cal);
+        setMaxChatTurns(cal.chatTurns);
+        setQuizTimerSec(cal.quizTimerSec);
+        setQuizTimer(cal.quizTimerSec);
+
         switch (roundId) {
           case 'quiz': {
-            const qs = await generateQuizRound();
+            const qs = await generateQuizRound(cal);
             setQuizQuestions(qs);
             setQuizIdx(0);
             setQuizScore(0);
-            setQuizTimer(QUIZ_TIMER_SEC);
             break;
           }
           case 'slang': {
-            const c = await generateSlangRound();
+            const c = await generateSlangRound(cal);
             setSlangContent(c);
             setSlangPhase('intro');
             break;
           }
           case 'roleplay': {
-            const c = await generateRoleplayRound();
+            const c = await generateRoleplayRound(cal);
             setRoleplayContent(c);
             setChatMessages([{ role: 'assistant', text: c.openingLine }]);
             break;
           }
           case 'shadowing': {
-            const s = await generateShadowingRound();
+            const s = await generateShadowingRound(cal);
             setShadowSentences(s);
             setShadowIdx(0);
             setShadowScores([]);
             break;
           }
           case 'culture': {
-            const c = await generateCultureRound();
+            const c = await generateCultureRound(cal);
             setPresentation(c.presentation);
             setRoundMeta({ culture: c });
             setChatMessages([
@@ -248,12 +276,12 @@ export default function BonusRoundScreen() {
             break;
           }
           case 'immersion': {
-            const open = await generateImmersionOpening();
+            const open = await generateImmersionOpening(cal);
             setChatMessages([{ role: 'assistant', text: open }]);
             break;
           }
           case 'music': {
-            const m = await generateMusicRound();
+            const m = await generateMusicRound(cal);
             setPresentation(`${m.context}\n\n${m.verses}`);
             setRoundMeta({ music: m });
             setChatMessages([
@@ -265,7 +293,7 @@ export default function BonusRoundScreen() {
             break;
           }
           case 'film': {
-            const f = await generateFilmRound();
+            const f = await generateFilmRound(cal);
             setPresentation(`${f.sceneDescription}\n\n${f.dialogue}`);
             setRoundMeta({ film: f });
             setChatMessages([
@@ -288,12 +316,12 @@ export default function BonusRoundScreen() {
       stopJaviSpeech();
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [roundId, router]);
+  }, [roundId, roundLevel, router]);
 
   // Quiz timer
   useEffect(() => {
     if (roundId !== 'quiz' || stage !== 'play' || quizLocked || !quizQuestions.length) return;
-    setQuizTimer(QUIZ_TIMER_SEC);
+    setQuizTimer(quizTimerSec);
     timerRef.current = setInterval(() => {
       setQuizTimer((t) => {
         if (t <= 1) {
@@ -307,7 +335,7 @@ export default function BonusRoundScreen() {
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [roundId, stage, quizIdx, quizLocked, quizQuestions.length, submitQuizAnswer]);
+  }, [roundId, stage, quizIdx, quizLocked, quizQuestions.length, quizTimerSec, submitQuizAnswer]);
 
   const handleShadowingNext = async (spoken: string) => {
     const sentence = shadowSentences[shadowIdx];
@@ -347,6 +375,9 @@ export default function BonusRoundScreen() {
           <Text style={styles.resultEmoji}>{def.emoji}</Text>
           <Text style={styles.resultTitle}>{resultTitle}</Text>
           <Text style={styles.resultDetail}>{resultDetail}</Text>
+          {roundLevel === 5 ? (
+            <Text style={styles.eliteNote}>🏆 Elite {def.name} badge earned!</Text>
+          ) : null}
           {gemsEarned > 0 ? <Text style={styles.gemsEarned}>+{gemsEarned} 💎</Text> : null}
           <Pressable onPress={() => router.replace('/gem-shop')} style={styles.primaryBtn}>
             <Text style={styles.primaryBtnText}>Back to Gem Shop</Text>
@@ -367,7 +398,7 @@ export default function BonusRoundScreen() {
             <Text style={styles.back}>← Exit</Text>
           </Pressable>
           <Text style={styles.roundTitle}>
-            {def.emoji} {def.name}
+            {def.emoji} {def.name} · L{roundLevel}
           </Text>
         </View>
 
@@ -375,7 +406,7 @@ export default function BonusRoundScreen() {
           {roundId === 'quiz' && quizQuestions[quizIdx] ? (
             <View style={styles.quizWrap}>
               <Text style={styles.quizMeta}>
-                Q{quizIdx + 1}/10 · {quizTimer}s
+                Q{quizIdx + 1}/{quizQuestions.length} · {quizTimer}s
               </Text>
               <Text style={styles.quizPrompt}>{quizQuestions[quizIdx].prompt}</Text>
               {quizQuestions[quizIdx].options.map((opt, i) => (
@@ -394,7 +425,9 @@ export default function BonusRoundScreen() {
             <View style={styles.block}>
               {slangPhase === 'intro' ? (
                 <>
-                  <Text style={styles.sectionTitle}>5 slang expressions</Text>
+                  <Text style={styles.sectionTitle}>
+                    {slangContent.expressions.length} slang expressions
+                  </Text>
                   {slangContent.expressions.map((e) => (
                     <View key={e.spain} style={styles.slangRow}>
                       <Text style={styles.slangSpain}>🇪🇸 {e.spain}</Text>
@@ -504,14 +537,15 @@ export default function BonusRoundScreen() {
                     setChatMessages(next);
                     const nextVoiceTurns = voiceTurns + 1;
                     setVoiceTurns(nextVoiceTurns);
-                    if (!roleplayContent) return;
+                    if (!roleplayContent || !calibration) return;
                     const reply = await askRoleplayJavi(
                       roleplayContent,
                       next.map((m) => ({ role: m.role, content: m.text })),
+                      calibration,
                     );
                     const withReply = [...next, { role: 'assistant' as const, text: reply }];
                     setChatMessages(withReply);
-                    if (nextVoiceTurns >= 4) {
+                    if (nextVoiceTurns >= maxChatTurns) {
                       const ev = await evaluateRoleplay(
                         roleplayContent.scenario,
                         withReply.map((m) => ({ role: m.role, content: m.text })),
@@ -539,7 +573,7 @@ export default function BonusRoundScreen() {
                       const film = roundMeta.film as { title: string } | undefined;
                       void sendChat(
                         async (msgs) => {
-                          if (roundId === 'immersion') return askImmersionJavi(msgs);
+                          if (roundId === 'immersion' && calibration) return askImmersionJavi(msgs, calibration);
                           if (roundId === 'culture' && culture)
                             return askCultureJavi(culture.topic, msgs);
                           if (roundId === 'music' && roundMeta.music)
@@ -708,4 +742,5 @@ const styles = StyleSheet.create({
   resultTitle: { fontSize: 26, fontWeight: '900', color: palette.text, textAlign: 'center' },
   resultDetail: { fontSize: 16, fontWeight: '600', color: palette.muted, textAlign: 'center' },
   gemsEarned: { fontSize: 22, fontWeight: '900', color: palette.green },
+  eliteNote: { fontSize: 16, fontWeight: '800', color: palette.accent, textAlign: 'center' },
 });

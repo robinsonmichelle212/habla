@@ -4,8 +4,6 @@ import type { SpanishWrappedReport } from '@/lib/wrapped-data';
 import { markWrappedSeen } from '@/lib/wrapped-storage';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
-import * as MediaLibrary from 'expo-media-library';
-import * as Sharing from 'expo-sharing';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -21,7 +19,6 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { captureRef } from 'react-native-view-shot';
 import { getWrappedForMonth, loadOrGenerateWrapped } from '@/lib/wrapped-storage';
 import { previousMonthKey } from '@/lib/wrapped-data';
 
@@ -106,6 +103,11 @@ export default function WrappedScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
     try {
+      const [{ captureRef }, Sharing, MediaLibrary] = await Promise.all([
+        import('react-native-view-shot'),
+        import('expo-sharing'),
+        import('expo-media-library'),
+      ]);
       const uri = await captureRef(shareRef, { format: 'png', quality: 1 });
       const canShare = await Sharing.isAvailableAsync();
       if (canShare) {

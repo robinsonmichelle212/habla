@@ -24,7 +24,7 @@ import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
 import { addGems, getTotalGems } from '@/lib/gems';
 import {
   dismissShopBadgeForSession,
-  getAffordableLockedRounds,
+  getAffordableNextLevels,
   shouldShowShopBadge,
 } from '@/lib/gem-shop';
 import { monthLabel } from '@/lib/wrapped-data';
@@ -104,9 +104,9 @@ export default function HomeScreen() {
           setLast7Days(full.last7Days);
           setDailyChallenge(challenge);
 
-          const affordable = await getAffordableLockedRounds(gems);
+          const affordable = await getAffordableNextLevels(gems);
           if (!cancelled) {
-            setShowShopBadge(shouldShowShopBadge(gems, affordable));
+            setShowShopBadge(shouldShowShopBadge(affordable));
           }
 
           setTodaysScoreInfo(getTodayScoreInfo(history, drills));
