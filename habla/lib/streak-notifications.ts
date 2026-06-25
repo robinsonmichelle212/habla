@@ -7,9 +7,42 @@ import { formatLocalDate, getStreakState } from '@/lib/streak';
 const PERMISSION_ASKED_KEY = 'habla.notificationPermissionAsked';
 const PERMISSION_STATUS_KEY = 'habla.notificationPermissionStatus';
 const REMINDER_ID = 'streak-daily-reminder';
+const REMINDER_TIME_KEY = 'habla.reminderTime';
 
-const REMINDER_HOUR = 20;
-const REMINDER_MINUTE = 0;
+const DEFAULT_REMINDER_HOUR = 20;
+const DEFAULT_REMINDER_MINUTE = 0;
+
+export type ReminderTime = { hour: number; minute: number };
+
+export async function getReminderTime(): Promise<ReminderTime> {
+  const raw = await AsyncStorage.getItem(REMINDER_TIME_KEY);
+  if (!raw) return { hour: DEFAULT_REMINDER_HOUR, minute: DEFAULT_REMINDER_MINUTE };
+  try {
+    const parsed = JSON.parse(raw) as Partial<ReminderTime>;
+    const hour = Math.trunc(Number(parsed.hour));
+    const minute = Math.trunc(Number(parsed.minute));
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      return { hour, minute };
+    }
+  } catch {
+    // fall through
+  }
+  return { hour: DEFAULT_REMINDER_HOUR, minute: DEFAULT_REMINDER_MINUTE };
+}
+
+export async function setReminderTime(hour: number, minute: number): Promise<void> {
+  const safeHour = Math.max(0, Math.min(23, Math.trunc(hour)));
+  const safeMinute = Math.max(0, Math.min(59, Math.trunc(minute)));
+  await AsyncStorage.setItem(REMINDER_TIME_KEY, JSON.stringify({ hour: safeHour, minute: safeMinute }));
+  await syncStreakReminder();
+}
+
+export function formatReminderTimeLabel(time: ReminderTime): string {
+  const h = time.hour % 12 || 12;
+  const suffix = time.hour >= 12 ? 'PM' : 'AM';
+  const m = time.minute.toString().padStart(2, '0');
+  return `${h}:${m} ${suffix}`;
+}
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -34,29 +67,28 @@ async function ensureAndroidChannel() {
   });
 }
 
-function eveningToday(): Date {
-  const d = new Date();
-  d.setHours(REMINDER_HOUR, REMINDER_MINUTE, 0, 0);
+function eveningOnDate(base: Date, time: ReminderTime): Date {
+  const d = new Date(base);
+  d.setHours(time.hour, time.minute, 0, 0);
   return d;
 }
 
-function eveningTomorrow(): Date {
-  const d = eveningToday();
-  d.setDate(d.getDate() + 1);
-  return d;
-}
-
-/** Next 8pm fire time: tonight if before 8pm and not done; otherwise tomorrow 8pm. */
-function nextReminderDate(alreadyCompletedToday: boolean): Date {
+/** Next reminder fire time: today at set time if not done; otherwise tomorrow. */
+async function nextReminderDate(alreadyCompletedToday: boolean): Promise<Date> {
+  const time = await getReminderTime();
   if (alreadyCompletedToday) {
-    return eveningTomorrow();
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    return eveningOnDate(tomorrow, time);
   }
   const now = new Date();
-  const tonight = eveningToday();
+  const tonight = eveningOnDate(now, time);
   if (now < tonight) {
     return tonight;
   }
-  return eveningTomorrow();
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  return eveningOnDate(tomorrow, time);
 }
 
 export async function cancelStreakReminder(): Promise<void> {
@@ -82,7 +114,7 @@ export async function syncStreakReminder(): Promise<void> {
   const today = formatLocalDate();
   const { lastSessionDate } = await getStreakState();
   const completedToday = lastSessionDate === today;
-  const triggerDate = nextReminderDate(completedToday);
+  const triggerDate = await nextReminderDate(completedToday);
 
   await Notifications.scheduleNotificationAsync({
     identifier: REMINDER_ID,

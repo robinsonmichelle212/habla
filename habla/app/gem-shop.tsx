@@ -1,6 +1,7 @@
 import {
   BONUS_ROUNDS,
-  dismissShopBadgeForSession,
+  dismissShopBadge,
+  getAffordableNextLevels,
   getGemShopProgress,
   getGemShopStats,
   getLevelCost,
@@ -72,8 +73,12 @@ export default function GemShopScreen() {
   }, []);
 
   useEffect(() => {
-    dismissShopBadgeForSession();
-    void load();
+    void (async () => {
+      const g = await getTotalGems();
+      const affordable = await getAffordableNextLevels(g);
+      dismissShopBadge(affordable);
+      await load();
+    })();
   }, [load]);
 
   const launchRound = (roundId: BonusRoundId, level: RoundLevel) => {
@@ -187,7 +192,7 @@ export default function GemShopScreen() {
       <StatusBar style="light" />
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={12}>
-          <Text style={styles.back}>← Home</Text>
+          <Text style={styles.back}>✕ Close</Text>
         </Pressable>
         <Text style={styles.title}>Gem Shop 💎</Text>
         <View style={styles.gemPill}>

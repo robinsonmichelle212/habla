@@ -115,10 +115,18 @@ export type LevelUnlockTarget = {
   cost: number;
 };
 
-let shopBadgeDismissedSession = false;
+let dismissedAffordableKey: string | null = null;
 
-export function dismissShopBadgeForSession(): void {
-  shopBadgeDismissedSession = true;
+export function affordableTargetsKey(targets: LevelUnlockTarget[]): string {
+  return targets
+    .map((t) => `${t.roundId}:${t.level}`)
+    .sort()
+    .join('|');
+}
+
+/** Hide the home gems badge until affordable unlock options change (e.g. new gems earned). */
+export function dismissShopBadge(affordable: LevelUnlockTarget[]): void {
+  dismissedAffordableKey = affordableTargetsKey(affordable);
 }
 
 export function getRoundDef(id: BonusRoundId): BonusRoundDef {
@@ -384,8 +392,9 @@ export async function getAffordableLockedRounds(gemTotal: number): Promise<Bonus
 }
 
 export function shouldShowShopBadge(affordable: LevelUnlockTarget[]): boolean {
-  if (shopBadgeDismissedSession) return false;
-  return affordable.length > 0;
+  if (affordable.length === 0) return false;
+  if (!dismissedAffordableKey) return true;
+  return affordableTargetsKey(affordable) !== dismissedAffordableKey;
 }
 
 export function eliteBadgeId(roundId: BonusRoundId): string {

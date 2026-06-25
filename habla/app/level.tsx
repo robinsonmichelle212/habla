@@ -46,7 +46,12 @@ import {
   getLessonHistory,
 } from '@/lib/practice-storage';
 import { getProfileBadges, type ProfileBadge } from '@/lib/profile-badges';
-import { useRouter } from 'expo-router';
+import {
+  formatReminderTimeLabel,
+  getReminderTime,
+  setReminderTime,
+  type ReminderTime,
+} from '@/lib/streak-notifications';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
@@ -92,7 +97,6 @@ function skillColor(status: SkillSnapshot['status']): string {
 }
 
 export default function LevelScreen() {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [barometer, setBarometer] = useState<ReturnType<typeof getLevelBarometer>>(null);
@@ -107,6 +111,7 @@ export default function LevelScreen() {
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
   const [profileBadges, setProfileBadges] = useState<ProfileBadge[]>([]);
+  const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -125,6 +130,7 @@ export default function LevelScreen() {
             activeErrors,
             archivedErrors,
             badges,
+            reminder,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredVocabThemesFromStorage(),
@@ -135,6 +141,7 @@ export default function LevelScreen() {
             getErrorDNA(),
             getArchivedErrorDNA(),
             getProfileBadges(),
+            getReminderTime(),
           ]);
           if (cancelled) return;
 
@@ -156,6 +163,7 @@ export default function LevelScreen() {
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
           setProfileBadges(badges);
+          setReminderTimeState(reminder);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -191,11 +199,7 @@ export default function LevelScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={12} accessibilityRole="button">
-          <Text style={styles.backLink}>← Home</Text>
-        </Pressable>
-        <Text style={styles.headerTitle}>Your Level</Text>
-        <View style={styles.headerSpacer} />
+        <Text style={styles.headerTitle}>Profile 👤</Text>
       </View>
 
       {loading ? (
@@ -209,14 +213,6 @@ export default function LevelScreen() {
             { paddingBottom: Math.max(insets.bottom, 24) },
           ]}
           showsVerticalScrollIndicator={false}>
-          <Pressable
-            onPress={() => router.push('/progress')}
-            style={({ pressed }) => [styles.progressLink, pressed && styles.progressLinkPressed]}
-            accessibilityRole="button">
-            <Text style={styles.progressLinkText}>My Progress 📈</Text>
-            <Text style={styles.progressLinkHint}>Score trends · activity · streaks</Text>
-          </Pressable>
-
           {profileBadges.length > 0 ? (
             <ProfileBadgesSection badges={profileBadges} />
           ) : null}
@@ -249,6 +245,15 @@ export default function LevelScreen() {
           {vocabStats ? (
             <SavedVocabularySection stats={vocabStats} words={savedWords} />
           ) : null}
+
+          <SettingsSection
+            reminderTime={reminderTime}
+            onReminderChange={async (hour, minute) => {
+              await setReminderTime(hour, minute);
+              setReminderTimeState({ hour, minute });
+            }}
+            onResetCurriculum={handleResetCurriculum}
+          />
         </ScrollView>
       )}
 
@@ -264,6 +269,55 @@ export default function LevelScreen() {
         />
       ) : null}
     </SafeAreaView>
+  );
+}
+
+function SettingsSection({
+  reminderTime,
+  onReminderChange,
+  onResetCurriculum,
+}: {
+  reminderTime: ReminderTime | null;
+  onReminderChange: (hour: number, minute: number) => Promise<void>;
+  onResetCurriculum: () => void;
+}) {
+  const options: ReminderTime[] = [
+    { hour: 18, minute: 0 },
+    { hour: 19, minute: 0 },
+    { hour: 20, minute: 0 },
+    { hour: 21, minute: 0 },
+  ];
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Settings</Text>
+      <View style={styles.card}>
+        <Text style={styles.settingsLabel}>Streak reminder time</Text>
+        <Text style={styles.settingsHint}>
+          Current: {reminderTime ? formatReminderTimeLabel(reminderTime) : '8:00 PM'}
+        </Text>
+        <View style={styles.reminderRow}>
+          {options.map((opt) => {
+            const selected =
+              reminderTime?.hour === opt.hour && reminderTime?.minute === opt.minute;
+            return (
+              <Pressable
+                key={`${opt.hour}-${opt.minute}`}
+                onPress={() => void onReminderChange(opt.hour, opt.minute)}
+                style={[styles.reminderChip, selected && styles.reminderChipSelected]}>
+                <Text style={[styles.reminderChipText, selected && styles.reminderChipTextSelected]}>
+                  {formatReminderTimeLabel(opt)}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <Pressable onPress={onResetCurriculum} style={styles.settingsDangerBtn}>
+          <Text style={styles.settingsDangerText}>Reset grammar curriculum</Text>
+        </Pressable>
+      </View>
+    </View>
   );
 }
 
@@ -666,17 +720,14 @@ function StatBox({
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.background },
   header: {
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: palette.surfaceBorder,
   },
-  backLink: { fontSize: 16, fontWeight: '700', color: palette.accent, minWidth: 72 },
   headerTitle: { fontSize: 18, fontWeight: '900', color: palette.text },
-  headerSpacer: { minWidth: 72 },
   loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   emptyWrap: { flex: 1, padding: 32, alignItems: 'center', justifyContent: 'center' },
   emptyWrapInline: { paddingVertical: 24, alignItems: 'center' },
@@ -737,6 +788,31 @@ const styles = StyleSheet.create({
   badgeEmoji: { fontSize: 28, marginBottom: 4 },
   badgeLabel: { fontSize: 13, fontWeight: '800', color: palette.text, textAlign: 'center' },
   badgeDate: { fontSize: 11, fontWeight: '600', color: palette.muted, marginTop: 2 },
+  settingsLabel: { fontSize: 14, fontWeight: '800', color: palette.text, marginBottom: 4 },
+  settingsHint: { fontSize: 13, fontWeight: '600', color: palette.muted, marginBottom: 12 },
+  reminderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  reminderChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: palette.background,
+  },
+  reminderChipSelected: {
+    borderColor: palette.accent,
+    backgroundColor: 'rgba(255, 122, 89, 0.12)',
+  },
+  reminderChipText: { fontSize: 13, fontWeight: '700', color: palette.muted },
+  reminderChipTextSelected: { color: palette.accent },
+  settingsDangerBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(248, 113, 113, 0.45)',
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  settingsDangerText: { fontSize: 14, fontWeight: '800', color: palette.red },
   currentBand: { fontSize: 28, fontWeight: '900', color: palette.text, marginBottom: 4 },
   currentBandTappable: { color: palette.accent },
   tapHint: { fontSize: 12, fontWeight: '600', color: palette.muted, marginBottom: 8 },

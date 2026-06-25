@@ -1,35 +1,54 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { StyleSheet, Text } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
-import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { progressPalette } from '@/components/progress/chart-theme';
+
+function TabIcon({ emoji }: { emoji: string }) {
+  return <Text style={styles.tabIcon}>{emoji}</Text>;
+}
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
-
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarActiveTintColor: progressPalette.accent,
+        tabBarInactiveTintColor: progressPalette.muted,
+        tabBarStyle: {
+          backgroundColor: progressPalette.surface,
+          borderTopColor: progressPalette.surfaceBorder,
+        },
+        tabBarLabelStyle: styles.tabLabel,
       }}>
       <Tabs.Screen
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
+          tabBarIcon: () => <TabIcon emoji="🏠" />,
         }}
       />
       <Tabs.Screen
-        name="explore"
+        name="progress"
         options={{
-          title: 'Explore',
-          tabBarIcon: ({ color }) => <IconSymbol size={28} name="paperplane.fill" color={color} />,
+          title: 'Progress',
+          tabBarIcon: () => <TabIcon emoji="📈" />,
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarIcon: () => <TabIcon emoji="👤" />,
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  tabIcon: { fontSize: 22, lineHeight: 26 },
+  tabLabel: { fontSize: 11, fontWeight: '700' },
+});

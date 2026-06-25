@@ -5,6 +5,7 @@ import { LevelStepsChart } from '@/components/progress/level-steps-chart';
 import { ProgressLineChart } from '@/components/progress/progress-line-chart';
 import { ProgressSummaryHeader } from '@/components/progress/progress-summary';
 import { StreakHistoryChart } from '@/components/progress/streak-history-chart';
+import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
 import { getLevelBarometer } from '@/lib/level-progress';
 import {
   buildActivityHeatmap,
@@ -16,10 +17,22 @@ import {
   trendArrow,
   type ProgressDateRange,
 } from '@/lib/progress-data';
-import { getDrillHistory, getLessonHistory } from '@/lib/practice-storage';
+import {
+  getBestDayThisWeek,
+  getDrillHistory,
+  getLessonHistory,
+  getTodayScoreInfo,
+  getTopScoreThisWeek,
+  getWeekScoreChart,
+  type DrillHistoryEntry,
+  type LessonHistoryEntry,
+  type TodayScoreInfo,
+  type WeekChartDay,
+} from '@/lib/practice-storage';
 import { getStreakState } from '@/lib/streak';
 import { buildWrappedTeaser, monthLabel } from '@/lib/wrapped-data';
 import { getUnreadWrappedMonth, getWrappedHistory } from '@/lib/wrapped-storage';
+import * as Haptics from 'expo-haptics';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useState } from 'react';
@@ -27,6 +40,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Dimensions,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -47,6 +61,18 @@ export default function ProgressScreen() {
   const [streak, setStreak] = useState<Awaited<ReturnType<typeof getStreakState>> | null>(null);
   const [wrappedHistory, setWrappedHistory] = useState<Awaited<ReturnType<typeof getWrappedHistory>>>([]);
   const [unreadWrapped, setUnreadWrapped] = useState<string | null>(null);
+  const [todaysScoreInfo, setTodaysScoreInfo] = useState<TodayScoreInfo>({
+    score: null,
+    label: "Today's score",
+    lessonEntry: null,
+    drillEntry: null,
+  });
+  const [topScoreWeek, setTopScoreWeek] = useState<number | null>(null);
+  const [bestWeekLessonEntry, setBestWeekLessonEntry] = useState<LessonHistoryEntry | null>(null);
+  const [bestWeekDrillEntry, setBestWeekDrillEntry] = useState<DrillHistoryEntry | null>(null);
+  const [weekChart, setWeekChart] = useState<WeekChartDay[]>([]);
+  const [showTodayModal, setShowTodayModal] = useState(false);
+  const [showWeekModal, setShowWeekModal] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -67,6 +93,12 @@ export default function ProgressScreen() {
           setStreak(streakState);
           setWrappedHistory(wraps);
           setUnreadWrapped(unread);
+          setTodaysScoreInfo(getTodayScoreInfo(lessonHistory, drillHistory));
+          setTopScoreWeek(getTopScoreThisWeek(lessonHistory, drillHistory));
+          const bestWeek = getBestDayThisWeek(lessonHistory, drillHistory);
+          setBestWeekLessonEntry(bestWeek?.lessonEntry ?? null);
+          setBestWeekDrillEntry(bestWeek?.drillEntry ?? null);
+          setWeekChart(getWeekScoreChart(lessonHistory, drillHistory));
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -105,14 +137,41 @@ export default function ProgressScreen() {
           { paddingBottom: Math.max(insets.bottom, 24) },
         ]}
         showsVerticalScrollIndicator={false}>
-        <Pressable onPress={() => router.back()} style={styles.backLink} accessibilityRole="button">
-          <Text style={styles.backText}>← Back</Text>
-        </Pressable>
+        <Text style={styles.pageTitle}>Progress 📈</Text>
+        <Text style={styles.pageSubtitle}>Scores, trends, and your Spanish journey</Text>
 
-        <Text style={styles.pageTitle}>My Progress 📈</Text>
-        <Text style={styles.pageSubtitle}>Score trends and activity over time</Text>
-
-        <Text style={styles.pageSubtitle}>Score trends and activity over time</Text>
+        {!loading ? (
+          <View style={styles.scoreRow}>
+            <ScoreCard
+              label={todaysScoreInfo.label}
+              value={todaysScoreInfo.score != null ? `${todaysScoreInfo.score}%` : '--'}
+              onPress={
+                todaysScoreInfo.score != null
+                  ? () => {
+                      if (Platform.OS !== 'web') {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                      setShowTodayModal(true);
+                    }
+                  : undefined
+              }
+            />
+            <ScoreCard
+              label="Top Score This Week"
+              value={topScoreWeek != null ? `${topScoreWeek}%` : '--'}
+              onPress={
+                topScoreWeek != null
+                  ? () => {
+                      if (Platform.OS !== 'web') {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      }
+                      setShowWeekModal(true);
+                    }
+                  : undefined
+              }
+            />
+          </View>
+        ) : null}
 
         {!loading && unreadWrapped ? (
           <Pressable
@@ -229,7 +288,58 @@ export default function ProgressScreen() {
           </>
         )}
       </ScrollView>
+
+      <LessonScoreBreakdownModal
+        visible={showTodayModal}
+        title="Today's Breakdown"
+        entry={todaysScoreInfo.lessonEntry}
+        drillEntry={todaysScoreInfo.drillEntry}
+        displayScore={todaysScoreInfo.score}
+        onClose={() => setShowTodayModal(false)}
+        showPracticeButton
+        enableScoreDetails
+      />
+      <LessonScoreBreakdownModal
+        visible={showWeekModal}
+        title="This Week's Best"
+        entry={bestWeekLessonEntry}
+        drillEntry={bestWeekDrillEntry}
+        displayScore={topScoreWeek}
+        onClose={() => setShowWeekModal(false)}
+        weekChart={weekChart}
+      />
     </SafeAreaView>
+  );
+}
+
+function ScoreCard({
+  label,
+  value,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  onPress?: () => void;
+}) {
+  const inner = (
+    <>
+      <Text style={styles.scoreValue}>{value}</Text>
+      <Text style={styles.scoreLabel}>{label}</Text>
+    </>
+  );
+
+  if (!onPress) {
+    return <View style={styles.scoreCard}>{inner}</View>;
+  }
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => [styles.scoreCard, styles.scoreCardTappable, pressed && styles.scoreCardPressed]}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}, ${value}`}>
+      {inner}
+    </Pressable>
   );
 }
 
@@ -253,9 +363,7 @@ function ChartSection({
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: progressPalette.background },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
-  backLink: { marginBottom: 8 },
-  backText: { fontSize: 16, fontWeight: '700', color: progressPalette.accent },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 12 },
   pageTitle: {
     fontSize: 28,
     fontWeight: '900',
@@ -266,7 +374,33 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: progressPalette.muted,
+    marginBottom: 16,
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    gap: 10,
     marginBottom: 18,
+  },
+  scoreCard: {
+    flex: 1,
+    backgroundColor: progressPalette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: progressPalette.surfaceBorder,
+    padding: 14,
+    gap: 4,
+  },
+  scoreCardTappable: { borderColor: 'rgba(255, 122, 89, 0.35)' },
+  scoreCardPressed: { opacity: 0.9 },
+  scoreValue: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: progressPalette.text,
+  },
+  scoreLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: progressPalette.muted,
   },
   wrappedPromo: {
     backgroundColor: 'rgba(167, 139, 250, 0.12)',
