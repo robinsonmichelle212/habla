@@ -4,6 +4,7 @@ import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dn
 
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
+import type { SpanishWrappedReport } from '@/lib/wrapped-data';
 import {
   READ_TEXT_TYPE_LABELS,
   type ReadComprehensionEvaluation,
@@ -895,6 +896,38 @@ import {
   type ChallengeType,
   type DailyChallengeSummaryInput,
 } from '@/lib/daily-challenge';
+
+
+export async function generateWrappedJaviMessage(report: SpanishWrappedReport): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a warm Spanish tutor. Write a personalised month-in-review message.
+Return plain text only: 2-3 sentences in Spanish, then " / ", then the same message in English.
+No markdown. Reference specific achievements from the data. Be encouraging and specific.`;
+
+  const user = `Write Javi's Spanish Wrapped message for ${report.monthLabel}.
+
+Data:
+- Lessons: ${report.totalLessons}, drills: ${report.totalDrills}, read sessions: ${report.totalReadSessions}
+- Score: started ${report.averageScoreStart}%, ended ${report.averageScoreEnd}% (+${report.improvementPercent}%)
+- Level: ${report.levelAtStart} → ${report.levelAtEnd}${report.levelledUp ? ' (levelled up!)' : ''}
+- Streak: longest ${report.longestStreakThisMonth} days, ${report.streakConsistencyPercent}% consistency
+- Vocabulary: ${report.wordsSavedThisMonth} saved, ${report.wordsMasteredThisMonth} mastered
+- Favourite lesson type: ${report.favouriteLessonType}
+- Best skill: ${report.bestSkill}, most improved: ${report.mostImprovedSkill}
+- Error patterns: persistent="${report.mostPersistentError ?? 'none'}", improved="${report.mostImprovedError ?? 'none'}"
+- Gems earned: ${report.gemsEarnedThisMonth}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 400,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  return extractText(response).trim();
+}
 
 export async function generateDailyThinkingChallenge(
   summary: DailyChallengeSummaryInput,

@@ -22,6 +22,8 @@ import { completeDailyChallenge, getTodaysChallenge, type DailyChallenge } from 
 import { getProgressionLevel } from '@/lib/level-progress';
 import { debugLogAllAsyncStorage, getStreakState } from '@/lib/streak';
 import { addGems, getTotalGems } from '@/lib/gems';
+import { monthLabel } from '@/lib/wrapped-data';
+import { ensurePreviousMonthWrapped, getUnreadWrappedMonth } from '@/lib/wrapped-storage';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 
 const palette = {
@@ -60,6 +62,7 @@ export default function HomeScreen() {
   const [dailyChallenge, setDailyChallenge] = useState<DailyChallenge | null>(null);
   const [challengeGemToast, setChallengeGemToast] = useState(0);
   const [completingChallenge, setCompletingChallenge] = useState(false);
+  const [wrappedBannerMonth, setWrappedBannerMonth] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -67,14 +70,24 @@ export default function HomeScreen() {
 
       const loadHomeData = async () => {
         try {
-          const [full, history, drills, gems, challenge] = await Promise.all([
+          const [full, history, drills, gems, challenge, unreadWrapped] = await Promise.all([
             getStreakState(),
             getLessonHistory(),
             getDrillHistory(),
             getTotalGems(),
             getTodaysChallenge(),
+            getUnreadWrappedMonth(),
           ]);
           if (cancelled) return;
+
+          if (!unreadWrapped) {
+            const created = await ensurePreviousMonthWrapped();
+            if (created && !cancelled) {
+              setWrappedBannerMonth(created.monthKey);
+            }
+          } else if (!cancelled) {
+            setWrappedBannerMonth(unreadWrapped);
+          }
 
           console.log('Streak loaded from storage:', full.currentStreak);
           console.log('Last session date loaded:', full.lastSessionDate);
@@ -158,6 +171,22 @@ export default function HomeScreen() {
         ]}
         showsVerticalScrollIndicator={false}>
         <Text style={styles.title}>Habla</Text>
+
+        {wrappedBannerMonth ? (
+          <Pressable
+            onPress={() => {
+              if (Platform.OS !== 'web') {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              }
+              router.push({ pathname: '/wrapped', params: { month: wrappedBannerMonth } });
+            }}
+            style={({ pressed }) => [styles.wrappedBanner, pressed && styles.wrappedBannerPressed]}>
+            <Text style={styles.wrappedBannerTitle}>Your Spanish Wrapped is ready 🎉</Text>
+            <Text style={styles.wrappedBannerText}>
+              See your {monthLabel(wrappedBannerMonth)} recap →
+            </Text>
+          </Pressable>
+        ) : null}
 
         <View style={styles.streakBlock}>
           <View style={styles.streakTopRow}>
@@ -481,6 +510,26 @@ const styles = StyleSheet.create({
   },
   longestLabel: {
     fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+  },
+  wrappedBanner: {
+    backgroundColor: 'rgba(167, 139, 250, 0.12)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.45)',
+    padding: 16,
+    marginBottom: 16,
+  },
+  wrappedBannerPressed: { opacity: 0.9 },
+  wrappedBannerTitle: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: '#A78BFA',
+    marginBottom: 4,
+  },
+  wrappedBannerText: {
+    fontSize: 14,
     fontWeight: '700',
     color: palette.muted,
   },

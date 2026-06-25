@@ -18,6 +18,8 @@ import {
 } from '@/lib/progress-data';
 import { getDrillHistory, getLessonHistory } from '@/lib/practice-storage';
 import { getStreakState } from '@/lib/streak';
+import { buildWrappedTeaser, monthLabel } from '@/lib/wrapped-data';
+import { getUnreadWrappedMonth, getWrappedHistory } from '@/lib/wrapped-storage';
 import { useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useState } from 'react';
@@ -43,6 +45,8 @@ export default function ProgressScreen() {
   const [lessons, setLessons] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
   const [drills, setDrills] = useState<Awaited<ReturnType<typeof getDrillHistory>>>([]);
   const [streak, setStreak] = useState<Awaited<ReturnType<typeof getStreakState>> | null>(null);
+  const [wrappedHistory, setWrappedHistory] = useState<Awaited<ReturnType<typeof getWrappedHistory>>>([]);
+  const [unreadWrapped, setUnreadWrapped] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -50,15 +54,19 @@ export default function ProgressScreen() {
       setLoading(true);
       void (async () => {
         try {
-          const [lessonHistory, drillHistory, streakState] = await Promise.all([
+          const [lessonHistory, drillHistory, streakState, wraps, unread] = await Promise.all([
             getLessonHistory(),
             getDrillHistory(),
             getStreakState(),
+            getWrappedHistory(),
+            getUnreadWrappedMonth(),
           ]);
           if (cancelled) return;
           setLessons(lessonHistory);
           setDrills(drillHistory);
           setStreak(streakState);
+          setWrappedHistory(wraps);
+          setUnreadWrapped(unread);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -83,6 +91,10 @@ export default function ProgressScreen() {
     [lessons, drills, streak],
   );
   const barometer = useMemo(() => getLevelBarometer(lessons), [lessons]);
+  const wrappedTeaser = useMemo(
+    () => buildWrappedTeaser(lessons, drills, wrappedHistory.length),
+    [lessons, drills, wrappedHistory.length],
+  );
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -99,6 +111,45 @@ export default function ProgressScreen() {
 
         <Text style={styles.pageTitle}>My Progress 📈</Text>
         <Text style={styles.pageSubtitle}>Score trends and activity over time</Text>
+
+        <Text style={styles.pageSubtitle}>Score trends and activity over time</Text>
+
+        {!loading && unreadWrapped ? (
+          <Pressable
+            onPress={() => router.push({ pathname: '/wrapped', params: { month: unreadWrapped } })}
+            style={styles.wrappedPromo}>
+            <Text style={styles.wrappedPromoTitle}>Your Spanish Wrapped is ready 🎉</Text>
+            <Text style={styles.wrappedPromoText}>Tap to open {monthLabel(unreadWrapped)}</Text>
+          </Pressable>
+        ) : null}
+
+        {!loading && wrappedTeaser && wrappedHistory.length === 0 && !unreadWrapped ? (
+          <View style={styles.wrappedTeaser}>
+            <Text style={styles.wrappedTeaserTitle}>Your first Wrapped is coming</Text>
+            <Text style={styles.wrappedTeaserText}>
+              {wrappedTeaser.hasActivity
+                ? `Ready on 1st ${wrappedTeaser.nextWrapLabel} — ${wrappedTeaser.daysUntil} days to go`
+                : 'Complete your first lesson to start building your monthly recap'}
+            </Text>
+          </View>
+        ) : null}
+
+        {!loading && wrappedHistory.length > 0 ? (
+          <View style={styles.wrappedHistorySection}>
+            <Text style={styles.wrappedHistoryTitle}>Previous Wraps</Text>
+            {wrappedHistory.map((w) => (
+              <Pressable
+                key={w.monthKey}
+                onPress={() => router.push({ pathname: '/wrapped', params: { month: w.monthKey } })}
+                style={styles.wrappedHistoryRow}>
+                <Text style={styles.wrappedHistoryMonth}>{w.monthLabel}</Text>
+                <Text style={styles.wrappedHistoryMeta}>
+                  {w.totalLessons} lessons · +{w.improvementPercent}% · {w.levelAtEnd}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        ) : null}
 
         {loading ? (
           <View style={styles.loadingWrap}>
@@ -217,6 +268,43 @@ const styles = StyleSheet.create({
     color: progressPalette.muted,
     marginBottom: 18,
   },
+  wrappedPromo: {
+    backgroundColor: 'rgba(167, 139, 250, 0.12)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(167, 139, 250, 0.45)',
+    padding: 16,
+    marginBottom: 14,
+  },
+  wrappedPromoTitle: { fontSize: 16, fontWeight: '900', color: '#A78BFA', marginBottom: 4 },
+  wrappedPromoText: { fontSize: 14, fontWeight: '700', color: progressPalette.muted },
+  wrappedTeaser: {
+    backgroundColor: progressPalette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: progressPalette.surfaceBorder,
+    padding: 16,
+    marginBottom: 14,
+  },
+  wrappedTeaserTitle: { fontSize: 15, fontWeight: '900', color: progressPalette.text, marginBottom: 6 },
+  wrappedTeaserText: { fontSize: 14, fontWeight: '600', color: progressPalette.muted, lineHeight: 20 },
+  wrappedHistorySection: { marginBottom: 20, gap: 8 },
+  wrappedHistoryTitle: {
+    fontSize: 17,
+    fontWeight: '900',
+    color: progressPalette.text,
+    marginBottom: 4,
+  },
+  wrappedHistoryRow: {
+    backgroundColor: progressPalette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: progressPalette.surfaceBorder,
+    padding: 14,
+    gap: 4,
+  },
+  wrappedHistoryMonth: { fontSize: 15, fontWeight: '900', color: progressPalette.text },
+  wrappedHistoryMeta: { fontSize: 13, fontWeight: '600', color: progressPalette.muted },
   loadingWrap: { paddingVertical: 60, alignItems: 'center' },
   section: { marginBottom: 20 },
   sectionTitle: {

@@ -47,6 +47,13 @@
         }
       ],
       [
+        "expo-media-library",
+        {
+          "photosPermission": "Habla saves your Spanish Wrapped share card to your photo library.",
+          "savePhotosPermission": "Habla saves your Spanish Wrapped share card to your photo library."
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
