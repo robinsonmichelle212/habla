@@ -1,5 +1,13 @@
+export const READY_FOR_WRITING_MARKER = '[READY_FOR_WRITING]';
+
+export function stripReadyForWritingMarker(text: string): { text: string; ready: boolean } {
+  const ready = text.includes(READY_FOR_WRITING_MARKER);
+  const cleaned = text.replace(/\s*\[READY_FOR_WRITING\]\s*/g, '').trim();
+  return { text: cleaned, ready };
+}
+
 export function parseJaviResponse(fullText: string): { spanish: string; translation?: string } {
-  const raw = fullText.trim();
+  const raw = stripReadyForWritingMarker(fullText).text.trim();
   if (!raw) return { spanish: '(Sin respuesta)' };
 
   const lines = raw.split(/\r?\n/);

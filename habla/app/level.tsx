@@ -1,8 +1,6 @@
 import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
 import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
-import { LevelBarometerSection } from '@/components/level-barometer-section';
-import { LevelDetailModal } from '@/components/level-detail-modal';
 import { MilestonesSection } from '@/components/milestones-section';
 import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
 import {
@@ -37,16 +35,11 @@ import {
 } from '@/lib/saved-vocabulary';
 import {
   averageScoreForTopic,
-  getLevelBarometer,
-  getNextLevelRequirements,
-  type LevelBandId,
-  type SkillSnapshot,
 } from '@/lib/level-progress';
 import {
   getCoveredVocabThemes,
   getLessonHistory,
 } from '@/lib/practice-storage';
-import { getProfileBadges, type ProfileBadge } from '@/lib/profile-badges';
 import {
   formatReminderTimeLabel,
   getReminderTime,
@@ -91,12 +84,6 @@ function scoreColor(score: number | null): string {
   return palette.red;
 }
 
-function skillColor(status: SkillSnapshot['status']): string {
-  if (status === 'strong') return palette.green;
-  if (status === 'needs-work') return palette.amber;
-  return palette.red;
-}
-
 export default function LevelScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -104,8 +91,6 @@ export default function LevelScreen() {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [culturalNoteCount, setCulturalNoteCount] = useState(0);
   const [milestonesAchieved, setMilestonesAchieved] = useState(0);
-  const [barometer, setBarometer] = useState<ReturnType<typeof getLevelBarometer>>(null);
-  const [nextReq, setNextReq] = useState<ReturnType<typeof getNextLevelRequirements>>(null);
   const [grammarCurriculum, setGrammarCurriculum] = useState<GrammarCurriculumState | null>(null);
   const [vocabCovered, setVocabCovered] = useState<Set<string>>(new Set());
   const [yourDayCovered, setYourDayCovered] = useState<Set<string>>(new Set());
@@ -114,10 +99,8 @@ export default function LevelScreen() {
   const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
   const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
-  const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
-  const [profileBadges, setProfileBadges] = useState<ProfileBadge[]>([]);
   const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
 
   useFocusEffect(
@@ -146,7 +129,6 @@ export default function LevelScreen() {
             words,
             activeErrors,
             archivedErrors,
-            badges,
             reminder,
             culturalNotes,
             milestoneHistory,
@@ -159,7 +141,6 @@ export default function LevelScreen() {
             getSavedVocabulary(),
             getErrorDNA(),
             getArchivedErrorDNA(),
-            getProfileBadges(),
             getReminderTime(),
             getCulturalNotes(),
             getMilestoneHistory(),
@@ -177,13 +158,10 @@ export default function LevelScreen() {
           setGrammarCurriculum(curriculum);
           setVocabCovered(vocabSet);
           setYourDayCovered(yourDaySet);
-          setBarometer(getLevelBarometer(lessonHistory));
-          setNextReq(getNextLevelRequirements(lessonHistory));
           setVocabStats(stats);
           setSavedWords(words);
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
-          setProfileBadges(badges);
           setReminderTimeState(reminder);
           setCulturalNoteCount(culturalNotes.length);
           const achievedIds = new Set(
@@ -217,9 +195,6 @@ export default function LevelScreen() {
   const vocabCoveredCount = VOCAB_THEMES.filter((t) => isCovered(t, vocabCovered)).length;
   const yourDayCoveredCount = YOUR_DAY_TOPICS.filter((t) => isCovered(t, yourDayCovered)).length;
   const grammarDaysLeft = grammarCurriculum ? daysRemainingInWeek(grammarCurriculum) : 0;
-  const levelSummary = barometer
-    ? `${barometer.band.label} — ${barometer.progressInBand}% through band`
-    : 'Complete lessons to see your level';
   const errorDnaSummary =
     errorDna.length > 0
       ? `${errorDna.length} recurring pattern${errorDna.length === 1 ? '' : 's'} tracked`
@@ -259,32 +234,6 @@ export default function LevelScreen() {
               <Text style={styles.resetSuccessText}>Curriculum reset to Week 1 ✅</Text>
             </View>
           ) : null}
-
-          <CollapsibleProfileSection
-            title="Current Level & Barometer"
-            summary={levelSummary}
-            expanded={!!expandedSections.level}
-            onToggle={() => toggleSection('level')}>
-            {barometer ? (
-              <>
-                <LevelBarometerSection
-                  barometer={barometer}
-                  onSelectBand={setSelectedBandId}
-                  hideTitle
-                  embedded
-                />
-                {nextReq ? <NextLevelSection requirements={nextReq} embedded /> : null}
-                {profileBadges.length > 0 ? (
-                  <ProfileBadgesSection badges={profileBadges} />
-                ) : null}
-              </>
-            ) : (
-              <View style={styles.emptyWrapInline}>
-                <Text style={styles.emptyTitle}>No level data yet</Text>
-                <Text style={styles.emptyText}>Complete a few lessons to see your progression.</Text>
-              </View>
-            )}
-          </CollapsibleProfileSection>
 
           <CollapsibleProfileSection
             title="Error DNA 🧬"
@@ -367,18 +316,6 @@ export default function LevelScreen() {
         </ScrollView>
       )}
 
-      {barometer ? (
-        <LevelDetailModal
-          visible={selectedBandId != null}
-          bandId={selectedBandId}
-          currentBandIndex={barometer.bandIndex}
-          currentAverage={barometer.averageScore}
-          history={history}
-          nextRequirements={nextReq}
-          onClose={() => setSelectedBandId(null)}
-        />
-      ) : null}
-
       <ResetCurriculumModal
         visible={showResetModal}
         onConfirm={confirmResetCurriculum}
@@ -434,25 +371,6 @@ function SettingsSection({
         <Pressable onPress={onResetCurriculum} style={styles.settingsDangerBtn}>
           <Text style={styles.settingsDangerText}>Reset grammar curriculum</Text>
         </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function ProfileBadgesSection({ badges }: { badges: ProfileBadge[] }) {
-  return (
-    <View style={styles.section}>
-      <Text style={styles.sectionTitle}>Badges</Text>
-      <View style={styles.card}>
-        <View style={styles.badgeRow}>
-          {badges.map((badge) => (
-            <View key={badge.id} style={styles.badgePill}>
-              <Text style={styles.badgeEmoji}>{badge.emoji}</Text>
-              <Text style={styles.badgeLabel}>{badge.label}</Text>
-              <Text style={styles.badgeDate}>{badge.earnedAt}</Text>
-            </View>
-          ))}
-        </View>
       </View>
     </View>
   );
@@ -536,52 +454,6 @@ function YourDaySection({
             );
           })}
         </View>
-      </View>
-    </View>
-  );
-}
-
-function NextLevelSection({
-  requirements,
-  embedded = false,
-}: {
-  requirements: NonNullable<ReturnType<typeof getNextLevelRequirements>>;
-  embedded?: boolean;
-}) {
-  return (
-    <View style={embedded ? styles.embeddedBlock : styles.section}>
-      {!embedded ? <Text style={styles.sectionTitle}>What you need for next level</Text> : null}
-      <View style={styles.card}>
-        <View style={styles.statGrid}>
-          <StatBox label="Current avg" value={`${requirements.currentAverage}%`} />
-          <StatBox label="Target avg" value={`${requirements.targetAverage}%`} />
-          <StatBox
-            label="Gap to close"
-            value={`${requirements.gap}%`}
-            valueColor={requirements.gap > 0 ? palette.amber : palette.green}
-          />
-        </View>
-        {requirements.estimatedSessions != null && requirements.gap > 0 ? (
-          <Text style={styles.estimateText}>
-            At your current pace, about {requirements.estimatedSessions} more session
-            {requirements.estimatedSessions === 1 ? '' : 's'} to reach the next band.
-          </Text>
-        ) : requirements.gap > 0 ? (
-          <Text style={styles.estimateText}>
-            Keep completing lessons — we need a few more sessions to estimate your pace.
-          </Text>
-        ) : (
-          <Text style={[styles.estimateText, { color: palette.green }]}>
-            You&apos;ve reached the top band. Brilliant work!
-          </Text>
-        )}
-        <Text style={styles.skillsHeader}>Skills to focus on</Text>
-        {requirements.skillsToImprove.map((skill) => (
-          <View key={skill.skill} style={styles.skillRow}>
-            <Text style={[styles.skillName, { color: skillColor(skill.status) }]}>{skill.skill}</Text>
-            <Text style={[styles.skillAvg, { color: skillColor(skill.status) }]}>{skill.average}%</Text>
-          </View>
-        ))}
       </View>
     </View>
   );

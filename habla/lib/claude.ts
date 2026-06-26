@@ -113,7 +113,7 @@ PHASE 1 — EXPLAIN (warm-up messages):
 - Explain WHY Spanish works this way, not just the rule.
 - Use clear English and Spanish examples side by side.
 - Keep each message to 2 short Spanish sentences + Translate: line.
-- Do NOT drill yet — teach the concept simply in ~4 messages.
+- Do NOT drill yet — teach the concept fully before the writing task.
 - Stay on this structure topic only for the whole lesson.`;
     case 'read':
       return `READ WITH JAVI — Text type: ${focus.textTypeLabel}
@@ -380,7 +380,24 @@ LESSON PHASE: WARM-UP (written exchange only).
 - Greet the learner and introduce today's topic and focus clearly.
 - Highlight key verbs, vocabulary, and/or structures they should use today.
 - Keep each message to 2 short Spanish sentences maximum, then Translate: line.
-- Be warm and practical — this prepares them for writing and speaking later.`;
+- Be warm and practical — this prepares them for writing and speaking later.
+
+Before the writing task you must cover (across multiple messages, no rush):
+1) Why this topic matters — when and why it is used.
+2) How it works — explain the pattern with at least 3 clear example sentences (each with Translate: line).
+3) One simple comprehension-check question to the learner.
+4) After they answer, confirm understanding and readiness.
+
+Minimum: at least 5 of your warm-up messages before signalling completion. No maximum — continue until the concept is fully explained.
+
+COMPLETION SIGNAL:
+When you have fully explained the concept with all necessary examples and the user is ready to attempt the writing task, end your final Phase 1 message with exactly this marker on its own line:
+[READY_FOR_WRITING]
+Do not use this marker until you have:
+- Explained when and why this tense/topic is used
+- Given at least 3 clear examples
+- Checked understanding with one simple question
+- Confirmed the user is ready to proceed`;
 
 const SPEAKING_PHASE_APPENDIX = `
 LESSON PHASE: SPEAKING (voice only — learner listens to you).
@@ -398,8 +415,8 @@ export async function generateWarmUpOpening(
 
   const openingPrompt =
     focus.kind === 'structure'
-      ? `Start the warm-up. Message 1 of 4. Explain today's structure point (${focus.topic.title}): ${focus.topic.summary}. Use clear English and Spanish examples. Explain WHY, not just the rule. End with Translate: line.`
-      : 'Start the warm-up. Message 1 of 4. Introduce today\'s topic, focus area, and 2–3 verbs or structures to practise. End with Translate: line.';
+      ? `Start the warm-up. Explain why today's structure point matters (${focus.topic.title}): ${focus.topic.summary}. Use clear English and Spanish examples. Explain WHY, not just the rule. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
+      : 'Start the warm-up. Introduce today\'s topic, explain why it matters, and highlight 2–3 verbs or structures to practise. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.';
 
   const response = await anthropic.messages.create({
     model,
@@ -426,17 +443,18 @@ export async function askJaviWarmUp(
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
-  const target = 4;
+  const nextMessage = javiMessageNumber + 1;
+  const minMessages = 5;
+  const progressHint =
+    javiMessageNumber < minMessages
+      ? `You have sent ${javiMessageNumber} warm-up message(s). You need at least ${minMessages} before [READY_FOR_WRITING]. Continue teaching with examples and questions — this is message ${nextMessage}.`
+      : `You have sent ${javiMessageNumber} warm-up message(s). If you have covered why the topic matters, given at least 3 examples, asked a comprehension question, and confirmed the learner is ready, you may end this message with [READY_FOR_WRITING]. Otherwise keep teaching — message ${nextMessage}.`;
 
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
     system: `${buildSystemPrompt(lessonType, focus, topErrors)}${WARMUP_PHASE_APPENDIX}
-You have sent ${javiMessageNumber} message(s) so far. Send warm-up message ${javiMessageNumber + 1} of about ${target}. ${
-      javiMessageNumber >= target - 1
-        ? 'This should be your final warm-up message — summarise what to focus on and encourage them for the writing task.'
-        : 'Introduce another useful verb, structure, or vocabulary item for today.'
-    }`,
+${progressHint}`,
     messages: [
       ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
       { role: 'user' as const, content: userMessage.trim() },

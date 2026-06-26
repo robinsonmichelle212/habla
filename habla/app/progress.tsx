@@ -5,6 +5,7 @@ import { ProgressLineChart } from '@/components/progress/progress-line-chart';
 import { ProgressSummaryHeader } from '@/components/progress/progress-summary';
 import { StreakHistoryChart } from '@/components/progress/streak-history-chart';
 import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
+import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
 import { LevelBarometerSection } from '@/components/level-barometer-section';
 import { MilestonesSection } from '@/components/milestones-section';
 import { LevelDetailModal } from '@/components/level-detail-modal';
@@ -75,6 +76,13 @@ export default function ProgressScreen() {
   const [weekChart, setWeekChart] = useState<WeekChartDay[]>([]);
   const [showTodayModal, setShowTodayModal] = useState(false);
   const [showWeekModal, setShowWeekModal] = useState(false);
+  const [levelExpanded, setLevelExpanded] = useState(false);
+
+  useFocusEffect(
+    useCallback(() => {
+      setLevelExpanded(false);
+    }, []),
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -129,6 +137,9 @@ export default function ProgressScreen() {
     () => buildWrappedTeaser(lessons, drills, wrappedHistory.length),
     [lessons, drills, wrappedHistory.length],
   );
+  const levelSummary = barometer
+    ? `${barometer.band.label} — ${barometer.progressInBand}% through band`
+    : 'Complete lessons to see your level';
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -219,10 +230,18 @@ export default function ProgressScreen() {
             ) : null}
 
             {barometer ? (
-              <LevelBarometerSection
-                barometer={barometer}
-                onSelectBand={setSelectedBandId}
-              />
+              <CollapsibleProfileSection
+                title="Level & Barometer"
+                summary={levelSummary}
+                expanded={levelExpanded}
+                onToggle={() => setLevelExpanded((v) => !v)}>
+                <LevelBarometerSection
+                  barometer={barometer}
+                  onSelectBand={setSelectedBandId}
+                  hideTitle
+                  embedded
+                />
+              </CollapsibleProfileSection>
             ) : null}
 
             <MilestonesSection />

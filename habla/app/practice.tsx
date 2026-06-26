@@ -17,13 +17,20 @@ import {
   generateWordOrderDrillQuestions,
   type PrioritizedWeakAreaInput,
 } from '@/lib/claude';
-import { getTopErrorDNA, getWordOrderErrorDNA, hasWordOrderPatterns } from '@/lib/error-dna';
+import { getTopErrorDNA, getWordOrderErrorDNA } from '@/lib/error-dna';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
+import {
+  DRILL_OVERRIDE_OPTIONS,
+  drillSelectionForOverride,
+  selectPracticeDrill,
+  type DrillSelection,
+  type PracticeDrillKind,
+} from '@/lib/practice-drill-selection';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
 import { checkStreakMilestones, milestonesAfterDrill } from '@/lib/milestones';
-import { buildPriorityWeakAreas, appendDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
+import { buildPriorityWeakAreas, appendDrillHistory, getDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
 import { formatWordOrderQuestionType, recordWordOrderDrillMistakes } from '@/lib/word-order-drill';
 import { syncStreakReminder } from '@/lib/streak-notifications';
@@ -65,15 +72,6 @@ const palette = {
 const TOTAL_QUESTIONS = 10;
 const AUTO_ADVANCE_MS = 2000;
 
-type PracticeDrillKind = 'grammar' | 'vocabulary' | 'fluency' | 'word-order';
-
-const DRILL_OPTIONS: { id: PracticeDrillKind; label: string; emoji: string; hint: string }[] = [
-  { id: 'grammar', label: 'Grammar', emoji: '📐', hint: 'Curriculum tense drills' },
-  { id: 'vocabulary', label: 'Vocabulary', emoji: '📚', hint: 'Weak areas + saved words' },
-  { id: 'fluency', label: 'Fluency', emoji: '🗣️', hint: 'Natural phrases & flow' },
-  { id: 'word-order', label: 'Word Order 🔀', emoji: '🔀', hint: 'Sentence structure order' },
-];
-
 function parseDrillParam(value: string | undefined): PracticeDrillKind | null {
   if (value === 'grammar' || value === 'vocabulary' || value === 'fluency' || value === 'word-order') {
     return value;
@@ -107,8 +105,10 @@ export default function PracticeScreen() {
   const [recentLessonCount, setRecentLessonCount] = useState(0);
   const [loadingWeakAreas, setLoadingWeakAreas] = useState(true);
   const [weakAreasError, setWeakAreasError] = useState<string | null>(null);
-  const [selectedDrill, setSelectedDrill] = useState<PracticeDrillKind | null>(initialDrill);
-  const [wordOrderSuggested, setWordOrderSuggested] = useState(false);
+  const [javiDrillSelection, setJaviDrillSelection] = useState<DrillSelection | null>(null);
+  const [grammarTopicHint, setGrammarTopicHint] = useState<string | undefined>();
+  const [manualDrillOverride, setManualDrillOverride] = useState<PracticeDrillKind | null>(initialDrill);
+  const [showDrillOverride, setShowDrillOverride] = useState(false);
 
   const [stage, setStage] = useState<ScreenStage>('choose');
   const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
@@ -131,10 +131,20 @@ export default function PracticeScreen() {
   const correctCount = results.filter((r) => r.correct).length;
   const wrongResults = results.filter((r) => !r.correct);
 
+  const displayDrillSelection = useMemo((): DrillSelection | null => {
+    if (manualDrillOverride) {
+      const override = drillSelectionForOverride(manualDrillOverride, grammarTopicHint);
+      return { drill: manualDrillOverride, ...override };
+    }
+    return javiDrillSelection;
+  }, [manualDrillOverride, grammarTopicHint, javiDrillSelection]);
+
   const prioritizedForPrompt = useMemo<PrioritizedWeakAreaInput[]>(
     () => priorityWeakAreas.map((item) => ({ label: item.label, frequency: item.frequency })),
     [priorityWeakAreas],
   );
+
+  const activeDrillKind = displayDrillSelection?.drill ?? 'grammar';
 
   const goHome = () => {
     if (Platform.OS !== 'web') {
@@ -153,10 +163,17 @@ export default function PracticeScreen() {
   useEffect(() => {
     let cancelled = false;
     setLoadingWeakAreas(true);
-    getLessonHistory()
-      .then((res) => {
+    void (async () => {
+      try {
+        const [history, wordOrderErrors, drillHistory, curriculum] = await Promise.all([
+          getLessonHistory(),
+          getWordOrderErrorDNA(),
+          getDrillHistory(),
+          resolveGrammarCurriculum(),
+        ]);
         if (cancelled) return;
-        const recent = res.slice(-3);
+
+        const recent = history.slice(-3);
         let ranked = buildPriorityWeakAreas(recent).slice(0, 3);
         const focusTopic = typeof topic === 'string' ? topic.trim() : '';
         if (focusTopic) {
@@ -165,38 +182,37 @@ export default function PracticeScreen() {
             ...ranked.filter((r) => r.label.toLowerCase() !== focusTopic.toLowerCase()),
           ].slice(0, 3);
         }
+
+        const weekDef = getWeekDefinition(curriculum.currentWeek);
+        setGrammarTopicHint(weekDef.topic);
         setRecentLessonCount(recent.length);
         setPriorityWeakAreas(ranked);
         setWeakAreasError(ranked.length ? null : 'No weak areas saved yet.');
-      })
-      .catch(() => {
+        setJaviDrillSelection(
+          selectPracticeDrill({
+            weakAreas: ranked,
+            recentLessons: recent,
+            wordOrderErrors,
+            rotateIndex: drillHistory.length,
+            grammarTopicHint: weekDef.topic,
+          }),
+        );
+      } catch {
         if (cancelled) return;
         setPriorityWeakAreas([]);
         setRecentLessonCount(0);
         setWeakAreasError('Could not load weak areas.');
-      })
-      .finally(() => {
+        setJaviDrillSelection(null);
+      } finally {
         if (!cancelled) setLoadingWeakAreas(false);
-      });
+      }
+    })();
+
     return () => {
       cancelled = true;
       clearAdvanceTimer();
     };
   }, [topic]);
-
-  useEffect(() => {
-    let cancelled = false;
-    hasWordOrderPatterns()
-      .then((has) => {
-        if (!cancelled) setWordOrderSuggested(has);
-      })
-      .catch(() => {
-        if (!cancelled) setWordOrderSuggested(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   const resetDrillState = () => {
     clearAdvanceTimer();
@@ -215,24 +231,24 @@ export default function PracticeScreen() {
   };
 
   const startQuickFire = useCallback(async (drillKind: PracticeDrillKind) => {
-    const needsWeakAreas = drillKind === 'vocabulary' || drillKind === 'fluency';
+    let effectiveDrill = drillKind;
+    const needsWeakAreas = effectiveDrill === 'vocabulary' || effectiveDrill === 'fluency';
 
     if (needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length)) {
-      Alert.alert('Practice not ready', 'Complete a lesson first to unlock targeted practice.');
-      return;
+      if (loadingWeakAreas) return;
+      effectiveDrill = 'grammar';
     }
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
-    activeDrillRef.current = drillKind;
-    setSelectedDrill(drillKind);
+    activeDrillRef.current = effectiveDrill;
     resetDrillState();
     setStage('loading');
 
     try {
-      if (drillKind === 'word-order') {
+      if (effectiveDrill === 'word-order') {
         const wordOrderTargets = (await getWordOrderErrorDNA()).slice(0, 2);
         const wordOrderBatch = await generateWordOrderDrillQuestions(TOTAL_QUESTIONS, wordOrderTargets);
 
@@ -251,7 +267,7 @@ export default function PracticeScreen() {
 
       const errorDnaTargets = await getTopErrorDNA(2);
 
-      if (drillKind === 'grammar') {
+      if (effectiveDrill === 'grammar') {
         const curriculum = await resolveGrammarCurriculum();
         const weekDef = getWeekDefinition(curriculum.currentWeek);
         const grammarBatch = await generateQuickFireQuestions([], TOTAL_QUESTIONS, {
@@ -274,7 +290,7 @@ export default function PracticeScreen() {
         return;
       }
 
-      if (drillKind === 'fluency') {
+      if (effectiveDrill === 'fluency') {
         const fluencyBatch = await generateFluencyDrillQuestions(
           prioritizedForPrompt,
           TOTAL_QUESTIONS,
@@ -326,10 +342,10 @@ export default function PracticeScreen() {
       void startQuickFire(autoDrill);
       return;
     }
-    if (loadingWeakAreas || !priorityWeakAreas.length) return;
+    if (loadingWeakAreas) return;
     didAutoStartRef.current = true;
     void startQuickFire(autoDrill);
-  }, [drill, loadingWeakAreas, priorityWeakAreas.length, startQuickFire]);
+  }, [drill, loadingWeakAreas, startQuickFire]);
 
   const finishDrill = useCallback((finalResults: AnswerRecord[]) => {
     const finalScore = finalResults.filter((r) => r.correct).length;
@@ -528,24 +544,30 @@ export default function PracticeScreen() {
               <Text style={styles.pageTitle}>Practice Mode</Text>
               <Text style={styles.subtitle}>Quick fire · 10 questions</Text>
 
-              <View style={styles.card}>
-                <Text style={styles.cardTitle}>Priority weak areas</Text>
-                {loadingWeakAreas ? (
-                  <ActivityIndicator color={palette.muted} />
-                ) : priorityWeakAreas.length ? (
-                  <View style={styles.chipsWrap}>
-                    {priorityWeakAreas.map((w, i) => (
-                      <View
-                        key={`${w.label}-${i}`}
-                        style={[styles.chip, i === 0 ? styles.chipBlue : styles.chipBorder]}>
-                        <Text style={styles.chipText}>
-                          {w.frequency >= 3 ? '🔴' : w.frequency === 2 ? '🟡' : '🟢'} {w.label}
-                        </Text>
-                      </View>
-                    ))}
-                  </View>
+              <View style={styles.javiNoticeCard}>
+                {loadingWeakAreas || !displayDrillSelection ? (
+                  <ActivityIndicator color={palette.gem} />
                 ) : (
-                  <Text style={styles.emptyText}>{weakAreasError ?? '—'}</Text>
+                  <>
+                    <Text style={styles.javiNoticeTitle}>Javi noticed some areas need work 🎯</Text>
+                    <Text style={styles.javiNoticeTopic}>{displayDrillSelection.topicLabel}</Text>
+                    <Text style={styles.javiNoticeReason}>{displayDrillSelection.reason}</Text>
+                    {priorityWeakAreas.length ? (
+                      <View style={styles.chipsWrap}>
+                        {priorityWeakAreas.map((w, i) => (
+                          <View
+                            key={`${w.label}-${i}`}
+                            style={[styles.chip, i === 0 ? styles.chipBlue : styles.chipBorder]}>
+                            <Text style={styles.chipText}>
+                              {w.frequency >= 3 ? '🔴' : w.frequency === 2 ? '🟡' : '🟢'} {w.label}
+                            </Text>
+                          </View>
+                        ))}
+                      </View>
+                    ) : (
+                      <Text style={styles.javiNoticeEmpty}>{weakAreasError ?? '—'}</Text>
+                    )}
+                  </>
                 )}
               </View>
 
@@ -558,64 +580,54 @@ export default function PracticeScreen() {
                 </View>
               ) : null}
 
-              {wordOrderSuggested ? (
-                <Pressable
-                  onPress={() => void startQuickFire('word-order')}
-                  style={({ pressed }) => [
-                    styles.wordOrderSuggestionCard,
-                    pressed && styles.wordOrderSuggestionPressed,
-                  ]}>
-                  <Text style={styles.wordOrderSuggestionText}>
-                    Javi noticed some word order patterns — want to drill those? 🔀
-                  </Text>
-                </Pressable>
+              {showDrillOverride ? (
+                <View style={styles.overrideList}>
+                  {DRILL_OVERRIDE_OPTIONS.map((option) => {
+                    const needsWeakAreas = option.id === 'vocabulary' || option.id === 'fluency';
+                    const disabled = needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length);
+                    const isSelected = activeDrillKind === option.id;
+                    return (
+                      <Pressable
+                        key={option.id}
+                        onPress={() => {
+                          if (disabled) return;
+                          setManualDrillOverride(option.id);
+                          setShowDrillOverride(false);
+                          if (Platform.OS !== 'web') {
+                            Haptics.selectionAsync();
+                          }
+                        }}
+                        disabled={disabled}
+                        style={({ pressed }) => [
+                          styles.overrideRow,
+                          isSelected && styles.overrideRowSelected,
+                          disabled && styles.overrideRowDisabled,
+                          pressed && !disabled && styles.overrideRowPressed,
+                        ]}>
+                        <Text style={styles.overrideEmoji}>{option.emoji}</Text>
+                        <Text style={styles.overrideLabel}>{option.label}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
               ) : null}
 
-              <Text style={styles.drillPickerTitle}>Choose a drill</Text>
-              <View style={styles.drillGrid}>
-                {DRILL_OPTIONS.map((option) => {
-                  const needsWeakAreas = option.id === 'vocabulary' || option.id === 'fluency';
-                  const disabled = needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length);
-                  const isSelected = selectedDrill === option.id;
-                  return (
-                    <Pressable
-                      key={option.id}
-                      onPress={() => {
-                        setSelectedDrill(option.id);
-                        if (Platform.OS !== 'web') {
-                          Haptics.selectionAsync();
-                        }
-                      }}
-                      disabled={disabled}
-                      style={({ pressed }) => [
-                        styles.drillCard,
-                        isSelected && styles.drillCardSelected,
-                        disabled && styles.drillCardDisabled,
-                        pressed && !disabled && styles.drillCardPressed,
-                      ]}>
-                      <Text style={styles.drillEmoji}>{option.emoji}</Text>
-                      <Text style={styles.drillLabel}>{option.label}</Text>
-                      <Text style={styles.drillHint}>{option.hint}</Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
               <Pressable
-                onPress={() => {
-                  if (!selectedDrill) {
-                    Alert.alert('Pick a drill', 'Choose Grammar, Vocabulary, Fluency, or Word Order first.');
-                    return;
-                  }
-                  void startQuickFire(selectedDrill);
-                }}
-                disabled={!selectedDrill}
+                onPress={() => void startQuickFire(activeDrillKind)}
+                disabled={loadingWeakAreas || !displayDrillSelection}
                 style={({ pressed }) => [
                   styles.startButton,
                   pressed && styles.startButtonPressed,
-                  !selectedDrill && styles.startButtonDisabled,
+                  (loadingWeakAreas || !displayDrillSelection) && styles.startButtonDisabled,
                 ]}>
-                <Text style={styles.startButtonText}>Start Quick Fire</Text>
+                <Text style={styles.startButtonText}>Start Drill ▶️</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => setShowDrillOverride((v) => !v)}
+                style={styles.overrideLinkBtn}
+                accessibilityRole="button">
+                <Text style={styles.overrideLinkText}>Choose a different drill →</Text>
               </Pressable>
             </>
           ) : null}
@@ -845,56 +857,76 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   patternHintText: { fontSize: 13, fontWeight: '700', color: palette.muted, lineHeight: 18 },
-  wordOrderSuggestionCard: {
+  javiNoticeCard: {
     backgroundColor: 'rgba(167, 139, 250, 0.12)',
     borderRadius: 14,
     borderWidth: 1,
     borderColor: 'rgba(167, 139, 250, 0.45)',
     padding: 14,
     marginBottom: 14,
+    gap: 8,
   },
-  wordOrderSuggestionPressed: { opacity: 0.88 },
-  wordOrderSuggestionText: {
-    fontSize: 14,
-    fontWeight: '800',
+  javiNoticeTitle: {
+    fontSize: 15,
+    fontWeight: '900',
     color: palette.gem,
+    lineHeight: 21,
+    textAlign: 'center',
+  },
+  javiNoticeTopic: {
+    fontSize: 16,
+    fontWeight: '900',
+    color: palette.text,
+    lineHeight: 22,
+    textAlign: 'center',
+  },
+  javiNoticeReason: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
     lineHeight: 20,
     textAlign: 'center',
   },
-  drillPickerTitle: {
+  javiNoticeEmpty: {
     fontSize: 13,
-    fontWeight: '800',
+    fontWeight: '600',
     color: palette.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 10,
+    textAlign: 'center',
   },
-  drillGrid: {
+  overrideLinkBtn: {
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    marginTop: 4,
+  },
+  overrideLinkText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.muted,
+  },
+  overrideList: {
+    gap: 8,
+    marginBottom: 14,
+  },
+  overrideRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
     gap: 10,
-    marginBottom: 16,
-  },
-  drillCard: {
-    width: '48%',
-    flexGrow: 1,
-    minWidth: '46%',
     backgroundColor: palette.surface,
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    padding: 14,
-    gap: 4,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
   },
-  drillCardSelected: {
-    borderColor: palette.accent,
-    backgroundColor: 'rgba(255, 122, 89, 0.08)',
+  overrideRowSelected: {
+    borderColor: palette.gem,
+    backgroundColor: 'rgba(167, 139, 250, 0.08)',
   },
-  drillCardDisabled: { opacity: 0.45 },
-  drillCardPressed: { opacity: 0.9 },
-  drillEmoji: { fontSize: 22, marginBottom: 2 },
-  drillLabel: { fontSize: 15, fontWeight: '900', color: palette.text },
-  drillHint: { fontSize: 11, fontWeight: '600', color: palette.muted, lineHeight: 15 },
+  overrideRowDisabled: { opacity: 0.45 },
+  overrideRowPressed: { opacity: 0.9 },
+  overrideEmoji: { fontSize: 18 },
+  overrideLabel: { fontSize: 15, fontWeight: '800', color: palette.text },
   startButton: {
     backgroundColor: palette.accent,
     borderRadius: 16,

@@ -19,7 +19,7 @@ import {
   type SpeakingAttempt1Json,
   type SpeakingAttempt2Json,
 } from '@/lib/claude';
-import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
+import { parseJaviResponse, safeSpanish, stripReadyForWritingMarker } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
 import { mergeErrorDnaFromLesson, getTopErrorsForLesson, type ErrorDNAItem } from '@/lib/error-dna';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
@@ -109,7 +109,7 @@ const LESSON_OPTIONS: { id: LessonKind; label: string; subtitle?: string }[] = [
   },
 ];
 
-const WARMUP_JAVI_TARGET = 4;
+const WARMUP_SKIP_AFTER_MESSAGES = 5;
 const HEARD_TRANSCRIPT_MS = 5000;
 const PHASE_SUMMARY_MS = 2000;
 
@@ -157,6 +157,7 @@ export default function LessonScreen() {
   const [warmUpMessages, setWarmUpMessages] = useState<ChatMessage[]>([]);
   const [warmUpInput, setWarmUpInput] = useState('');
   const [warmUpSending, setWarmUpSending] = useState(false);
+  const [warmUpReadyForWriting, setWarmUpReadyForWriting] = useState(false);
 
   const [writingPrompt, setWritingPrompt] = useState('');
   const [loadingWritingTask, setLoadingWritingTask] = useState(false);
@@ -183,8 +184,7 @@ export default function LessonScreen() {
   voiceStateRef.current = voiceState;
   speakingStepRef.current = speakingStep;
 
-  const javiWarmUpCount = warmUpMessages.filter((m) => m.role === 'assistant').length;
-  const warmUpComplete = javiWarmUpCount >= WARMUP_JAVI_TARGET;
+  const showWarmUpSkip = warmUpMessages.length >= WARMUP_SKIP_AFTER_MESSAGES;
   const lessonType = lessonKindToLessonType(lessonKind);
 
   const indicatorStep = useMemo(() => {
@@ -245,6 +245,7 @@ export default function LessonScreen() {
     setPhase('warmup');
     setWarmUpMessages([]);
     setWarmUpInput('');
+    setWarmUpReadyForWriting(false);
     setWritingPrompt('');
     setWritingText('');
     setWritingResult(null);
@@ -287,7 +288,9 @@ export default function LessonScreen() {
         });
 
         const openingText = await generateWarmUpOpening(lessonKindToLessonType(lessonKind), focus, topErrors);
-        const parsed = parseJaviResponse(openingText);
+        const { text: openingClean, ready: openingReady } = stripReadyForWritingMarker(openingText);
+        const parsed = parseJaviResponse(openingClean);
+        if (openingReady) setWarmUpReadyForWriting(true);
         setWarmUpMessages([
           {
             id: newId(),
@@ -340,7 +343,7 @@ export default function LessonScreen() {
 
   const sendWarmUpMessage = async () => {
     const trimmed = warmUpInput.trim();
-    if (!trimmed || warmUpSending || !lessonFocus || warmUpComplete) return;
+    if (!trimmed || warmUpSending || !lessonFocus) return;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -358,7 +361,9 @@ export default function LessonScreen() {
 
     try {
       const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount, topErrorDna);
-      const parsed = parseJaviResponse(reply);
+      const { text: replyClean, ready } = stripReadyForWritingMarker(reply);
+      const parsed = parseJaviResponse(replyClean);
+      if (ready) setWarmUpReadyForWriting(true);
       setWarmUpMessages((prev) => [
         ...prev,
         { id: newId(), role: 'assistant', spanish: parsed.spanish, translation: parsed.translation },
@@ -368,6 +373,17 @@ export default function LessonScreen() {
     } finally {
       setWarmUpSending(false);
     }
+  };
+
+  const confirmSkipIntroduction = () => {
+    Alert.alert(
+      'Skip introduction?',
+      "Skip Javi's explanation and go straight to writing?",
+      [
+        { text: 'No', style: 'cancel' },
+        { text: 'Yes', onPress: () => void startWritingPhase() },
+      ],
+    );
   };
 
   const startWritingPhase = async () => {
@@ -885,11 +901,11 @@ export default function LessonScreen() {
                   animateTyping={m.role === 'assistant' && m.id === latestWarmUpJaviId}
                 />
               ))}
-              {warmUpComplete ? (
+              {warmUpReadyForWriting ? (
                 <Pressable
                   onPress={() => void startWritingPhase()}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
-                  <Text style={styles.primaryButtonText}>Ready</Text>
+                  <Text style={styles.primaryButtonText}>Ready to write ✍️</Text>
                 </Pressable>
               ) : null}
             </>
@@ -1029,7 +1045,7 @@ export default function LessonScreen() {
           ) : null}
         </ScrollView>
 
-        {phase === 'warmup' && !warmUpComplete ? (
+        {phase === 'warmup' ? (
           <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
             <View style={styles.composeRow}>
               <TextInput
@@ -1056,6 +1072,14 @@ export default function LessonScreen() {
                 )}
               </Pressable>
             </View>
+            {showWarmUpSkip ? (
+              <Pressable
+                onPress={confirmSkipIntroduction}
+                style={styles.skipIntroBtn}
+                accessibilityRole="button">
+                <Text style={styles.skipIntroText}>Skip introduction →</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -1226,6 +1250,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   sendButtonText: { fontSize: 15, fontWeight: '800', color: '#0B0F14' },
+  skipIntroBtn: {
+    alignSelf: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    marginTop: 4,
+  },
+  skipIntroText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+  },
   voiceDock: {
     alignItems: 'center',
     paddingTop: 10,
