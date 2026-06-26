@@ -1,3 +1,5 @@
+import { ConversationInputLayout } from '@/components/conversation-input-layout';
+import { TextMessageBubble } from '@/components/text-message-bubble';
 import { analyzeConversation, evaluateWriting, generateWritingTask } from '@/lib/claude';
 import { mergeErrorDnaFromLesson } from '@/lib/error-dna';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
@@ -23,7 +25,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,8 +64,7 @@ export default function WritingScreen() {
   const { practice } = useLocalSearchParams<{ practice?: string }>();
   const isPracticeReplay = practice === '1';
   const insets = useSafeAreaInsets();
-  const scrollRef = useRef<ScrollView>(null);
-  const writingInputRef = useRef<TextInput>(null);
+  const resultsScrollRef = useRef<ScrollView>(null);
   const session = useMemo(() => getLessonSession(), []);
   const lessonType = session.lessonType;
   const lessonFocus = session.lessonFocus;
@@ -218,72 +218,66 @@ export default function WritingScreen() {
     }
   };
 
+  const conversationContent = (
+    <>
+      <View style={styles.topRow}>
+        <Pressable onPress={() => router.back()} accessibilityRole="button" hitSlop={12}>
+          <Text style={styles.backLink}>← Lesson</Text>
+        </Pressable>
+      </View>
+
+      <Text style={styles.title}>Writing Task</Text>
+      <Text style={styles.subtitle}>Show what you learned (Spanish only).</Text>
+
+      {conversation.length ? (
+        <View style={styles.conversationSection}>
+          <Text style={styles.conversationTitle}>Your conversation</Text>
+          {conversation.map((m, i) => (
+            <TextMessageBubble
+              key={`${i}-${m.spanish}`}
+              role={m.role}
+              spanish={m.spanish}
+              translation={m.translation}
+            />
+          ))}
+        </View>
+      ) : null}
+    </>
+  );
+
+  const submitFooter = (
+    <Pressable
+      onPress={submit}
+      disabled={submitting || !text.trim() || !taskPrompt}
+      style={({ pressed }) => [
+        styles.submitButton,
+        (submitting || !text.trim() || !taskPrompt) && styles.submitButtonDisabled,
+        pressed && !submitting && text.trim() && taskPrompt && styles.submitButtonPressed,
+      ]}
+      accessibilityRole="button"
+      accessibilityLabel="Submit writing">
+      {submitting ? (
+        <ActivityIndicator color="#0B0F14" size="small" />
+      ) : (
+        <Text style={styles.submitButtonText}>Submit</Text>
+      )}
+    </Pressable>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}>
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) }]}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
-        <View style={styles.topRow}>
-          <Pressable onPress={() => router.back()} accessibilityRole="button" hitSlop={12}>
-            <Text style={styles.backLink}>← Lesson</Text>
-          </Pressable>
-        </View>
+      {result ? (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.flex}>
+          <ScrollView
+            ref={resultsScrollRef}
+            contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 20) }]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}>
+            {conversationContent}
 
-        <Text style={styles.title}>Writing Task</Text>
-        <Text style={styles.subtitle}>Show what you learned (Spanish only).</Text>
-
-        <View style={styles.taskCard}>
-          <Text style={styles.taskTitle}>Javi’s prompt</Text>
-          {loadingTask ? (
-            <ActivityIndicator color={palette.muted} />
-          ) : (
-            <Text style={styles.taskText}>{taskPrompt || '—'}</Text>
-          )}
-        </View>
-
-        <View style={styles.inputCard}>
-          <Text style={styles.inputLabel}>Your writing</Text>
-          <TextInput
-            ref={writingInputRef}
-            style={styles.input}
-            value={text}
-            onChangeText={setText}
-            placeholder="Write your response in Spanish..."
-            placeholderTextColor={palette.muted}
-            multiline
-            editable={!submitting}
-            onFocus={() => {
-              setTimeout(() => {
-                scrollRef.current?.scrollToEnd({ animated: true });
-              }, 60);
-            }}
-          />
-          <Pressable
-            onPress={submit}
-            disabled={submitting || !text.trim() || !taskPrompt}
-            style={({ pressed }) => [
-              styles.submitButton,
-              (submitting || !text.trim() || !taskPrompt) && styles.submitButtonDisabled,
-              pressed && !submitting && text.trim() && taskPrompt && styles.submitButtonPressed,
-            ]}
-            accessibilityRole="button"
-            accessibilityLabel="Submit writing">
-            {submitting ? (
-              <ActivityIndicator color="#0B0F14" size="small" />
-            ) : (
-              <Text style={styles.submitButtonText}>Submit</Text>
-            )}
-          </Pressable>
-        </View>
-
-        {result ? (
-          <>
             <View style={styles.resultsHeader}>
               <Text style={styles.resultsTitle}>Results</Text>
             </View>
@@ -338,10 +332,23 @@ export default function WritingScreen() {
               accessibilityLabel="Continue to summary">
               <Text style={styles.continueButtonText}>Continue to Summary</Text>
             </Pressable>
-          </>
-        ) : null}
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      ) : (
+        <ConversationInputLayout
+          prompt={taskPrompt}
+          promptLoading={loadingTask}
+          inputValue={text}
+          onChangeText={setText}
+          inputPlaceholder="Write your response in Spanish..."
+          inputEditable={!submitting}
+          footer={submitFooter}
+          bottomInset={Math.max(insets.bottom, 12)}
+          scrollToEndDeps={[conversation.length, taskPrompt, loadingTask]}
+          contentContainerStyle={styles.scrollContent}>
+          {conversationContent}
+        </ConversationInputLayout>
+      )}
     </SafeAreaView>
   );
 }
@@ -349,42 +356,19 @@ export default function WritingScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.background },
   flex: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20, paddingTop: 8 },
+  scrollContent: { paddingHorizontal: 20, paddingTop: 8, paddingBottom: 16 },
   topRow: { marginBottom: 12 },
   backLink: { fontSize: 16, fontWeight: '700', color: palette.blue },
   title: { fontSize: 28, fontWeight: '900', color: palette.text, letterSpacing: -0.5 },
   subtitle: { marginTop: 6, fontSize: 14, fontWeight: '600', color: palette.muted, marginBottom: 18 },
-  taskCard: {
-    backgroundColor: palette.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    padding: 16,
+  conversationSection: { marginBottom: 8 },
+  conversationTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
     marginBottom: 12,
-  },
-  taskTitle: { fontSize: 13, fontWeight: '800', color: palette.muted, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 },
-  taskText: { fontSize: 15, fontWeight: '700', color: palette.text, lineHeight: 20 },
-  inputCard: {
-    backgroundColor: palette.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    padding: 12,
-    marginBottom: 12,
-    gap: 10,
-  },
-  inputLabel: { fontSize: 14, fontWeight: '800', color: palette.text },
-  input: {
-    minHeight: 120,
-    maxHeight: 260,
-    backgroundColor: palette.background,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 16,
-    color: palette.text,
   },
   submitButton: {
     backgroundColor: palette.accent,
@@ -458,4 +442,3 @@ const styles = StyleSheet.create({
   continueButtonPressed: { opacity: 0.92 },
   continueButtonText: { fontSize: 17, fontWeight: '900', color: '#0B0F14' },
 });
-

@@ -1,3 +1,4 @@
+import { ConversationInputLayout } from '@/components/conversation-input-layout';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
@@ -60,7 +61,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -384,6 +384,101 @@ export default function BonusRoundScreen() {
 
   const def = roundId ? getRoundDef(roundId) : null;
 
+  const isTextChatRound =
+    (roundId === 'slang' && slangPhase === 'chat') ||
+    roundId === 'culture' ||
+    roundId === 'immersion' ||
+    roundId === 'music' ||
+    roundId === 'film';
+
+  const chatBubbleNodes = chatMessages.map((m, i) => (
+    <View key={`${i}-${m.text}`} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
+      {m.role === 'assistant' ? (
+        <JaviSpanishMessage
+          spanish={safeSpanish(m.text)}
+          source="conversation"
+          animate={i === latestAssistantChatIndex}
+          resetKey={`${i}-${m.text}`}
+          style={styles.bubbleText}
+        />
+      ) : (
+        <Text style={styles.bubbleText}>{m.text}</Text>
+      )}
+    </View>
+  ));
+
+  const sendTextChat = () => {
+    if (roundId === 'slang' && slangContent) {
+      void sendChat(
+        (msgs) => askSlangJavi(slangContent.expressions, msgs),
+        async (messages) => {
+          await saveVocabularyWord(slangContent.slangCard.spanish, {
+            source: 'slang',
+            english: slangContent.slangCard.english,
+            exampleSpanish: slangContent.slangCard.exampleSpanish,
+          });
+          void finishRound('Slang round complete!', 'Slang card saved to vocabulary 📚', 2);
+        },
+      );
+      return;
+    }
+
+    const culture = roundMeta.culture as { topic: string; culturalNote: string } | undefined;
+    const music = roundMeta.music as { vocabDrill: { spanish: string; english: string }[] } | undefined;
+
+    void sendChat(
+      async (msgs) => {
+        if (roundId === 'immersion' && calibration) return askImmersionJavi(msgs, calibration);
+        if (roundId === 'culture' && culture) return askCultureJavi(culture.topic, msgs);
+        if (roundId === 'music' && roundMeta.music)
+          return askMusicJavi(roundMeta.music as Parameters<typeof askMusicJavi>[0], msgs);
+        if (roundId === 'film' && roundMeta.film)
+          return askFilmJavi(roundMeta.film as Parameters<typeof askFilmJavi>[0], msgs);
+        return askCultureJavi('cultura', msgs);
+      },
+      async (messages) => {
+        if (roundId === 'culture' && culture) {
+          await addCulturalNote(culture.culturalNote, culture.topic, 'Culture Round');
+        }
+        if (roundId === 'music' && music) {
+          for (const v of music.vocabDrill.slice(0, 5)) {
+            await saveVocabularyWord(v.spanish, {
+              source: 'music',
+              english: v.english,
+            });
+          }
+        }
+        if (roundId === 'immersion') {
+          const ev = await evaluateImmersion(
+            messages.map((m) => ({ role: m.role, content: m.text })),
+          );
+          await awardBadge('immersion', 'Inmersión', '🔇');
+          const gems = immersionRoundGems(ev.score);
+          void finishRound(`Inmersión: ${ev.score}%`, ev.feedback, gems);
+        } else {
+          void finishRound(`${def?.name ?? 'Round'} complete!`, 'Great discussion 🎉', 2);
+        }
+      },
+    );
+  };
+
+  const textChatFooter = (
+    <Pressable
+      onPress={sendTextChat}
+      disabled={chatSending || !chatInput.trim()}
+      style={({ pressed }) => [
+        styles.primaryBtn,
+        (chatSending || !chatInput.trim()) && styles.primaryBtnDisabled,
+        pressed && !chatSending && chatInput.trim() && styles.optionPressed,
+      ]}>
+      {chatSending ? (
+        <ActivityIndicator color="#0B0F14" size="small" />
+      ) : (
+        <Text style={styles.primaryBtnText}>Send</Text>
+      )}
+    </Pressable>
+  );
+
   if (!roundId || !def) return null;
 
   if (stage === 'loading' || stage === 'gate') {
@@ -418,167 +513,128 @@ export default function BonusRoundScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()}>
-            <Text style={styles.back}>← Exit</Text>
-          </Pressable>
-          <Text style={styles.roundTitle}>
-            {def.emoji} {def.name} · L{roundLevel}
-          </Text>
-        </View>
+      <View style={styles.topBar}>
+        <Pressable onPress={() => router.back()}>
+          <Text style={styles.back}>← Exit</Text>
+        </Pressable>
+        <Text style={styles.roundTitle}>
+          {def.emoji} {def.name} · L{roundLevel}
+        </Text>
+      </View>
 
-        <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}>
-          {roundId === 'quiz' && quizQuestions[quizIdx] ? (
-            <View style={styles.quizWrap}>
-              <Text style={styles.quizMeta}>
-                Q{quizIdx + 1}/{quizQuestions.length} · {quizTimer}s
-              </Text>
-              <Text style={styles.quizPrompt}>{quizQuestions[quizIdx].prompt}</Text>
-              {quizQuestions[quizIdx].options.map((opt, i) => (
-                <Pressable
-                  key={opt}
-                  disabled={quizLocked}
-                  onPress={() => void submitQuizAnswer(i)}
-                  style={({ pressed }) => [styles.optionBtn, pressed && styles.optionPressed]}>
-                  <Text style={styles.optionText}>{opt}</Text>
-                </Pressable>
-              ))}
-            </View>
-          ) : null}
-
-          {roundId === 'slang' && slangContent ? (
-            <View style={styles.block}>
-              {slangPhase === 'intro' ? (
-                <>
-                  <Text style={styles.sectionTitle}>
-                    {slangContent.expressions.length} slang expressions
-                  </Text>
-                  {slangContent.expressions.map((e) => (
-                    <View key={e.spain} style={styles.slangRow}>
-                      <Text style={styles.slangSpain}>🇪🇸 {e.spain}</Text>
-                      <Text style={styles.slangArg}>🇦🇷 {e.argentina}</Text>
-                      <Text style={styles.slangMean}>{e.meaning}</Text>
-                      <Text style={styles.slangEx}>{e.example}</Text>
-                    </View>
-                  ))}
-                  <Pressable onPress={() => setSlangPhase('drill')} style={styles.primaryBtn}>
-                    <Text style={styles.primaryBtnText}>Quick drill →</Text>
-                  </Pressable>
-                </>
-              ) : slangPhase === 'drill' ? (
-                <>
-                  <Text style={styles.sectionTitle}>Pick the right slang</Text>
-                  <Text style={styles.body}>{slangContent.drill.situation}</Text>
-                  {slangContent.drill.options.map((opt, i) => (
-                    <Pressable
-                      key={opt}
-                      onPress={() => {
-                        const ok = i === slangContent.drill.correctIndex;
-                        if (ok) {
-                          setSlangPhase('chat');
-                          setChatMessages([
-                            {
-                              role: 'assistant',
-                              text: '¡Perfecto! Ahora charlemos usando estas expresiones. Cuéntame algo de tu día e intenta usar al menos dos.',
-                            },
-                          ]);
-                          setChatTurns(0);
-                        } else Alert.alert('Not quite', 'Try again!');
-                      }}
-                      style={styles.optionBtn}>
-                      <Text style={styles.optionText}>{opt}</Text>
-                    </Pressable>
-                  ))}
-                </>
-              ) : (
-                <>
-                  {chatMessages.map((m, i) => (
-                    <View key={i} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
-                      {m.role === 'assistant' ? (
-                        <JaviSpanishMessage
-                          spanish={safeSpanish(m.text)}
-                          source="conversation"
-                          animate={i === latestAssistantChatIndex}
-                          resetKey={`${i}-${m.text}`}
-                          style={styles.bubbleText}
-                        />
-                      ) : (
-                        <Text style={styles.bubbleText}>{m.text}</Text>
-                      )}
-                    </View>
-                  ))}
-                  <TextInput
-                    style={styles.input}
-                    value={chatInput}
-                    onChangeText={setChatInput}
-                    placeholder="Chat with Javi…"
-                    placeholderTextColor={palette.muted}
-                  />
+      {isTextChatRound ? (
+        <ConversationInputLayout
+          showPrompt={false}
+          showResponseLabel={false}
+          inputValue={chatInput}
+          onChangeText={setChatInput}
+          inputPlaceholder={
+            roundId === 'immersion'
+              ? 'Escribe en español…'
+              : roundId === 'slang'
+                ? 'Chat with Javi…'
+                : 'Your response…'
+          }
+          inputEditable={!chatSending}
+          bottomInset={Math.max(insets.bottom, 12)}
+          scrollToEndDeps={[chatMessages, chatSending]}
+          contentContainerStyle={[styles.scroll, { paddingBottom: 16 }]}
+          footer={textChatFooter}>
+          {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
+          {chatBubbleNodes}
+        </ConversationInputLayout>
+      ) : (
+        <KeyboardAvoidingView
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          style={styles.flex}>
+          <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}>
+            {roundId === 'quiz' && quizQuestions[quizIdx] ? (
+              <View style={styles.quizWrap}>
+                <Text style={styles.quizMeta}>
+                  Q{quizIdx + 1}/{quizQuestions.length} · {quizTimer}s
+                </Text>
+                <Text style={styles.quizPrompt}>{quizQuestions[quizIdx].prompt}</Text>
+                {quizQuestions[quizIdx].options.map((opt, i) => (
                   <Pressable
-                    onPress={() =>
-                      void sendChat(
-                        (msgs) => askSlangJavi(slangContent.expressions, msgs),
-                        async (messages) => {
-                          await saveVocabularyWord(slangContent.slangCard.spanish, {
-                            source: 'slang',
-                            english: slangContent.slangCard.english,
-                            exampleSpanish: slangContent.slangCard.exampleSpanish,
-                          });
-                          void finishRound('Slang round complete!', 'Slang card saved to vocabulary 📚', 2);
-                        },
-                      )
-                    }
-                    style={styles.primaryBtn}>
-                    <Text style={styles.primaryBtnText}>Send</Text>
+                    key={opt}
+                    disabled={quizLocked}
+                    onPress={() => void submitQuizAnswer(i)}
+                    style={({ pressed }) => [styles.optionBtn, pressed && styles.optionPressed]}>
+                    <Text style={styles.optionText}>{opt}</Text>
                   </Pressable>
-                </>
-              )}
-            </View>
-          ) : null}
+                ))}
+              </View>
+            ) : null}
 
-          {roundId === 'shadowing' && shadowSentences[shadowIdx] ? (
-            <View style={styles.block}>
-              <Text style={styles.sectionTitle}>
-                Sentence {shadowIdx + 1}/{shadowSentences.length}
-              </Text>
-              <Text style={styles.shadowSpanish}>{shadowSentences[shadowIdx].spanish}</Text>
-              <Text style={styles.shadowEnglish}>{shadowSentences[shadowIdx].english}</Text>
-              <Pressable
-                onPress={() => void speakJavi(shadowSentences[shadowIdx].spanish)}
-                style={styles.secondaryBtn}>
-                <Text style={styles.secondaryBtnText}>🔊 Hear Javi</Text>
-              </Pressable>
-              {shadowFeedback ? <Text style={styles.feedback}>{shadowFeedback}</Text> : null}
-              <ShadowingMic onTranscript={(t) => void handleShadowingNext(t)} />
-            </View>
-          ) : null}
+            {roundId === 'slang' && slangContent ? (
+              <View style={styles.block}>
+                {slangPhase === 'intro' ? (
+                  <>
+                    <Text style={styles.sectionTitle}>
+                      {slangContent.expressions.length} slang expressions
+                    </Text>
+                    {slangContent.expressions.map((e) => (
+                      <View key={e.spain} style={styles.slangRow}>
+                        <Text style={styles.slangSpain}>🇪🇸 {e.spain}</Text>
+                        <Text style={styles.slangArg}>🇦🇷 {e.argentina}</Text>
+                        <Text style={styles.slangMean}>{e.meaning}</Text>
+                        <Text style={styles.slangEx}>{e.example}</Text>
+                      </View>
+                    ))}
+                    <Pressable onPress={() => setSlangPhase('drill')} style={styles.primaryBtn}>
+                      <Text style={styles.primaryBtnText}>Quick drill →</Text>
+                    </Pressable>
+                  </>
+                ) : slangPhase === 'drill' ? (
+                  <>
+                    <Text style={styles.sectionTitle}>Pick the right slang</Text>
+                    <Text style={styles.body}>{slangContent.drill.situation}</Text>
+                    {slangContent.drill.options.map((opt, i) => (
+                      <Pressable
+                        key={opt}
+                        onPress={() => {
+                          const ok = i === slangContent.drill.correctIndex;
+                          if (ok) {
+                            setSlangPhase('chat');
+                            setChatMessages([
+                              {
+                                role: 'assistant',
+                                text: '¡Perfecto! Ahora charlemos usando estas expresiones. Cuéntame algo de tu día e intenta usar al menos dos.',
+                              },
+                            ]);
+                            setChatTurns(0);
+                          } else Alert.alert('Not quite', 'Try again!');
+                        }}
+                        style={styles.optionBtn}>
+                        <Text style={styles.optionText}>{opt}</Text>
+                      </Pressable>
+                    ))}
+                  </>
+                ) : null}
+              </View>
+            ) : null}
 
-          {(roundId === 'roleplay' ||
-            roundId === 'culture' ||
-            roundId === 'immersion' ||
-            roundId === 'music' ||
-            roundId === 'film') ? (
-            <View style={styles.block}>
-              {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
-              {chatMessages.map((m, i) => (
-                <View key={i} style={m.role === 'user' ? styles.userBubble : styles.javiBubble}>
-                  {m.role === 'assistant' ? (
-                    <JaviSpanishMessage
-                      spanish={safeSpanish(m.text)}
-                      source="conversation"
-                      animate={i === latestAssistantChatIndex}
-                      resetKey={`${i}-${m.text}`}
-                      style={styles.bubbleText}
-                    />
-                  ) : (
-                    <Text style={styles.bubbleText}>{m.text}</Text>
-                  )}
-                </View>
-              ))}
-              {roundId === 'roleplay' ? (
+            {roundId === 'shadowing' && shadowSentences[shadowIdx] ? (
+              <View style={styles.block}>
+                <Text style={styles.sectionTitle}>
+                  Sentence {shadowIdx + 1}/{shadowSentences.length}
+                </Text>
+                <Text style={styles.shadowSpanish}>{shadowSentences[shadowIdx].spanish}</Text>
+                <Text style={styles.shadowEnglish}>{shadowSentences[shadowIdx].english}</Text>
+                <Pressable
+                  onPress={() => void speakJavi(shadowSentences[shadowIdx].spanish)}
+                  style={styles.secondaryBtn}>
+                  <Text style={styles.secondaryBtnText}>🔊 Hear Javi</Text>
+                </Pressable>
+                {shadowFeedback ? <Text style={styles.feedback}>{shadowFeedback}</Text> : null}
+                <ShadowingMic onTranscript={(t) => void handleShadowingNext(t)} />
+              </View>
+            ) : null}
+
+            {roundId === 'roleplay' ? (
+              <View style={styles.block}>
+                {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
+                {chatBubbleNodes}
                 <RoleplayMic
                   onTranscript={async (text) => {
                     const next = [...chatMessages, { role: 'user' as const, text }];
@@ -602,68 +658,11 @@ export default function BonusRoundScreen() {
                     }
                   }}
                 />
-              ) : (
-                <>
-                  <TextInput
-                    style={styles.input}
-                    value={chatInput}
-                    onChangeText={setChatInput}
-                    placeholder={roundId === 'immersion' ? 'Escribe en español…' : 'Your response…'}
-                    placeholderTextColor={palette.muted}
-                    multiline
-                  />
-                  <Pressable
-                    onPress={() => {
-                      const culture = roundMeta.culture as { topic: string; culturalNote: string } | undefined;
-                      const music = roundMeta.music as {
-                        vocabDrill: { spanish: string; english: string }[];
-                      } | undefined;
-                      const film = roundMeta.film as { title: string } | undefined;
-                      void sendChat(
-                        async (msgs) => {
-                          if (roundId === 'immersion' && calibration) return askImmersionJavi(msgs, calibration);
-                          if (roundId === 'culture' && culture)
-                            return askCultureJavi(culture.topic, msgs);
-                          if (roundId === 'music' && roundMeta.music)
-                            return askMusicJavi(roundMeta.music as Parameters<typeof askMusicJavi>[0], msgs);
-                          if (roundId === 'film' && roundMeta.film)
-                            return askFilmJavi(roundMeta.film as Parameters<typeof askFilmJavi>[0], msgs);
-                          return askCultureJavi('cultura', msgs);
-                        },
-                        async (messages) => {
-                          if (roundId === 'culture' && culture) {
-                            await addCulturalNote(culture.culturalNote, culture.topic, 'Culture Round');
-                          }
-                          if (roundId === 'music' && music) {
-                            for (const v of music.vocabDrill.slice(0, 5)) {
-                              await saveVocabularyWord(v.spanish, {
-                                source: 'music',
-                                english: v.english,
-                              });
-                            }
-                          }
-                          if (roundId === 'immersion') {
-                            const ev = await evaluateImmersion(
-                              messages.map((m) => ({ role: m.role, content: m.text })),
-                            );
-                            await awardBadge('immersion', 'Inmersión', '🔇');
-                            const gems = immersionRoundGems(ev.score);
-                            void finishRound(`Inmersión: ${ev.score}%`, ev.feedback, gems);
-                          } else {
-                            void finishRound(`${def.name} complete!`, 'Great discussion 🎉', 2);
-                          }
-                        },
-                      );
-                    }}
-                    style={styles.primaryBtn}>
-                    <Text style={styles.primaryBtnText}>Send</Text>
-                  </Pressable>
-                </>
-              )}
-            </View>
-          ) : null}
-        </ScrollView>
-      </KeyboardAvoidingView>
+              </View>
+            ) : null}
+          </ScrollView>
+        </KeyboardAvoidingView>
+      )}
     </SafeAreaView>
   );
 }
@@ -773,6 +772,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginTop: 8,
   },
+  primaryBtnDisabled: { opacity: 0.55 },
   primaryBtnText: { fontSize: 16, fontWeight: '900', color: '#0B0F14' },
   secondaryBtn: {
     borderRadius: 12,

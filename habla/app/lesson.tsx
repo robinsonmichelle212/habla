@@ -1,3 +1,7 @@
+import {
+  ConversationInputDock,
+  useKeyboardScrollToEnd,
+} from '@/components/conversation-input-layout';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
@@ -321,9 +325,15 @@ export default function LessonScreen() {
     };
   }, [lessonKind, resetLessonState]);
 
-  useEffect(() => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
-  }, [warmUpMessages, writingResult, speakingMessages, phase, heardTranscript]);
+  const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [
+    warmUpMessages,
+    writingResult,
+    speakingMessages,
+    phase,
+    heardTranscript,
+    writingPrompt,
+    loadingWritingTask,
+  ]);
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
@@ -889,7 +899,7 @@ export default function LessonScreen() {
             <ActivityIndicator color={palette.muted} style={{ marginTop: 24 }} />
           ) : null}
 
-          {phase === 'warmup' ? (
+          {phase === 'warmup' || phase === 'writing' ? (
             <>
               {warmUpMessages.map((m) => (
                 <TextMessageBubble
@@ -898,10 +908,12 @@ export default function LessonScreen() {
                   spanish={m.spanish}
                   translation={m.translation}
                   messageKey={m.id}
-                  animateTyping={m.role === 'assistant' && m.id === latestWarmUpJaviId}
+                  animateTyping={
+                    phase === 'warmup' && m.role === 'assistant' && m.id === latestWarmUpJaviId
+                  }
                 />
               ))}
-              {warmUpReadyForWriting ? (
+              {phase === 'warmup' && warmUpReadyForWriting ? (
                 <Pressable
                   onPress={() => void startWritingPhase()}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
@@ -911,94 +923,52 @@ export default function LessonScreen() {
             </>
           ) : null}
 
-          {phase === 'writing' ? (
+          {phase === 'writing' && writingResult ? (
             <View style={styles.writingBlock}>
-              {loadingWritingTask ? (
-                <ActivityIndicator color={palette.muted} />
-              ) : (
-                <>
-                  <Text style={styles.phaseTitle}>Writing task</Text>
-                  <View style={styles.taskCard}>
-                    <Text style={styles.taskText}>{writingPrompt || '—'}</Text>
-                  </View>
-
-                  {!writingResult ? (
-                    <>
-                      <Text style={styles.inputLabel}>Your writing</Text>
-                      <TextInput
-                        style={styles.writingInput}
-                        value={writingText}
-                        onChangeText={setWritingText}
-                        placeholder="Write your response in Spanish..."
-                        placeholderTextColor={palette.muted}
-                        multiline
-                        editable={!writingSubmitting}
+              <Text style={styles.phaseTitle}>Javi&apos;s feedback</Text>
+              <ProgressBar label="Grammar" value={writingResult.grammarScore} />
+              <ProgressBar label="Vocabulary" value={writingResult.vocabularyScore} />
+              {lessonKind === 'structure' && writingResult.structureScore != null ? (
+                <ProgressBar label="Structure" value={writingResult.structureScore} />
+              ) : null}
+              <View style={styles.feedbackCard}>
+                <Text style={styles.feedbackLabel}>Corrected version</Text>
+                <InteractiveSpanishText
+                  text={writingResult.correctedText}
+                  source="conversation"
+                  style={styles.feedbackText}
+                  contextSentence={writingResult.correctedText}
+                />
+              </View>
+              <Text style={styles.feedbackBody}>{writingResult.feedback}</Text>
+              {writingResult.corrections.length ? (
+                <View style={styles.correctionsCard}>
+                  {writingResult.corrections.map((c, i) => (
+                    <View key={i} style={styles.correctionRow}>
+                      <InteractiveSpanishText
+                        text={c.mistake}
+                        source="conversation"
+                        style={styles.correctionWrong}
+                        textColor={palette.error}
+                        contextSentence={writingResult.correctedText}
                       />
-                      <Pressable
-                        onPress={() => void submitWriting()}
-                        disabled={writingSubmitting || !writingText.trim()}
-                        style={({ pressed }) => [
-                          styles.primaryButton,
-                          (writingSubmitting || !writingText.trim()) && styles.primaryButtonDisabled,
-                          pressed && styles.primaryButtonPressed,
-                        ]}>
-                        {writingSubmitting ? (
-                          <ActivityIndicator color="#0B0F14" />
-                        ) : (
-                          <Text style={styles.primaryButtonText}>Submit writing</Text>
-                        )}
-                      </Pressable>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.phaseTitle}>Javi&apos;s feedback</Text>
-                      <ProgressBar label="Grammar" value={writingResult.grammarScore} />
-                      <ProgressBar label="Vocabulary" value={writingResult.vocabularyScore} />
-                      {lessonKind === 'structure' && writingResult.structureScore != null ? (
-                        <ProgressBar label="Structure" value={writingResult.structureScore} />
-                      ) : null}
-                      <View style={styles.feedbackCard}>
-                        <Text style={styles.feedbackLabel}>Corrected version</Text>
-                        <InteractiveSpanishText
-                          text={writingResult.correctedText}
-                          source="conversation"
-                          style={styles.feedbackText}
-                          contextSentence={writingResult.correctedText}
-                        />
-                      </View>
-                      <Text style={styles.feedbackBody}>{writingResult.feedback}</Text>
-                      {writingResult.corrections.length ? (
-                        <View style={styles.correctionsCard}>
-                          {writingResult.corrections.map((c, i) => (
-                            <View key={i} style={styles.correctionRow}>
-                              <InteractiveSpanishText
-                                text={c.mistake}
-                                source="conversation"
-                                style={styles.correctionWrong}
-                                textColor={palette.error}
-                                contextSentence={writingResult.correctedText}
-                              />
-                              <InteractiveSpanishText
-                                text={c.correction}
-                                source="conversation"
-                                style={styles.correctionRight}
-                                textColor={palette.green}
-                                contextSentence={writingResult.correctedText}
-                              />
-                              <Text style={styles.correctionNote}>{c.explanation}</Text>
-                            </View>
-                          ))}
-                        </View>
-                      ) : null}
-                      <Pressable
-                        onPress={() => void startSpeakingPhase()}
-                        style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
-                        <Text style={styles.primaryButtonText}>Now say it</Text>
-                      </Pressable>
-                    </>
-                  )}
-                </>
-              )}
+                      <InteractiveSpanishText
+                        text={c.correction}
+                        source="conversation"
+                        style={styles.correctionRight}
+                        textColor={palette.green}
+                        contextSentence={writingResult.correctedText}
+                      />
+                      <Text style={styles.correctionNote}>{c.explanation}</Text>
+                    </View>
+                  ))}
+                </View>
+              ) : null}
+              <Pressable
+                onPress={() => void startSpeakingPhase()}
+                style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
+                <Text style={styles.primaryButtonText}>Now say it</Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -1055,7 +1025,10 @@ export default function LessonScreen() {
                 placeholder="Type your reply..."
                 placeholderTextColor={palette.muted}
                 multiline
+                scrollEnabled
                 editable={!warmUpSending}
+                textAlignVertical="top"
+                onFocus={() => scrollToEnd()}
               />
               <Pressable
                 onPress={() => void sendWarmUpMessage()}
@@ -1081,6 +1054,36 @@ export default function LessonScreen() {
               </Pressable>
             ) : null}
           </View>
+        ) : null}
+
+        {phase === 'writing' && !writingResult ? (
+          <ConversationInputDock
+            prompt={writingPrompt}
+            promptLoading={loadingWritingTask}
+            inputValue={writingText}
+            onChangeText={setWritingText}
+            inputPlaceholder="Write your response in Spanish..."
+            inputEditable={!writingSubmitting}
+            bottomInset={Math.max(insets.bottom, 12)}
+            onInputFocus={() => scrollToEnd()}
+            footer={
+              <Pressable
+                onPress={() => void submitWriting()}
+                disabled={writingSubmitting || !writingText.trim()}
+                style={({ pressed }) => [
+                  styles.primaryButton,
+                  styles.writingSubmitButton,
+                  (writingSubmitting || !writingText.trim()) && styles.primaryButtonDisabled,
+                  pressed && styles.primaryButtonPressed,
+                ]}>
+                {writingSubmitting ? (
+                  <ActivityIndicator color="#0B0F14" />
+                ) : (
+                  <Text style={styles.primaryButtonText}>Submit writing</Text>
+                )}
+              </Pressable>
+            }
+          />
         ) : null}
 
         {phase === 'speaking' ? (
@@ -1230,17 +1233,18 @@ const styles = StyleSheet.create({
   composeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
   textInput: {
     flex: 1,
-    minHeight: 44,
-    maxHeight: 100,
+    minHeight: 80,
+    maxHeight: 150,
     backgroundColor: palette.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
     paddingHorizontal: 14,
-    paddingVertical: 10,
+    paddingVertical: 12,
     fontSize: 16,
     color: palette.text,
   },
+  writingSubmitButton: { marginTop: 0 },
   sendButton: {
     backgroundColor: palette.accent,
     borderRadius: 14,
