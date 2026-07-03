@@ -1,5 +1,7 @@
 import { Platform } from 'react-native';
 
+import { checkIsOnline } from '@/lib/network-status';
+
 const WHISPER_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 function getOpenAiApiKey(): string {
@@ -12,7 +14,7 @@ function getOpenAiApiKey(): string {
 
 export type WhisperResult =
   | { ok: true; text: string }
-  | { ok: false; reason: 'empty' | 'unintelligible' | 'api' };
+  | { ok: false; reason: 'empty' | 'unintelligible' | 'api' | 'offline' };
 
 function normalizeTranscript(text: string): string {
   return text.replace(/\s+/g, ' ').trim();
@@ -29,6 +31,11 @@ function looksUnintelligible(text: string): boolean {
 export async function transcribeSpanishAudio(uri: string): Promise<WhisperResult> {
   if (Platform.OS === 'web') {
     return { ok: false, reason: 'api' };
+  }
+
+  const online = await checkIsOnline();
+  if (!online) {
+    return { ok: false, reason: 'offline' };
   }
 
   const apiKey = getOpenAiApiKey();

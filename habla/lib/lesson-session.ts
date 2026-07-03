@@ -100,17 +100,21 @@ export type WritingEvaluation = {
 };
 
 export type SpeakingEvaluation = {
-  fluencyScore: number;
-  confidenceScore: number;
-  vocabularyRangeScore: number;
-  naturalFlowScore: number;
-  combinedScore: number;
+  fluencyScore: number | null;
+  confidenceScore: number | null;
+  vocabularyRangeScore: number | null;
+  naturalFlowScore: number | null;
+  combinedScore: number | null;
   javiFeedback: string;
   exchangeCount: number;
-  /** Overall speaking score — same as combinedScore */
-  score: number;
+  /** Overall speaking score — same as combinedScore when evaluated */
+  score: number | null;
   pronunciationNotes?: string[];
   feedback?: string;
+  pendingEvaluation?: boolean;
+  expired?: boolean;
+  audioPaths?: string[];
+  pendingTaskId?: string;
 };
 
 export type LessonSessionState = {

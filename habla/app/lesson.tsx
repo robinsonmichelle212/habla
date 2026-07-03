@@ -1,7 +1,9 @@
+import { OfflineBanner } from '@/components/offline-banner';
 import {
   ConversationInputDock,
   useKeyboardScrollToEnd,
 } from '@/components/conversation-input-layout';
+import { useNetworkStatus } from '@/contexts/network-context';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
@@ -21,8 +23,15 @@ import {
 } from '@/lib/claude';
 import { parseJaviResponse, safeSpanish, stripReadyForWritingMarker } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
+import { addGems, OFFLINE_SPEAKING_ATTEMPT_GEMS } from '@/lib/gems';
 import { mergeErrorDnaFromLesson, getTopErrorsForLesson, type ErrorDNAItem } from '@/lib/error-dna';
-import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
+import {
+  buildOfflineLessonAnalysis,
+  grammarTopicFromFocus,
+  offlineJaviReply,
+  OFFLINE_SPEAKING_INTRO,
+} from '@/lib/offline-speaking';
+import { addPendingAudioTask, saveRecordingToPendingAudio } from '@/lib/pending-audio-storage';
 import {
   conversationToJaviMessages,
   setLessonSession,
@@ -31,11 +40,14 @@ import {
   type WritingEvaluation,
 } from '@/lib/lesson-session';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
+import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
+import { checkIsOnline } from '@/lib/network-status';
 import { getLessonHistory } from '@/lib/practice-storage';
 import {
   computeSpeakingCombinedScore,
   speakingPhaseSummaryLabel,
 } from '@/lib/speaking-score';
+import { formatLocalDate } from '@/lib/streak';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import {
   MIN_RECORDING_MS,
@@ -136,6 +148,7 @@ function ProgressBar({ label, value }: { label: string; value: number }) {
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { isOnline } = useNetworkStatus();
   const scrollRef = useRef<ScrollView>(null);
   const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
@@ -164,6 +177,8 @@ export default function LessonScreen() {
   const [speakingTranscripts, setSpeakingTranscripts] = useState<string[]>([]);
   const [phaseSummaryText, setPhaseSummaryText] = useState('');
   const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
+  const [offlineSpeakingMode, setOfflineSpeakingMode] = useState(false);
+  const [pendingAudioPaths, setPendingAudioPaths] = useState<string[]>([]);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
   const [heardTranscript, setHeardTranscript] = useState<string | null>(null);
@@ -242,6 +257,8 @@ export default function LessonScreen() {
     setSpeakingTranscripts([]);
     setPhaseSummaryText('');
     setSpeakingIntroDone(false);
+    setOfflineSpeakingMode(false);
+    setPendingAudioPaths([]);
     setHeardTranscript(null);
     setVoiceError(null);
   }, []);
@@ -447,6 +464,10 @@ export default function LessonScreen() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    const online = await checkIsOnline();
+    setOfflineSpeakingMode(!online);
+    setPendingAudioPaths([]);
+
     setPhase('speaking');
     setSpeakingMessages([]);
     setSpeakingStep('intro');
@@ -455,6 +476,22 @@ export default function LessonScreen() {
     setPhaseSummaryText('');
     setSpeakingIntroDone(false);
     setVoiceError(null);
+
+    if (!online) {
+      const introMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        spanish: OFFLINE_SPEAKING_INTRO.spanish,
+        translation: OFFLINE_SPEAKING_INTRO.translation,
+      };
+      setSpeakingMessages([introMsg]);
+      setSpeakingIntroDone(true);
+      setSpeakingStep('conversation');
+      if (Platform.OS !== 'web') {
+        await speakJaviMessage(OFFLINE_SPEAKING_INTRO.spanish);
+      }
+      return;
+    }
 
     try {
       const introText = await generateSpeakingIntro(lessonType, writingPrompt, lessonFocus, topErrorDna);
@@ -478,12 +515,99 @@ export default function LessonScreen() {
 
   const showPhaseSummaryAndFinish = (speakingEvaluation: SpeakingEvaluation) => {
     setPhaseSummaryText(
-      speakingPhaseSummaryLabel(speakingEvaluation.combinedScore, speakingEvaluation.exchangeCount),
+      speakingPhaseSummaryLabel(
+        speakingEvaluation.combinedScore,
+        speakingEvaluation.exchangeCount,
+        speakingEvaluation.pendingEvaluation,
+      ),
     );
     setSpeakingStep('phase-summary');
     setTimeout(() => {
       void finishLesson(speakingEvaluation);
     }, PHASE_SUMMARY_MS);
+  };
+
+  const processOfflineSpeakingTurn = async (audioUri: string, nextTurn: number) => {
+    if (!lessonFocus || !writingPrompt || !writingResult) return;
+
+    const savedPath = await saveRecordingToPendingAudio(audioUri);
+    const audioPaths = await new Promise<string[]>((resolve) => {
+      setPendingAudioPaths((prev) => {
+        const next = savedPath ? [...prev, savedPath] : prev;
+        resolve(next);
+        return next;
+      });
+    });
+
+    const reply = offlineJaviReply(nextTurn - 1);
+
+    const updatedSpeakingTurns: LessonConversationTurn[] = [
+      ...toTurns(speakingMessages),
+      { role: 'user', spanish: '🎤 Recording saved for review' },
+      { role: 'assistant', spanish: reply.spanish, translation: reply.translation },
+    ];
+
+    setSpeakingMessages((prev) => [
+      ...prev,
+      { id: newId(), role: 'user', spanish: '🎤 Recording saved for review' },
+      {
+        id: newId(),
+        role: 'assistant',
+        spanish: reply.spanish,
+        translation: reply.translation,
+      },
+    ]);
+
+    if (Platform.OS !== 'web') {
+      await speakJaviMessage(reply.spanish);
+    }
+
+    if (nextTurn >= SPEAKING_USER_TURNS) {
+      const pendingTaskId = `pending-${Date.now()}`;
+      const lessonDate = formatLocalDate();
+      const warmUpTurns = toTurns(warmUpMessages);
+
+      await addPendingAudioTask({
+        id: pendingTaskId,
+        audioPaths,
+        lessonDate,
+        lessonType,
+        grammarTopic: grammarTopicFromFocus(lessonFocus),
+        phase: 'speaking',
+        recordedAt: Date.now(),
+        processed: false,
+        writingPrompt,
+        writingScores: {
+          grammarScore: writingResult.grammarScore,
+          vocabularyScore: writingResult.vocabularyScore,
+          fluencyScore: writingResult.fluencyScore,
+          structureScore: writingResult.structureScore,
+        },
+        lessonFocusLabel: lessonFocusLabel(lessonFocus),
+        warmUpConversation: warmUpTurns,
+        speakingConversation: updatedSpeakingTurns,
+        lessonTypeEnum: lessonType,
+      });
+
+      await addGems(OFFLINE_SPEAKING_ATTEMPT_GEMS);
+
+      showPhaseSummaryAndFinish({
+        fluencyScore: null,
+        confidenceScore: null,
+        vocabularyRangeScore: null,
+        naturalFlowScore: null,
+        combinedScore: null,
+        score: null,
+        javiFeedback: 'Pending evaluation when back online.',
+        feedback: 'Pending evaluation when back online.',
+        exchangeCount: nextTurn,
+        pendingEvaluation: true,
+        audioPaths,
+        pendingTaskId,
+      });
+    } else {
+      setVoiceStateSafe('idle');
+    }
   };
 
   const processSpeakingTurn = async (trimmed: string) => {
@@ -567,6 +691,40 @@ export default function LessonScreen() {
     try {
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
+      const writingScores = {
+        grammarScore: writingResult.grammarScore,
+        vocabularyScore: writingResult.vocabularyScore,
+        fluencyScore: writingResult.fluencyScore,
+        structureScore: writingResult.structureScore,
+      };
+
+      if (speakingOverride?.pendingEvaluation) {
+        const speakingEvaluation: SpeakingEvaluation = {
+          ...speakingOverride,
+          exchangeCount: speakingOverride.exchangeCount ?? speakingUserTurns,
+        };
+        const analysis = buildOfflineLessonAnalysis(
+          lessonType,
+          lessonFocus,
+          writingResult,
+          writingPrompt,
+        );
+
+        setLessonSession({
+          lessonType,
+          lessonFocus,
+          warmUpConversation: warmUpTurns,
+          speakingConversation: speakingTurns,
+          conversation: [...warmUpTurns, ...speakingTurns],
+          writingTask: { prompt: writingPrompt },
+          writingEvaluation: writingResult,
+          speakingEvaluation,
+          analysis,
+        });
+
+        router.push('/summary');
+        return;
+      }
 
       const fluencyScore = Math.round(speakingOverride?.fluencyScore ?? 0);
       const confidenceScore = Math.round(speakingOverride?.confidenceScore ?? 0);
@@ -603,13 +761,6 @@ export default function LessonScreen() {
         feedback: javiFeedback,
         pronunciationNotes: speakingOverride?.pronunciationNotes ?? [],
         exchangeCount: speakingOverride?.exchangeCount ?? speakingUserTurns,
-      };
-
-      const writingScores = {
-        grammarScore: writingResult.grammarScore,
-        vocabularyScore: writingResult.vocabularyScore,
-        fluencyScore: writingResult.fluencyScore,
-        structureScore: writingResult.structureScore,
       };
 
       const analysisJson = await analyzeLessonPhases(
@@ -711,14 +862,38 @@ export default function LessonScreen() {
         return;
       }
 
+      const online = await checkIsOnline();
+      const useOfflineSpeaking = offlineSpeakingMode || !online;
+
+      if (useOfflineSpeaking) {
+        if (!offlineSpeakingMode) {
+          setOfflineSpeakingMode(true);
+        }
+        const nextTurn = speakingUserTurns + 1;
+        setSpeakingUserTurns(nextTurn);
+        showHeardTranscript('Saved offline 🎤');
+        if (speakingStepRef.current === 'conversation') {
+          await processOfflineSpeakingTurn(uri, nextTurn);
+        } else {
+          setVoiceStateSafe('idle');
+        }
+        return;
+      }
+
       const result = await transcribeSpanishAudio(uri);
       if (!result.ok) {
         setVoiceStateSafe('idle');
-        setVoiceError(
-          result.reason === 'api'
-            ? 'Connection issue — check your internet'
-            : "Javi didn't catch that — try again 🎤",
-        );
+        if (result.reason === 'offline' || result.reason === 'api') {
+          const nextTurn = speakingUserTurns + 1;
+          setSpeakingUserTurns(nextTurn);
+          setOfflineSpeakingMode(true);
+          showHeardTranscript('Saved offline 🎤');
+          if (speakingStepRef.current === 'conversation') {
+            await processOfflineSpeakingTurn(uri, nextTurn);
+          }
+          return;
+        }
+        setVoiceError("Javi didn't catch that — try again 🎤");
         return;
       }
 
@@ -756,6 +931,9 @@ export default function LessonScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
+      {phase === 'speaking' && offlineSpeakingMode ? (
+        <OfflineBanner message="📡 Offline — your speaking will be saved for review later" />
+      ) : null}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}>

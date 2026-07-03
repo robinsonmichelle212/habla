@@ -78,13 +78,16 @@ export type LessonBreakdown = {
 };
 
 export type SpeakingHistoryRecord = {
-  fluencyScore: number;
-  confidenceScore: number;
-  vocabularyRangeScore: number;
-  naturalFlowScore: number;
-  combinedScore: number;
+  fluencyScore: number | null;
+  confidenceScore: number | null;
+  vocabularyRangeScore: number | null;
+  naturalFlowScore: number | null;
+  combinedScore: number | null;
   javiFeedback: string;
   exchangeCount: number;
+  pendingEvaluation?: boolean;
+  expired?: boolean;
+  audioPaths?: string[];
 };
 
 export type LessonHistoryEntry = {
@@ -318,18 +321,47 @@ function normalizeSpeakingRecord(raw: unknown): SpeakingHistoryRecord | undefine
   if (!raw || typeof raw !== 'object') return undefined;
   const obj = raw as Partial<SpeakingHistoryRecord> & {
     attempt1Score?: number;
-    combinedScore?: number;
+    combinedScore?: number | null;
   };
-  if (obj.fluencyScore != null || obj.combinedScore != null || obj.attempt1Score != null) {
-    const legacyCombined = toScore(obj.combinedScore ?? obj.attempt1Score ?? 0);
+
+  const pendingEvaluation = Boolean(obj.pendingEvaluation);
+  const expired = Boolean(obj.expired);
+
+  if (
+    obj.fluencyScore != null ||
+    obj.combinedScore != null ||
+    obj.attempt1Score != null ||
+    pendingEvaluation ||
+    expired
+  ) {
+    const legacyCombined =
+      obj.combinedScore != null
+        ? obj.combinedScore
+        : obj.attempt1Score != null
+          ? toScore(obj.attempt1Score)
+          : null;
+
+    const scoreOrNull = (value: unknown): number | null => {
+      if (value == null) return pendingEvaluation || expired ? null : 0;
+      return toScore(value);
+    };
+
     return {
-      fluencyScore: toScore(obj.fluencyScore ?? legacyCombined),
-      confidenceScore: toScore(obj.confidenceScore ?? legacyCombined),
-      vocabularyRangeScore: toScore(obj.vocabularyRangeScore ?? legacyCombined),
-      naturalFlowScore: toScore(obj.naturalFlowScore ?? legacyCombined),
-      combinedScore: toScore(obj.combinedScore ?? legacyCombined),
+      fluencyScore: scoreOrNull(obj.fluencyScore ?? legacyCombined),
+      confidenceScore: scoreOrNull(obj.confidenceScore ?? legacyCombined),
+      vocabularyRangeScore: scoreOrNull(obj.vocabularyRangeScore ?? legacyCombined),
+      naturalFlowScore: scoreOrNull(obj.naturalFlowScore ?? legacyCombined),
+      combinedScore:
+        obj.combinedScore === null || pendingEvaluation || expired
+          ? legacyCombined
+          : scoreOrNull(obj.combinedScore ?? legacyCombined),
       javiFeedback: typeof obj.javiFeedback === 'string' ? obj.javiFeedback : '',
-      exchangeCount: Math.max(1, Math.trunc(Number(obj.exchangeCount) || 1)),
+      exchangeCount: Math.max(0, Math.trunc(Number(obj.exchangeCount) || 0)),
+      pendingEvaluation,
+      expired,
+      audioPaths: Array.isArray(obj.audioPaths)
+        ? obj.audioPaths.filter((p): p is string => typeof p === 'string')
+        : undefined,
     };
   }
   return undefined;
@@ -417,6 +449,64 @@ export async function appendLessonHistory(entry: LessonHistoryEntry): Promise<vo
   const current = await getLessonHistory();
   const next = [...current, entry].slice(-MAX_LESSON_HISTORY);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+}
+
+function findLessonHistoryIndex(
+  history: LessonHistoryEntry[],
+  date: string,
+  lessonType: string,
+): number {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const entry = history[i];
+    if (entry.date === date && entry.lessonType === lessonType) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+export async function updateLessonHistorySpeaking(
+  date: string,
+  lessonType: string,
+  speaking: SpeakingHistoryRecord,
+  overallScore?: number,
+): Promise<boolean> {
+  const history = await getLessonHistory();
+  const idx = findLessonHistoryIndex(history, date, lessonType);
+  if (idx < 0) return false;
+
+  const entry = history[idx];
+  history[idx] = {
+    ...entry,
+    overallScore: overallScore ?? entry.overallScore,
+    speaking,
+  };
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  return true;
+}
+
+export async function markLessonSpeakingExpired(date: string, lessonType: string): Promise<boolean> {
+  const history = await getLessonHistory();
+  const idx = findLessonHistoryIndex(history, date, lessonType);
+  if (idx < 0) return false;
+
+  const entry = history[idx];
+  history[idx] = {
+    ...entry,
+    speaking: {
+      fluencyScore: null,
+      confidenceScore: null,
+      vocabularyRangeScore: null,
+      naturalFlowScore: null,
+      combinedScore: null,
+      javiFeedback: 'Speaking expired — not evaluated',
+      exchangeCount: entry.speaking?.exchangeCount ?? 0,
+      pendingEvaluation: false,
+      expired: true,
+    },
+  };
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  return true;
 }
 
 function normalizeDrillHistory(raw: unknown): DrillHistoryEntry[] {

@@ -14,8 +14,12 @@ export function computeSpeakingCombinedScore(metrics: {
 }
 
 export function speakingPhaseSummaryLabel(
-  combinedScore: number,
+  combinedScore: number | null,
   exchangeCount: number,
+  pending = false,
 ): string {
-  return `Fluency ${Math.round(combinedScore)}% · ${exchangeCount} exchange${exchangeCount === 1 ? '' : 's'}`;
+  if (pending) {
+    return `Speaking saved — ${exchangeCount} exchange${exchangeCount === 1 ? '' : 's'} pending evaluation ⏳`;
+  }
+  return `Fluency ${Math.round(combinedScore ?? 0)}% · ${exchangeCount} exchange${exchangeCount === 1 ? '' : 's'}`;
 }

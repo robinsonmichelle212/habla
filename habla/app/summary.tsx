@@ -4,7 +4,7 @@ import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from
 import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChallenge } from '@/lib/daily-challenge';
 import { useSummaryReveal } from '@/hooks/use-summary-reveal';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
-import { addGems, calculateLessonGems, getTotalGems } from '@/lib/gems';
+import { addGems, calculateLessonGems, getTotalGems, OFFLINE_SPEAKING_ATTEMPT_GEMS } from '@/lib/gems';
 import {
   checkPersonalBestMilestone,
   milestonesOnLessonComplete,
@@ -57,6 +57,16 @@ function splitBilingualMessage(message: string): { spanish: string; english?: st
     spanish: message.slice(0, idx).trim(),
     english: message.slice(idx + 3).trim(),
   };
+}
+
+function formatSpeakingMetric(
+  value: number | null | undefined,
+  pending: boolean,
+  expired: boolean,
+): string {
+  if (expired) return 'Expired';
+  if (pending || value == null) return 'Pending';
+  return `${Math.round(value)}%`;
 }
 
 export default function SummaryScreen() {
@@ -162,13 +172,18 @@ export default function SummaryScreen() {
             lessonType: lessonTypeLabel(lessonType),
             speaking: speaking
               ? {
-                  fluencyScore: speaking.fluencyScore,
-                  confidenceScore: speaking.confidenceScore,
-                  vocabularyRangeScore: speaking.vocabularyRangeScore,
-                  naturalFlowScore: speaking.naturalFlowScore,
-                  combinedScore: speaking.combinedScore,
+                  fluencyScore: speaking.pendingEvaluation ? null : speaking.fluencyScore,
+                  confidenceScore: speaking.pendingEvaluation ? null : speaking.confidenceScore,
+                  vocabularyRangeScore: speaking.pendingEvaluation
+                    ? null
+                    : speaking.vocabularyRangeScore,
+                  naturalFlowScore: speaking.pendingEvaluation ? null : speaking.naturalFlowScore,
+                  combinedScore: speaking.pendingEvaluation ? null : speaking.combinedScore,
                   javiFeedback: speaking.javiFeedback,
                   exchangeCount: speaking.exchangeCount,
+                  pendingEvaluation: speaking.pendingEvaluation,
+                  expired: speaking.expired,
+                  audioPaths: speaking.audioPaths,
                 }
               : undefined,
           };
@@ -609,30 +624,74 @@ export default function SummaryScreen() {
 
                 {speaking ? (
                   <View style={[styles.writingCard, styles.supplementaryCard]}>
-                    <Text style={styles.writingTitle}>🎤 Speaking — fluency</Text>
-                    <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Fluency</Text>
-                      <Text style={styles.writingValue}>{Math.round(speaking.fluencyScore)}%</Text>
-                    </View>
-                    <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Confidence</Text>
-                      <Text style={styles.writingValue}>{Math.round(speaking.confidenceScore)}%</Text>
-                    </View>
-                    <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Vocabulary range</Text>
-                      <Text style={styles.writingValue}>
-                        {Math.round(speaking.vocabularyRangeScore)}%
+                    <Text style={styles.writingTitle}>
+                      {speaking.expired
+                        ? '🎤 Speaking — expired'
+                        : speaking.pendingEvaluation
+                          ? '🎤 Speaking — Pending evaluation when back online ⏳'
+                          : '🎤 Speaking — fluency'}
+                    </Text>
+                    {speaking.pendingEvaluation || speaking.expired ? (
+                      <Text style={styles.pendingSpeakingNote}>
+                        {speaking.expired
+                          ? 'Speaking expired — not evaluated'
+                          : `Your ${speaking.exchangeCount} recording${speaking.exchangeCount === 1 ? '' : 's'} will be evaluated when you are back online. +${OFFLINE_SPEAKING_ATTEMPT_GEMS} 💎 for completing speaking offline.`}
                       </Text>
-                    </View>
-                    <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Natural flow</Text>
-                      <Text style={styles.writingValue}>{Math.round(speaking.naturalFlowScore)}%</Text>
-                    </View>
-                    <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Overall</Text>
-                      <Text style={styles.writingValue}>{Math.round(speaking.combinedScore)}%</Text>
-                    </View>
-                    {speaking.javiFeedback ? (
+                    ) : (
+                      <>
+                        <View style={styles.writingRow}>
+                          <Text style={styles.writingLabel}>Fluency</Text>
+                          <Text style={styles.writingValue}>
+                            {formatSpeakingMetric(
+                              speaking.fluencyScore,
+                              !!speaking.pendingEvaluation,
+                              !!speaking.expired,
+                            )}
+                          </Text>
+                        </View>
+                        <View style={styles.writingRow}>
+                          <Text style={styles.writingLabel}>Confidence</Text>
+                          <Text style={styles.writingValue}>
+                            {formatSpeakingMetric(
+                              speaking.confidenceScore,
+                              !!speaking.pendingEvaluation,
+                              !!speaking.expired,
+                            )}
+                          </Text>
+                        </View>
+                        <View style={styles.writingRow}>
+                          <Text style={styles.writingLabel}>Vocabulary range</Text>
+                          <Text style={styles.writingValue}>
+                            {formatSpeakingMetric(
+                              speaking.vocabularyRangeScore,
+                              !!speaking.pendingEvaluation,
+                              !!speaking.expired,
+                            )}
+                          </Text>
+                        </View>
+                        <View style={styles.writingRow}>
+                          <Text style={styles.writingLabel}>Natural flow</Text>
+                          <Text style={styles.writingValue}>
+                            {formatSpeakingMetric(
+                              speaking.naturalFlowScore,
+                              !!speaking.pendingEvaluation,
+                              !!speaking.expired,
+                            )}
+                          </Text>
+                        </View>
+                        <View style={styles.writingRow}>
+                          <Text style={styles.writingLabel}>Overall</Text>
+                          <Text style={styles.writingValue}>
+                            {formatSpeakingMetric(
+                              speaking.combinedScore,
+                              !!speaking.pendingEvaluation,
+                              !!speaking.expired,
+                            )}
+                          </Text>
+                        </View>
+                      </>
+                    )}
+                    {speaking.javiFeedback && !speaking.pendingEvaluation && !speaking.expired ? (
                       <Text style={styles.speakingFeedbackPlain}>{speaking.javiFeedback}</Text>
                     ) : null}
                   </View>
@@ -984,6 +1043,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.muted,
     marginTop: 10,
+    lineHeight: 20,
+  },
+  pendingSpeakingNote: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
     lineHeight: 20,
   },
   speakingFeedback: {

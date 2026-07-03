@@ -3,9 +3,12 @@ import { Stack, useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { View } from 'react-native';
 import 'react-native-reanimated';
 
 import { MilestoneProvider } from '@/contexts/milestone-context';
+import { NetworkProvider, useNetworkStatus } from '@/contexts/network-context';
+import { OfflineBanner } from '@/components/offline-banner';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
@@ -15,6 +18,12 @@ import { notifyWrappedReadyNow, scheduleWrappedMonthlyNotification } from '@/lib
 export const unstable_settings = {
   anchor: '(tabs)',
 };
+
+function GlobalOfflineBanner() {
+  const { isOnline, hydrated } = useNetworkStatus();
+  if (!hydrated || isOnline) return null;
+  return <OfflineBanner message="📡 Offline mode — core features available" />;
+}
 
 function WrappedBootstrap() {
   const router = useRouter();
@@ -38,6 +47,9 @@ function WrappedBootstrap() {
         } else {
           router.push('/wrapped');
         }
+      }
+      if (type === 'speaking-evaluated') {
+        router.push('/progress');
       }
       if (type === 'gem-unlock-expiry') {
         const roundId = response.notification.request.content.data?.roundId;
@@ -65,9 +77,12 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <MilestoneProvider>
-        <WrappedBootstrap />
-        <Stack>
+      <NetworkProvider>
+        <View style={{ flex: 1 }}>
+          <GlobalOfflineBanner />
+          <MilestoneProvider>
+            <WrappedBootstrap />
+            <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="lesson" options={{ headerShown: false }} />
           <Stack.Screen name="practice" options={{ headerShown: false }} />
@@ -84,7 +99,9 @@ export default function RootLayout() {
           <Stack.Screen name="tense-guide" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="auto" />
-      </MilestoneProvider>
+          </MilestoneProvider>
+        </View>
+      </NetworkProvider>
     </ThemeProvider>
   );
 }
