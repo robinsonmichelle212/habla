@@ -78,11 +78,13 @@ export type LessonBreakdown = {
 };
 
 export type SpeakingHistoryRecord = {
-  attempt1Score: number;
-  attempt2Score: number | null;
+  fluencyScore: number;
+  confidenceScore: number;
+  vocabularyRangeScore: number;
+  naturalFlowScore: number;
   combinedScore: number;
-  improved: boolean;
   javiFeedback: string;
+  exchangeCount: number;
 };
 
 export type LessonHistoryEntry = {
@@ -314,18 +316,23 @@ export function getCoveredVocabThemes(history: LessonHistoryEntry[]): string[] {
 
 function normalizeSpeakingRecord(raw: unknown): SpeakingHistoryRecord | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
-  const obj = raw as Partial<SpeakingHistoryRecord>;
-  if (obj.attempt1Score == null && obj.combinedScore == null) return undefined;
-  return {
-    attempt1Score: toScore(obj.attempt1Score ?? 0),
-    attempt2Score:
-      obj.attempt2Score == null || obj.attempt2Score === undefined
-        ? null
-        : toScore(obj.attempt2Score),
-    combinedScore: toScore(obj.combinedScore ?? obj.attempt1Score ?? 0),
-    improved: Boolean(obj.improved),
-    javiFeedback: typeof obj.javiFeedback === 'string' ? obj.javiFeedback : '',
+  const obj = raw as Partial<SpeakingHistoryRecord> & {
+    attempt1Score?: number;
+    combinedScore?: number;
   };
+  if (obj.fluencyScore != null || obj.combinedScore != null || obj.attempt1Score != null) {
+    const legacyCombined = toScore(obj.combinedScore ?? obj.attempt1Score ?? 0);
+    return {
+      fluencyScore: toScore(obj.fluencyScore ?? legacyCombined),
+      confidenceScore: toScore(obj.confidenceScore ?? legacyCombined),
+      vocabularyRangeScore: toScore(obj.vocabularyRangeScore ?? legacyCombined),
+      naturalFlowScore: toScore(obj.naturalFlowScore ?? legacyCombined),
+      combinedScore: toScore(obj.combinedScore ?? legacyCombined),
+      javiFeedback: typeof obj.javiFeedback === 'string' ? obj.javiFeedback : '',
+      exchangeCount: Math.max(1, Math.trunc(Number(obj.exchangeCount) || 1)),
+    };
+  }
+  return undefined;
 }
 
 function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {

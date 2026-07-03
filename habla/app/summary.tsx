@@ -162,11 +162,13 @@ export default function SummaryScreen() {
             lessonType: lessonTypeLabel(lessonType),
             speaking: speaking
               ? {
-                  attempt1Score: speaking.attempt1Score,
-                  attempt2Score: speaking.attempt2Score,
+                  fluencyScore: speaking.fluencyScore,
+                  confidenceScore: speaking.confidenceScore,
+                  vocabularyRangeScore: speaking.vocabularyRangeScore,
+                  naturalFlowScore: speaking.naturalFlowScore,
                   combinedScore: speaking.combinedScore,
-                  improved: speaking.improved,
                   javiFeedback: speaking.javiFeedback,
+                  exchangeCount: speaking.exchangeCount,
                 }
               : undefined,
           };
@@ -409,7 +411,7 @@ export default function SummaryScreen() {
               />
               <Animated.View style={{ opacity: reveal.scoreOpacity }}>
                 <Text style={styles.scoreHint}>
-                  {lessonType === 'Read' ? 'comprehension + discussion' : 'writing + speaking combined'}
+                  {lessonType === 'Read' ? 'comprehension + discussion' : 'accuracy in writing · fluency in speaking'}
                 </Text>
               </Animated.View>
             </View>
@@ -588,7 +590,7 @@ export default function SummaryScreen() {
                 {writing ? (
                   <View style={[styles.writingCard, styles.supplementaryCard]}>
                     <Text style={styles.writingTitle}>
-                      {lessonType === 'Read' ? 'Comprehension responses' : 'Writing scores'}
+                      {lessonType === 'Read' ? 'Comprehension responses' : '✍️ Writing — accuracy'}
                     </Text>
                     <View style={styles.writingRow}>
                       <Text style={styles.writingLabel}>Grammar</Text>
@@ -599,7 +601,7 @@ export default function SummaryScreen() {
                       <Text style={styles.writingValue}>{Math.round(writing.vocabularyScore)}%</Text>
                     </View>
                     <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Fluency</Text>
+                      <Text style={styles.writingLabel}>Conjugations</Text>
                       <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
                     </View>
                   </View>
@@ -607,33 +609,31 @@ export default function SummaryScreen() {
 
                 {speaking ? (
                   <View style={[styles.writingCard, styles.supplementaryCard]}>
-                    <Text style={styles.writingTitle}>Speaking scores</Text>
+                    <Text style={styles.writingTitle}>🎤 Speaking — fluency</Text>
                     <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Attempt 1</Text>
-                      <Text style={styles.writingValue}>{Math.round(speaking.attempt1Score)}%</Text>
+                      <Text style={styles.writingLabel}>Fluency</Text>
+                      <Text style={styles.writingValue}>{Math.round(speaking.fluencyScore)}%</Text>
                     </View>
                     <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Attempt 2</Text>
+                      <Text style={styles.writingLabel}>Confidence</Text>
+                      <Text style={styles.writingValue}>{Math.round(speaking.confidenceScore)}%</Text>
+                    </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Vocabulary range</Text>
                       <Text style={styles.writingValue}>
-                        {speaking.attempt2Score != null
-                          ? `${Math.round(speaking.attempt2Score)}%`
-                          : 'Skipped'}
+                        {Math.round(speaking.vocabularyRangeScore)}%
                       </Text>
                     </View>
                     <View style={styles.writingRow}>
-                      <Text style={styles.writingLabel}>Combined</Text>
-                      <Text style={styles.writingValue}>
-                        {Math.round(speaking.combinedScore)}%
-                        {speaking.improved ? ' · Improved' : ''}
-                      </Text>
+                      <Text style={styles.writingLabel}>Natural flow</Text>
+                      <Text style={styles.writingValue}>{Math.round(speaking.naturalFlowScore)}%</Text>
+                    </View>
+                    <View style={styles.writingRow}>
+                      <Text style={styles.writingLabel}>Overall</Text>
+                      <Text style={styles.writingValue}>{Math.round(speaking.combinedScore)}%</Text>
                     </View>
                     {speaking.javiFeedback ? (
-                      <InteractiveSpanishText
-                        text={speaking.javiFeedback}
-                        source="conversation"
-                        style={styles.speakingFeedback}
-                        contextSentence={speaking.javiFeedback}
-                      />
+                      <Text style={styles.speakingFeedbackPlain}>{speaking.javiFeedback}</Text>
                     ) : null}
                   </View>
                 ) : null}
@@ -978,6 +978,13 @@ const styles = StyleSheet.create({
     color: palette.muted,
     marginTop: 8,
     lineHeight: 18,
+  },
+  speakingFeedbackPlain: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 10,
+    lineHeight: 20,
   },
   speakingFeedback: {
     fontSize: 14,

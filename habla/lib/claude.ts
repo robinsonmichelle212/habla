@@ -401,9 +401,13 @@ Do not use this marker until you have:
 
 const SPEAKING_PHASE_APPENDIX = `
 LESSON PHASE: SPEAKING (voice only — learner listens to you).
+- This is a FLUENCY phase — not accuracy testing. The learner does NOT need to reproduce anything they wrote.
 - Keep Spanish replies to 1–2 short sentences only. Plain spoken Spanish, no markdown.
-- Respond conversationally to what they said.
-- Gently correct one mistake if needed, then continue naturally.`;
+- Respond conversationally to what they said — ask a follow-up, react naturally, keep the chat flowing.
+- If they make a significant error, correct it very gently inline in one short clause, then continue immediately:
+  e.g. "Sí, exactamente — fuiste, not ibas in that context. Anyway, tell me more about..."
+- Never stop the flow for a correction. Never evaluate or score them during the conversation.
+- Use today's lesson vocabulary and grammar naturally in your replies — model correct usage without lecturing.`;
 
 export async function generateWarmUpOpening(
   lessonType: LessonType,
@@ -466,7 +470,7 @@ ${progressHint}`,
 
 export async function generateSpeakingIntro(
   lessonType: LessonType,
-  taskPrompt: string,
+  writingTaskPrompt: string,
   focus: LessonFocusContext,
   topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
@@ -475,16 +479,22 @@ export async function generateSpeakingIntro(
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 350,
+    max_tokens: 400,
     system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}`,
     messages: [
       {
         role: 'user',
-        content: `The learner completed a writing task. Now they must speak the same response aloud.
-Start with "Ahora dímelo." then repeat this scenario in Spanish (1–2 sentences), then Translate: line.
+        content: `The learner just finished a WRITING task on a topic. Now start the independent SPEAKING phase.
 
-Writing task prompt:
-${taskPrompt}`,
+Writing task they completed (same topic — do NOT ask them to repeat or remember this):
+${writingTaskPrompt}
+
+Your spoken intro MUST follow this structure in Spanish (then Translate: line):
+1) "Ahora vamos a hablar." 
+2) Brief English encouragement on its own line: "Now let's talk. Forget what you wrote — just speak naturally."
+3) A FRESH related question — same theme, different angle. NOT the same question as the writing task.
+   Example: if writing was "Describe what you did last weekend", speaking could be "What was the best part of your weekend and why?"
+4) Keep the Spanish portion to 2–3 short sentences total. End with Translate: line.`,
       },
     ],
   });
@@ -492,12 +502,12 @@ ${taskPrompt}`,
   return extractText(response);
 }
 
-export async function askJaviSpeaking(
+export async function askJaviSpeakingConversation(
   lessonType: LessonType,
   userMessage: string,
   priorExchanges: JaviMessage[],
   focus: LessonFocusContext,
-  writingContext: { originalText: string; correctedText: string; corrections: { mistake: string; correction: string }[] },
+  speakingTopic: string,
   topErrors: ErrorDNAInput[] = [],
 ): Promise<string> {
   const anthropic = getClient();
@@ -507,12 +517,7 @@ export async function askJaviSpeaking(
     model,
     max_tokens: 280,
     system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}
-The learner's written version was:
-${writingContext.originalText}
-Corrected version:
-${writingContext.correctedText}
-Key corrections from writing:
-${JSON.stringify(writingContext.corrections.slice(0, 4))}`,
+Today's speaking theme (keep conversation on this topic): ${speakingTopic}`,
     messages: [
       ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
       { role: 'user' as const, content: userMessage.trim() },
@@ -524,12 +529,77 @@ ${JSON.stringify(writingContext.corrections.slice(0, 4))}`,
 
 export type SpeakingEvaluationJson = {
   score: number;
-  accuracyVsWritten: number;
-  correctionsApplied: boolean;
+  fluencyScore: number;
+  confidenceScore: number;
+  vocabularyRangeScore: number;
+  naturalFlowScore: number;
   pronunciationNotes: string[];
   feedback: string;
 };
 
+export async function evaluateSpeakingFluency(
+  lessonType: LessonType,
+  speakingTopic: string,
+  speakingTranscripts: string[],
+  speakingConversation: JaviMessage[],
+): Promise<SpeakingEvaluationJson> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi evaluating spoken Spanish at B1 level for FLUENCY — not accuracy or reproduction of written text.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Evaluate the learner's speaking phase on fluency metrics only.
+
+Return JSON exactly:
+{
+  "fluencyScore": 0-100 integer (did they keep talking without long pauses / hesitation?),
+  "confidenceScore": 0-100 integer (did they attempt complex sentences and take risks?),
+  "vocabularyRangeScore": 0-100 integer (did they use varied vocabulary on the topic?),
+  "naturalFlowScore": 0-100 integer (did it sound conversational and natural?),
+  "score": 0-100 integer (overall speaking — average of the four scores above),
+  "pronunciationNotes": array of up to 3 short notes if transcripts suggest unclear words,
+  "feedback": 2 sentences encouraging feedback from Javi in English — focus on fluency strengths, not grammar nitpicks
+}
+
+Do NOT evaluate:
+- Reproducing a written response
+- Perfect grammar accuracy
+- Matching vocabulary from a writing task
+
+Lesson type: ${lessonType}
+Speaking topic: ${speakingTopic}
+Whisper transcripts: ${JSON.stringify(speakingTranscripts)}
+Speaking conversation: ${JSON.stringify(speakingConversation)}
+${lessonType === 'Structure' ? '\nBonus: note if word order sounded natural in conversation.' : ''}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 700,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as SpeakingEvaluationJson;
+  const fluency = Math.max(0, Math.min(100, Math.round(parsed.fluencyScore ?? 0)));
+  const confidence = Math.max(0, Math.min(100, Math.round(parsed.confidenceScore ?? 0)));
+  const vocabularyRange = Math.max(0, Math.min(100, Math.round(parsed.vocabularyRangeScore ?? 0)));
+  const naturalFlow = Math.max(0, Math.min(100, Math.round(parsed.naturalFlowScore ?? 0)));
+  const score = Math.round((fluency + confidence + vocabularyRange + naturalFlow) / 4);
+  return {
+    ...parsed,
+    fluencyScore: fluency,
+    confidenceScore: confidence,
+    vocabularyRangeScore: vocabularyRange,
+    naturalFlowScore: naturalFlow,
+    score,
+    pronunciationNotes: Array.isArray(parsed.pronunciationNotes) ? parsed.pronunciationNotes : [],
+    feedback: typeof parsed.feedback === 'string' ? parsed.feedback : '',
+  };
+}
+
+/** @deprecated Legacy attempt-based evaluation — use evaluateSpeakingFluency */
 export async function evaluateSpeakingPhase(
   lessonType: LessonType,
   taskPrompt: string,
@@ -723,16 +793,13 @@ export async function analyzeLessonPhases(
     overallScore = Math.round((writingAvg + speakingScore) / 2);
   }
 
-  const weakFromSpeaking = speakingEvaluation.correctionsApplied
-    ? []
-    : ['Apply writing corrections when speaking'];
-  const weakAreas = [...(analysis.weakAreas ?? []), ...weakFromSpeaking].slice(0, 3);
+  const fluencyDetail = `Speaking fluency ${speakingScore}% — flow ${speakingEvaluation.naturalFlowScore ?? speakingScore}%`;
 
   return {
     ...analysis,
     overallScore,
-    correctnessScore: Math.round((analysis.correctnessScore + speakingEvaluation.accuracyVsWritten) / 2),
-    weakAreas,
+    correctnessScore: analysis.correctnessScore,
+    weakAreas: (analysis.weakAreas ?? []).slice(0, 3),
     breakdown: {
       ...analysis.breakdown,
       ...(isStructure
@@ -746,16 +813,11 @@ export async function analyzeLessonPhases(
                 wordOrderMistakes: [],
               }),
               score: Math.round(
-                (structureScore +
-                  (analysis.breakdown.structure?.score ?? structureScore) +
-                  speakingEvaluation.accuracyVsWritten) /
-                  3,
+                (structureScore + (analysis.breakdown.structure?.score ?? structureScore)) / 2,
               ),
               details: [
                 ...(analysis.breakdown.structure?.details ?? []).slice(0, 1),
-                speakingEvaluation.correctionsApplied
-                  ? 'Word order carried into speech'
-                  : 'Focus on word order when speaking corrected sentences',
+                'Natural word order in free conversation',
               ].filter(Boolean),
             },
           }
@@ -765,13 +827,11 @@ export async function analyzeLessonPhases(
         score: Math.round((analysis.breakdown.fluency.score + speakingScore) / 2),
         details: [
           ...(analysis.breakdown.fluency.details ?? []).slice(0, 1),
-          speakingEvaluation.correctionsApplied
-            ? 'Writing corrections carried into speech'
-            : 'Try to apply your writing corrections when you speak',
+          fluencyDetail,
         ].filter(Boolean),
         description:
           analysis.breakdown.fluency.description ??
-          `Speaking score ${speakingScore}% · accuracy vs written ${speakingEvaluation.accuracyVsWritten}%`,
+          `Writing fluency ${writingScores.fluencyScore}% · speaking fluency ${speakingScore}%`,
       },
     },
   };
