@@ -132,10 +132,20 @@ export type GemShopProgress = Record<BonusRoundId, RoundProgress>;
 
 export type GemShopStats = {
   totalGemsSpent: number;
-  roundsUnlocked: number;
+  roundsMastered: number;
   eliteBadgesEarned: number;
   mostPlayedRound: BonusRoundDef | null;
 };
+
+export type RoundShopState =
+  | { kind: 'mastered' }
+  | { kind: 'play'; level: RoundLevel }
+  | {
+      kind: 'unlock';
+      level: RoundLevel;
+      cost: number;
+      previousCompletedLevel: RoundLevel | null;
+    };
 
 export type LevelUnlockTarget = {
   roundId: BonusRoundId;
@@ -433,6 +443,56 @@ export function getNextUnlockLevel(
   return next <= 5 ? next : null;
 }
 
+export function isRoundMastered(progress: GemShopProgress, roundId: BonusRoundId): boolean {
+  return isLevelCompleted(progress, roundId, 5);
+}
+
+export function countMasteredRounds(progress: GemShopProgress): number {
+  return BONUS_ROUNDS.reduce((count, round) => count + (isRoundMastered(progress, round.id) ? 1 : 0), 0);
+}
+
+export function getRoundShopState(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  now = Date.now(),
+): RoundShopState {
+  if (isRoundMastered(progress, roundId)) {
+    return { kind: 'mastered' };
+  }
+
+  const pending = getActivePendingUnlock(progress[roundId].unlocks, now);
+  if (pending) {
+    return { kind: 'play', level: pending.level };
+  }
+
+  const next = getNextUnlockLevel(progress, roundId, now);
+  if (!next) {
+    return { kind: 'mastered' };
+  }
+
+  const previousCompletedLevel =
+    next > 1 && isLevelCompleted(progress, roundId, (next - 1) as RoundLevel)
+      ? ((next - 1) as RoundLevel)
+      : null;
+
+  return {
+    kind: 'unlock',
+    level: next,
+    cost: getLevelCost(roundId, next),
+    previousCompletedLevel,
+  };
+}
+
+export function canAffordRoundNextLevel(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  gems: number,
+  now = Date.now(),
+): boolean {
+  const state = getRoundShopState(progress, roundId, now);
+  return state.kind === 'unlock' && gems >= state.cost;
+}
+
 export function countUnlockedLevels(progress: GemShopProgress, now = Date.now()): number {
   return BONUS_ROUNDS.reduce((sum, r) => {
     const round = progress[r.id];
@@ -583,7 +643,7 @@ export async function getGemShopStats(): Promise<GemShopStats> {
 
   return {
     totalGemsSpent,
-    roundsUnlocked: countUnlockedLevels(progress),
+    roundsMastered: countMasteredRounds(progress),
     eliteBadgesEarned,
     mostPlayedRound: mostPlayed,
   };

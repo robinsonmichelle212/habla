@@ -1,4 +1,3 @@
-import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ReadTextView } from '@/components/read-text-view';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { VoiceConversationLog } from '@/components/voice-conversation-log';

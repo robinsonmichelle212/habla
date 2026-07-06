@@ -1,5 +1,4 @@
 import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
-import { CulturalNotesSection } from '@/components/cultural-notes-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
 import { MilestonesSection } from '@/components/milestones-section';
 import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
@@ -16,7 +15,6 @@ import {
   TOTAL_CURRICULUM_WEEKS,
   type GrammarCurriculumState,
 } from '@/lib/grammar-curriculum';
-import { getCulturalNotes } from '@/lib/cultural-notes';
 import { getMilestoneHistory } from '@/lib/milestones';
 import {
   getCoveredVocabThemesFromStorage,
@@ -90,7 +88,6 @@ export default function LevelScreen() {
   const insets = useSafeAreaInsets();
   const [loading, setLoading] = useState(true);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
-  const [culturalNoteCount, setCulturalNoteCount] = useState(0);
   const [milestonesAchieved, setMilestonesAchieved] = useState(0);
   const [grammarCurriculum, setGrammarCurriculum] = useState<GrammarCurriculumState | null>(null);
   const [vocabCovered, setVocabCovered] = useState<Set<string>>(new Set());
@@ -133,7 +130,6 @@ export default function LevelScreen() {
             activeErrors,
             archivedErrors,
             reminder,
-            culturalNotes,
             milestoneHistory,
             skippedAssessment,
             onboardingProfile,
@@ -147,7 +143,6 @@ export default function LevelScreen() {
             getErrorDNA(),
             getArchivedErrorDNA(),
             getReminderTime(),
-            getCulturalNotes(),
             getMilestoneHistory(),
             isAssessmentSkipped(),
             getOnboardingProfile(),
@@ -170,7 +165,6 @@ export default function LevelScreen() {
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
           setReminderTimeState(reminder);
-          setCulturalNoteCount(culturalNotes.length);
           const achievedIds = new Set(
             milestoneHistory.map((m) => m.id),
           );
@@ -214,10 +208,6 @@ export default function LevelScreen() {
   const grammarSummary = grammarCurriculum
     ? `Week ${grammarCurriculum.currentWeek} of ${TOTAL_CURRICULUM_WEEKS} — ${grammarCurriculum.currentTopic} · ${grammarDaysLeft} day${grammarDaysLeft === 1 ? '' : 's'} left`
     : '20-week grammar path';
-  const culturalSummary =
-    culturalNoteCount > 0
-      ? `${culturalNoteCount} note${culturalNoteCount === 1 ? '' : 's'} collected`
-      : 'Complete Read lessons to collect notes';
   const milestonesSummary = `${milestonesAchieved} of 6 achieved`;
 
   return (
@@ -306,14 +296,6 @@ export default function LevelScreen() {
                 weeks, conjugation tables, and tense guides
               </Text>
             </Pressable>
-          </CollapsibleProfileSection>
-
-          <CollapsibleProfileSection
-            title="Cultural Notes"
-            summary={culturalSummary}
-            expanded={!!expandedSections.cultural}
-            onToggle={() => toggleSection('cultural')}>
-            <CulturalNotesSection hideTitle />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection

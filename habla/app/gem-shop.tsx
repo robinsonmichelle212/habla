@@ -1,22 +1,20 @@
 import {
   BONUS_ROUNDS,
+  canAffordRoundNextLevel,
   dismissShopBadge,
   getAffordableNextLevels,
   getGemShopProgress,
   getGemShopStats,
   getLevelCost,
-  getNextUnlockLevel,
   getRoundDef,
-  isLevelCompleted,
-  isLevelPlayable,
+  getRoundShopState,
   purchaseLevel,
-  ROUND_LEVELS,
   takeExpiredNotices,
-  TOTAL_LEVEL_SLOTS,
   type BonusRoundId,
   type ExpiredUnlockNotice,
   type GemShopProgress,
   type RoundLevel,
+  type RoundShopState,
 } from '@/lib/gem-shop';
 import {
   formatExpiryCountdown,
@@ -182,63 +180,62 @@ export default function GemShopScreen() {
     launchRound(roundId, level);
   };
 
-  const renderLevelButton = (roundId: BonusRoundId, level: RoundLevel, roundProgress: GemShopProgress[BonusRoundId]) => {
-    const playable = isLevelPlayable(progress!, roundId, level, tick);
-    const completed = isLevelCompleted(progress!, roundId, level);
-    const pending = getActivePendingUnlock(roundProgress.unlocks, tick);
-    const nextUnlock = getNextUnlockLevel(progress!, roundId, tick);
-    const isNext = nextUnlock === level;
-    const isCurrent = pending?.level === level;
-    const cost = getLevelCost(roundId, level);
-    const busy = purchasing === `${roundId}-${level}`;
-    const canAfford = gems >= cost;
+  const renderRoundAction = (roundId: BonusRoundId, shopState: RoundShopState) => {
+    const busy =
+      shopState.kind === 'unlock' && purchasing === `${roundId}-${shopState.level}`;
+    const canAfford =
+      shopState.kind === 'unlock' ? gems >= shopState.cost : false;
+    const showAffordBadge = canAffordRoundNextLevel(progress!, roundId, gems, tick);
 
-    if (playable) {
+    if (shopState.kind === 'mastered') {
       return (
-        <Pressable
-          key={level}
-          onPress={() => handlePlay(roundId, level)}
-          style={[
-            styles.levelPill,
-            isCurrent && styles.levelPillCurrent,
-            completed && styles.levelPillCompleted,
-          ]}>
-          <Text style={styles.levelPillIcon}>{completed ? '⭐' : '▶️'}</Text>
-          <Text style={styles.levelPillLabel}>L{level}</Text>
-        </Pressable>
+        <View style={styles.masteredBadge}>
+          <Text style={styles.masteredText}>Mastered 🏆</Text>
+        </View>
       );
     }
 
-    if (isNext) {
+    if (shopState.kind === 'play') {
       return (
         <Pressable
-          key={level}
-          onPress={() => (canAfford ? requestUnlock(roundId, level) : undefined)}
-          disabled={busy || !canAfford}
-          style={[
-            styles.levelPill,
-            styles.levelPillNext,
-            !canAfford && styles.levelPillLocked,
-            busy && styles.levelPillBusy,
-          ]}>
-          {busy ? (
-            <ActivityIndicator color={palette.accent} size="small" />
-          ) : (
-            <>
-              <Text style={styles.levelPillIcon}>🔒</Text>
-              <Text style={styles.levelPillLabel}>L{level}</Text>
-              <Text style={styles.levelPillCost}>{cost}💎</Text>
-            </>
-          )}
+          onPress={() => handlePlay(roundId, shopState.level)}
+          style={({ pressed }) => [styles.actionButton, styles.actionButtonPlay, pressed && styles.actionButtonPressed]}>
+          <Text style={styles.actionButtonText}>Play Level {shopState.level} ▶</Text>
         </Pressable>
       );
     }
 
     return (
-      <View key={level} style={[styles.levelPill, styles.levelPillLocked]}>
-        <Text style={styles.levelPillIcon}>🔒</Text>
-        <Text style={styles.levelPillLabel}>L{level}</Text>
-        <Text style={styles.levelPillCostMuted}>{cost}💎</Text>
+      <View style={styles.unlockBlock}>
+        {shopState.previousCompletedLevel ? (
+          <Text style={styles.completedNote}>
+            You completed Level {shopState.previousCompletedLevel} ✅
+          </Text>
+        ) : null}
+        <Pressable
+          onPress={() => (canAfford ? requestUnlock(roundId, shopState.level) : undefined)}
+          disabled={busy || !canAfford}
+          style={({ pressed }) => [
+            styles.actionButton,
+            styles.actionButtonUnlock,
+            showAffordBadge && styles.actionButtonAffordable,
+            !canAfford && styles.actionButtonDisabled,
+            busy && styles.actionButtonBusy,
+            pressed && canAfford && styles.actionButtonPressed,
+          ]}>
+          {busy ? (
+            <ActivityIndicator color="#0B0F14" size="small" />
+          ) : (
+            <Text style={styles.actionButtonText}>
+              Unlock Level {shopState.level} — {shopState.cost} 💎
+            </Text>
+          )}
+        </Pressable>
+        {!canAfford ? (
+          <Text style={styles.needGemsText}>
+            Need {shopState.cost - gems} more gem{shopState.cost - gems === 1 ? '' : 's'}
+          </Text>
+        ) : null}
       </View>
     );
   };
@@ -271,19 +268,9 @@ export default function GemShopScreen() {
         <ScrollView
           contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 20) }]}
           showsVerticalScrollIndicator={false}>
-          <View style={styles.statsCard}>
-            <Text style={styles.statsTitle}>Your shop stats</Text>
-            <View style={styles.statsGrid}>
-              <Text style={styles.statLine}>Total gems spent: 💎 {stats.totalGemsSpent}</Text>
-              <Text style={styles.statLine}>
-                Rounds unlocked: {stats.roundsUnlocked} of {TOTAL_LEVEL_SLOTS}
-              </Text>
-              <Text style={styles.statLine}>Elite badges earned: {stats.eliteBadgesEarned} 🏆</Text>
-              <Text style={styles.statLine}>
-                Most played: {stats.mostPlayedRound ? `${stats.mostPlayedRound.emoji} ${stats.mostPlayedRound.name}` : '—'}
-              </Text>
-            </View>
-          </View>
+          <Text style={styles.statsLine}>
+            💎 {gems} gems · {stats.roundsMastered} round{stats.roundsMastered === 1 ? '' : 's'} mastered 🏆
+          </Text>
 
           {recommendation ? (
             <View style={styles.recCard}>
@@ -310,9 +297,7 @@ export default function GemShopScreen() {
             </View>
           ) : null}
 
-          <Text style={styles.subtitle}>
-            Each round has 5 levels. Unlock in order — complete within 24 hours. Replay completed levels for free.
-          </Text>
+          <Text style={styles.subtitle}>Unlock in order — complete within 24 hours.</Text>
 
           {expiredNotices.map((notice) => {
             const def = getRoundDef(notice.roundId);
@@ -338,7 +323,9 @@ export default function GemShopScreen() {
             const roundProgress = progress[round.id];
             const pending = getActivePendingUnlock(roundProgress.unlocks, tick);
             const expiryUrgency = pending ? getExpiryUrgency(pending.expiresAt, tick) : null;
+            const shopState = getRoundShopState(progress, round.id, tick);
             const isQuizGateway = round.id === 'quiz';
+            const showAffordBadge = canAffordRoundNextLevel(progress, round.id, gems, tick);
             return (
               <View key={round.id} style={styles.card}>
                 {isQuizGateway ? (
@@ -348,12 +335,12 @@ export default function GemShopScreen() {
                   <Text style={styles.cardEmoji}>{round.emoji}</Text>
                   <View style={styles.cardTitles}>
                     <Text style={styles.cardName}>{round.name}</Text>
-                    {roundProgress.totalPlays > 0 ? (
-                      <Text style={styles.playedMeta}>
-                        Played {roundProgress.totalPlays} time{roundProgress.totalPlays === 1 ? '' : 's'}
-                      </Text>
-                    ) : null}
                   </View>
+                  {showAffordBadge ? (
+                    <View style={styles.affordBadge}>
+                      <Text style={styles.affordBadgeText}>!</Text>
+                    </View>
+                  ) : null}
                 </View>
                 <Text style={styles.cardDesc} numberOfLines={2}>
                   {round.description}
@@ -370,14 +357,12 @@ export default function GemShopScreen() {
                     </Text>
                   </Pressable>
                 ) : null}
-                {isQuizGateway ? (
+                {isQuizGateway && shopState.kind === 'unlock' ? (
                   <Text style={styles.gatewayHint}>
-                    The perfect first round. Unlock with just 5 gems.
+                    The perfect first round. Unlock with just {shopState.cost} gems.
                   </Text>
                 ) : null}
-                <View style={styles.levelRow}>
-                  {ROUND_LEVELS.map((level) => renderLevelButton(round.id, level, roundProgress))}
-                </View>
+                {renderRoundAction(round.id, shopState)}
               </View>
             );
           })}
@@ -500,23 +485,13 @@ const styles = StyleSheet.create({
   },
   gemPillText: { fontSize: 14, fontWeight: '900', color: palette.gem },
   scroll: { padding: 20, gap: 14 },
-  statsCard: {
-    backgroundColor: palette.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    padding: 16,
-    gap: 8,
+  statsLine: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: palette.text,
+    textAlign: 'center',
+    marginBottom: 4,
   },
-  statsTitle: {
-    fontSize: 13,
-    fontWeight: '900',
-    color: palette.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  statsGrid: { gap: 6 },
-  statLine: { fontSize: 14, fontWeight: '700', color: palette.text },
   recCard: {
     backgroundColor: 'rgba(255, 122, 89, 0.12)',
     borderRadius: 16,
@@ -555,6 +530,15 @@ const styles = StyleSheet.create({
   cardEmoji: { fontSize: 32 },
   cardTitles: { flex: 1 },
   cardName: { fontSize: 17, fontWeight: '900', color: palette.text },
+  affordBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: palette.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  affordBadgeText: { fontSize: 13, fontWeight: '900', color: '#0B0F14' },
   cardDesc: { fontSize: 14, fontWeight: '600', color: palette.muted, lineHeight: 20 },
   gatewayLabel: {
     fontSize: 12,
@@ -570,7 +554,6 @@ const styles = StyleSheet.create({
     color: palette.gem,
     lineHeight: 18,
   },
-  playedMeta: { fontSize: 12, fontWeight: '700', color: palette.green, marginTop: 2 },
   expiredBanner: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -599,40 +582,67 @@ const styles = StyleSheet.create({
   },
   expiryBannerAmber: { color: palette.amber },
   expiryBannerRed: { color: palette.red },
-  levelRow: { flexDirection: 'row', gap: 6, marginTop: 4 },
-  levelPill: {
-    flex: 1,
+  unlockBlock: { gap: 8, marginTop: 4 },
+  completedNote: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+  },
+  actionButton: {
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: palette.background,
-    borderRadius: 10,
+    minHeight: 48,
+  },
+  actionButtonPlay: {
+    backgroundColor: palette.green,
+  },
+  actionButtonUnlock: {
+    backgroundColor: palette.accent,
+  },
+  actionButtonAffordable: {
+    borderWidth: 2,
+    borderColor: palette.gem,
+  },
+  actionButtonDisabled: {
+    opacity: 0.5,
+  },
+  actionButtonBusy: {
+    opacity: 0.75,
+  },
+  actionButtonPressed: {
+    opacity: 0.9,
+  },
+  actionButtonText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0B0F14',
+    textAlign: 'center',
+  },
+  needGemsText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+  },
+  masteredBadge: {
+    alignSelf: 'center',
+    backgroundColor: 'rgba(251, 191, 36, 0.12)',
+    borderRadius: 999,
     borderWidth: 1,
-    borderColor: palette.surfaceBorder,
+    borderColor: 'rgba(251, 191, 36, 0.45)',
     paddingVertical: 10,
-    paddingHorizontal: 2,
-    minHeight: 64,
-    gap: 2,
+    paddingHorizontal: 20,
+    marginTop: 4,
   },
-  levelPillCurrent: {
-    borderColor: palette.accent,
-    backgroundColor: 'rgba(255, 122, 89, 0.1)',
+  masteredText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: palette.amber,
   },
-  levelPillCompleted: {
-    borderColor: 'rgba(52, 211, 153, 0.45)',
-  },
-  levelPillNext: {
-    borderColor: palette.accent,
-  },
-  levelPillLocked: {
-    opacity: 0.55,
-  },
-  levelPillBusy: {
-    opacity: 0.7,
-  },
-  levelPillIcon: { fontSize: 14 },
-  levelPillLabel: { fontSize: 11, fontWeight: '900', color: palette.text },
-  levelPillCost: { fontSize: 9, fontWeight: '800', color: palette.gem },
-  levelPillCostMuted: { fontSize: 9, fontWeight: '700', color: palette.muted },
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.72)',
