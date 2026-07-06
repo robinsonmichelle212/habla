@@ -97,20 +97,12 @@ type ChatMessage = {
   translation?: string;
 };
 
-const LESSON_OPTIONS: { id: LessonKind; label: string; subtitle?: string }[] = [
+const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'grammar', label: 'Grammar' },
   { id: 'vocabulary', label: 'Vocabulary' },
   { id: 'your-day', label: 'Your day' },
-  {
-    id: 'structure',
-    label: 'Structure 🏗️',
-    subtitle: 'Word order · Object pronouns · Natural Spanish',
-  },
-  {
-    id: 'read',
-    label: 'Read 📖',
-    subtitle: 'Real Spanish texts — news, recipes, stories',
-  },
+  { id: 'structure', label: 'Structure 🏗️' },
+  { id: 'read', label: 'Read 📖' },
 ];
 
 const WARMUP_SKIP_AFTER_MESSAGES = 5;
@@ -936,44 +928,44 @@ export default function LessonScreen() {
       ) : null}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}>
-        <View style={styles.topBar}>
-          <Pressable onPress={() => router.back()} hitSlop={12}>
-            <Text style={styles.backLink}>← Home</Text>
-          </Pressable>
-        </View>
-
+        style={styles.flex}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
         <View style={styles.headerBlock}>
-          <View style={styles.lessonRow}>
-            {LESSON_OPTIONS.map((opt) => {
-              const selected = lessonKind === opt.id;
-              return (
-                <Pressable
-                  key={opt.id}
-                  onPress={() => {
-                    if (opt.id === 'read') {
-                      router.push('/read-lesson');
-                      return;
-                    }
-                    setLessonKind(opt.id);
-                  }}
-                  disabled={phase !== 'warmup' || warmUpMessages.length > 1}
-                  style={[
-                    styles.lessonChip,
-                    opt.subtitle && styles.lessonChipWide,
-                    selected && styles.lessonChipSelected,
-                  ]}>
-                  <Text style={[styles.lessonChipText, selected && styles.lessonChipTextSelected]}>
-                    {opt.label}
-                  </Text>
-                  {opt.subtitle && selected ? (
-                    <Text style={styles.lessonChipSubtitle}>{opt.subtitle}</Text>
-                  ) : null}
-                </Pressable>
-              );
-            })}
+          <View style={styles.lessonHeaderRow}>
+            <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
+              <Text style={styles.backLink}>←</Text>
+            </Pressable>
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              style={styles.lessonPillScroller}
+              contentContainerStyle={styles.lessonPillScroll}>
+              {LESSON_OPTIONS.map((opt) => {
+                const selected = lessonKind === opt.id;
+                return (
+                  <Pressable
+                    key={opt.id}
+                    onPress={() => {
+                      if (opt.id === 'read') {
+                        router.push('/read-lesson');
+                        return;
+                      }
+                      setLessonKind(opt.id);
+                    }}
+                    disabled={phase !== 'warmup' || warmUpMessages.length > 1}
+                    style={({ pressed }) => [
+                      styles.lessonPill,
+                      selected && styles.lessonPillSelected,
+                      pressed && !selected && styles.lessonPillPressed,
+                    ]}>
+                    <Text style={[styles.lessonPillText, selected && styles.lessonPillTextSelected]}>
+                      {opt.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </ScrollView>
           </View>
-          <Text style={styles.screenTitle}>{"Today's Lesson"}</Text>
           <LessonPhaseIndicator activeStep={indicatorStep} />
         </View>
 
@@ -1006,6 +998,14 @@ export default function LessonScreen() {
                   onPress={() => void startWritingPhase()}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
                   <Text style={styles.primaryButtonText}>Ready to write ✍️</Text>
+                </Pressable>
+              ) : null}
+              {phase === 'warmup' && showWarmUpSkip ? (
+                <Pressable
+                  onPress={confirmSkipIntroduction}
+                  style={styles.skipIntroBtn}
+                  accessibilityRole="button">
+                  <Text style={styles.skipIntroText}>Skip introduction →</Text>
                 </Pressable>
               ) : null}
             </>
@@ -1097,8 +1097,8 @@ export default function LessonScreen() {
                 disabled={warmUpSending || !warmUpInput.trim()}
                 style={({ pressed }) => [
                   styles.sendButton,
-                  (!warmUpInput.trim() || warmUpSending) && styles.primaryButtonDisabled,
-                  pressed && styles.primaryButtonPressed,
+                  (!warmUpInput.trim() || warmUpSending) && styles.sendButtonDisabled,
+                  pressed && warmUpInput.trim() && !warmUpSending && styles.sendButtonPressed,
                 ]}>
                 {warmUpSending ? (
                   <ActivityIndicator color="#0B0F14" size="small" />
@@ -1107,14 +1107,6 @@ export default function LessonScreen() {
                 )}
               </Pressable>
             </View>
-            {showWarmUpSkip ? (
-              <Pressable
-                onPress={confirmSkipIntroduction}
-                style={styles.skipIntroBtn}
-                accessibilityRole="button">
-                <Text style={styles.skipIntroText}>Skip introduction →</Text>
-              </Pressable>
-            ) : null}
           </View>
         ) : null}
 
@@ -1128,20 +1120,19 @@ export default function LessonScreen() {
             inputEditable={!writingSubmitting}
             bottomInset={Math.max(insets.bottom, 12)}
             onInputFocus={() => scrollToEnd()}
-            footer={
+            trailingAction={
               <Pressable
                 onPress={() => void submitWriting()}
                 disabled={writingSubmitting || !writingText.trim()}
                 style={({ pressed }) => [
-                  styles.primaryButton,
-                  styles.writingSubmitButton,
-                  (writingSubmitting || !writingText.trim()) && styles.primaryButtonDisabled,
-                  pressed && styles.primaryButtonPressed,
+                  styles.sendButton,
+                  (writingSubmitting || !writingText.trim()) && styles.sendButtonDisabled,
+                  pressed && !writingSubmitting && writingText.trim() && styles.sendButtonPressed,
                 ]}>
                 {writingSubmitting ? (
-                  <ActivityIndicator color="#0B0F14" />
+                  <ActivityIndicator color="#0B0F14" size="small" />
                 ) : (
-                  <Text style={styles.primaryButtonText}>Submit writing</Text>
+                  <Text style={styles.sendButtonText}>Submit</Text>
                 )}
               </Pressable>
             }
@@ -1173,34 +1164,46 @@ export default function LessonScreen() {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.background },
   flex: { flex: 1 },
-  topBar: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4 },
-  backLink: { fontSize: 16, fontWeight: '600', color: palette.accent },
-  headerBlock: { paddingHorizontal: 20, paddingBottom: 8 },
-  lessonRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 },
-  lessonChip: {
+  headerBlock: { paddingHorizontal: 20, paddingTop: 4, paddingBottom: 4 },
+  lessonHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  backBtn: {
+    width: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backLink: { fontSize: 22, fontWeight: '600', color: palette.accent, lineHeight: 24 },
+  lessonPillScroller: { flex: 1 },
+  lessonPillScroll: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingRight: 4,
+  },
+  lessonPill: {
     paddingVertical: 8,
     paddingHorizontal: 14,
-    borderRadius: 20,
+    borderRadius: 999,
     backgroundColor: palette.surface,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
   },
-  lessonChipSelected: { backgroundColor: palette.accentMuted, borderColor: palette.accent },
-  lessonChipWide: { minWidth: '46%' },
-  lessonChipText: { fontSize: 14, fontWeight: '600', color: palette.muted },
-  lessonChipSubtitle: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: palette.muted,
-    marginTop: 4,
-    lineHeight: 14,
+  lessonPillPressed: { opacity: 0.88 },
+  lessonPillSelected: {
+    backgroundColor: palette.accentMuted,
+    borderColor: palette.accent,
   },
-  lessonChipTextSelected: { color: palette.text },
-  screenTitle: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: palette.text,
-    marginBottom: 4,
+  lessonPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+  },
+  lessonPillTextSelected: {
+    color: palette.accent,
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 16, flexGrow: 1 },
@@ -1284,12 +1287,17 @@ const styles = StyleSheet.create({
     paddingTop: 8,
     borderTopWidth: 1,
     borderTopColor: palette.surfaceBorder,
+    backgroundColor: palette.background,
   },
-  composeRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 10 },
+  composeRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
   textInput: {
     flex: 1,
-    minHeight: 80,
-    maxHeight: 150,
+    minHeight: 44,
+    maxHeight: 120,
     backgroundColor: palette.surface,
     borderRadius: 14,
     borderWidth: 1,
@@ -1299,21 +1307,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: palette.text,
   },
-  writingSubmitButton: { marginTop: 0 },
   sendButton: {
     backgroundColor: palette.accent,
     borderRadius: 14,
     paddingVertical: 12,
     paddingHorizontal: 16,
     minWidth: 72,
+    minHeight: 44,
     alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
+  sendButtonPressed: { backgroundColor: palette.accentPressed },
+  sendButtonDisabled: { opacity: 0.45 },
   sendButtonText: { fontSize: 15, fontWeight: '800', color: '#0B0F14' },
   skipIntroBtn: {
     alignSelf: 'center',
-    paddingVertical: 10,
+    paddingVertical: 12,
     paddingHorizontal: 8,
-    marginTop: 4,
   },
   skipIntroText: {
     fontSize: 13,

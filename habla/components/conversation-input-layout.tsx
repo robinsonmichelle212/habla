@@ -54,6 +54,7 @@ type DockProps = {
   inputRef?: RefObject<TextInput | null>;
   onInputFocus?: () => void;
   footer?: ReactNode;
+  trailingAction?: ReactNode;
   bottomInset?: number;
   showPrompt?: boolean;
   showResponseLabel?: boolean;
@@ -70,6 +71,7 @@ export function ConversationInputDock({
   inputRef,
   onInputFocus,
   footer,
+  trailingAction,
   bottomInset = 12,
   showPrompt = true,
   showResponseLabel,
@@ -90,20 +92,23 @@ export function ConversationInputDock({
         </View>
       ) : null}
       {shouldShowResponseLabel ? <Text style={styles.responseLabel}>{responseLabel}</Text> : null}
-      <TextInput
-        ref={resolvedInputRef}
-        style={styles.input}
-        value={inputValue}
-        onChangeText={onChangeText}
-        placeholder={inputPlaceholder}
-        placeholderTextColor={palette.muted}
-        multiline
-        scrollEnabled
-        editable={inputEditable}
-        textAlignVertical="top"
-        onFocus={() => onInputFocus?.()}
-      />
-      {footer}
+      <View style={styles.inputRow}>
+        <TextInput
+          ref={resolvedInputRef}
+          style={[styles.input, trailingAction ? styles.inputWithAction : null]}
+          value={inputValue}
+          onChangeText={onChangeText}
+          placeholder={inputPlaceholder}
+          placeholderTextColor={palette.muted}
+          multiline
+          scrollEnabled
+          editable={inputEditable}
+          textAlignVertical="top"
+          onFocus={() => onInputFocus?.()}
+        />
+        {trailingAction ? <View style={styles.trailingAction}>{trailingAction}</View> : null}
+      </View>
+      {!trailingAction ? footer : null}
     </View>
   );
 }
@@ -187,7 +192,13 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+  },
   input: {
+    flex: 1,
     minHeight: 80,
     maxHeight: 150,
     backgroundColor: palette.surface,
@@ -198,5 +209,12 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 16,
     color: palette.text,
+  },
+  inputWithAction: {
+    minHeight: 44,
+  },
+  trailingAction: {
+    flexShrink: 0,
+    paddingBottom: 2,
   },
 });
