@@ -97,6 +97,8 @@ export type WritingEvaluation = {
   accentIssues?: string[];
   structuralFeedback?: string[];
   wordOrderErrors?: WritingCorrection[];
+  pendingEvaluation?: boolean;
+  pendingTaskId?: string;
 };
 
 export type SpeakingEvaluation = {

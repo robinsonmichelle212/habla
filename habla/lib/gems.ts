@@ -28,8 +28,14 @@ export async function deductGems(amount: number): Promise<{ success: boolean; to
   return { success: true, total: next };
 }
 
+/** Gems for completing writing while offline (evaluated later). */
+export const OFFLINE_WRITING_GEMS = 2;
+
 /** Gems for completing speaking while offline (processed later). */
 export const OFFLINE_SPEAKING_ATTEMPT_GEMS = 2;
+
+/** Base gems for completing a lesson while fully offline. */
+export const OFFLINE_LESSON_BASE_GEMS = 3;
 
 /** Full lesson completed: +3, perfect 100%: +4. */
 export function calculateLessonGems(overallScore: number): number {

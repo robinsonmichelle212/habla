@@ -15,7 +15,7 @@ import type { LessonConversationTurn } from '@/lib/lesson-session';
 
 export const PENDING_AUDIO_TASKS_KEY = 'pendingAudioTasks';
 const PENDING_AUDIO_DIR = `${documentDirectory ?? ''}habla/pending_audio/`;
-const EXPIRE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
+const EXPIRE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
 export type PendingAudioTask = {
   id: string;
@@ -117,7 +117,7 @@ export async function expireOldPendingTasks(): Promise<PendingAudioTask[]> {
     changed = true;
     void Promise.all(task.audioPaths.map((p) => deletePendingAudioFile(p)));
     void markLessonSpeakingExpired(task.lessonDate, task.lessonType);
-    return { ...task, expired: true, processed: true };
+    return { ...task, expired: true, processed: true, audioPaths: [] };
   });
 
   if (changed) {

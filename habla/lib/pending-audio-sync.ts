@@ -11,7 +11,9 @@ import {
   type PendingAudioTask,
   updatePendingAudioTask,
 } from '@/lib/pending-audio-storage';
+import { getPendingLessonSummaries, updatePendingLessonSummary } from '@/lib/offline-lesson';
 import { markLessonSpeakingExpired, updateLessonHistorySpeaking } from '@/lib/practice-storage';
+import type { SpeakingEvaluation } from '@/lib/lesson-session';
 import type { SpeakingHistoryRecord } from '@/lib/practice-storage';
 import { computeSpeakingCombinedScore } from '@/lib/speaking-score';
 import { transcribeSpanishAudio } from '@/lib/whisper';
@@ -110,6 +112,31 @@ async function processTask(task: PendingAudioTask, notify: boolean): Promise<boo
 
   await updatePendingAudioTask(task.id, { processed: true });
   await Promise.all(task.audioPaths.map((p) => deletePendingAudioFile(p)));
+
+  const speakingEvaluation: SpeakingEvaluation = {
+    fluencyScore: evalJson.fluencyScore,
+    confidenceScore: evalJson.confidenceScore,
+    vocabularyRangeScore: evalJson.vocabularyRangeScore,
+    naturalFlowScore: evalJson.naturalFlowScore,
+    combinedScore,
+    score: combinedScore,
+    javiFeedback: evalJson.feedback,
+    feedback: evalJson.feedback,
+    pronunciationNotes: evalJson.pronunciationNotes,
+    exchangeCount: transcripts.length,
+    pendingEvaluation: false,
+  };
+
+  const summaries = await getPendingLessonSummaries();
+  for (const summary of summaries) {
+    if (
+      summary.lessonDate === task.lessonDate &&
+      summary.lessonType === task.lessonType &&
+      summary.speakingEvaluation.pendingEvaluation
+    ) {
+      await updatePendingLessonSummary(summary.id, { speakingEvaluation });
+    }
+  }
 
   if (notify) {
     await notifySpeakingEvaluated(task, combinedScore);

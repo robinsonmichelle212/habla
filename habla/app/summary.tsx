@@ -59,6 +59,11 @@ function splitBilingualMessage(message: string): { spanish: string; english?: st
   };
 }
 
+function formatWritingMetric(value: number | null | undefined, pending: boolean): string {
+  if (pending || value == null) return 'Pending ⏳';
+  return `${Math.round(value)}%`;
+}
+
 function formatSpeakingMetric(
   value: number | null | undefined,
   pending: boolean,
@@ -605,19 +610,35 @@ export default function SummaryScreen() {
                 {writing ? (
                   <View style={[styles.writingCard, styles.supplementaryCard]}>
                     <Text style={styles.writingTitle}>
-                      {lessonType === 'Read' ? 'Comprehension responses' : '✍️ Writing — accuracy'}
+                      {writing.pendingEvaluation
+                        ? '✍️ Writing — evaluation pending when back online ⏳'
+                        : lessonType === 'Read'
+                          ? 'Comprehension responses'
+                          : '✍️ Writing — accuracy'}
                     </Text>
+                    {writing.pendingEvaluation ? (
+                      <Text style={styles.pendingSpeakingNote}>
+                        {writing.feedback ||
+                          'Your writing will be marked when you are back online. +2 💎 for completing writing offline.'}
+                      </Text>
+                    ) : null}
                     <View style={styles.writingRow}>
                       <Text style={styles.writingLabel}>Grammar</Text>
-                      <Text style={styles.writingValue}>{Math.round(writing.grammarScore)}%</Text>
+                      <Text style={styles.writingValue}>
+                        {formatWritingMetric(writing.grammarScore, !!writing.pendingEvaluation)}
+                      </Text>
                     </View>
                     <View style={styles.writingRow}>
                       <Text style={styles.writingLabel}>Vocabulary</Text>
-                      <Text style={styles.writingValue}>{Math.round(writing.vocabularyScore)}%</Text>
+                      <Text style={styles.writingValue}>
+                        {formatWritingMetric(writing.vocabularyScore, !!writing.pendingEvaluation)}
+                      </Text>
                     </View>
                     <View style={styles.writingRow}>
                       <Text style={styles.writingLabel}>Conjugations</Text>
-                      <Text style={styles.writingValue}>{Math.round(writing.fluencyScore)}%</Text>
+                      <Text style={styles.writingValue}>
+                        {formatWritingMetric(writing.fluencyScore, !!writing.pendingEvaluation)}
+                      </Text>
                     </View>
                   </View>
                 ) : null}
@@ -634,7 +655,7 @@ export default function SummaryScreen() {
                     {speaking.pendingEvaluation || speaking.expired ? (
                       <Text style={styles.pendingSpeakingNote}>
                         {speaking.expired
-                          ? 'Speaking expired — not evaluated'
+                          ? 'Speaking expired — audio deleted'
                           : `Your ${speaking.exchangeCount} recording${speaking.exchangeCount === 1 ? '' : 's'} will be evaluated when you are back online. +${OFFLINE_SPEAKING_ATTEMPT_GEMS} 💎 for completing speaking offline.`}
                       </Text>
                     ) : (

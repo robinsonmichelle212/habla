@@ -2,6 +2,9 @@ import { ConversationInputLayout } from '@/components/conversation-input-layout'
 import { TextMessageBubble } from '@/components/text-message-bubble';
 import { analyzeConversation, evaluateWriting, generateWritingTask } from '@/lib/claude';
 import { mergeErrorDnaFromLesson } from '@/lib/error-dna';
+import { addGems, OFFLINE_WRITING_GEMS } from '@/lib/gems';
+import { buildOfflineLessonAnalysis, buildPendingWritingEvaluation } from '@/lib/offline-lesson';
+import { focusCacheKey, getOfflineWritingPrompt } from '@/lib/offline-lesson-content';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import {
@@ -10,6 +13,10 @@ import {
   setLessonSession,
   type WritingEvaluation,
 } from '@/lib/lesson-session';
+import { checkIsOnline } from '@/lib/network-status';
+import { addPendingWritingTask } from '@/lib/pending-writing-storage';
+import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
+import { formatLocalDate } from '@/lib/streak';
 import { WRITING_PRACTICE_KEY } from '@/components/score-detail-modals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -107,16 +114,35 @@ export default function WritingScreen() {
     if (taskPrompt) return;
 
     setLoadingTask(true);
-    generateWritingTask(lessonType, conversationToJaviMessages(conversation), lessonFocus)
-      .then((t) => {
+    void (async () => {
+      try {
+        const online = await checkIsOnline();
+        if (!online && lessonFocus) {
+          const focusKey = focusCacheKey(lessonFocus);
+          const cached = await getCachedWritingTask(lessonType, focusKey);
+          const prompt = cached ?? getOfflineWritingPrompt(lessonFocus);
+          setTaskPrompt(prompt);
+          setLessonSession({ writingTask: { prompt } });
+          return;
+        }
+
+        const t = await generateWritingTask(
+          lessonType,
+          conversationToJaviMessages(conversation),
+          lessonFocus!,
+        );
         setTaskPrompt(t.prompt);
         setLessonSession({ writingTask: { prompt: t.prompt } });
-      })
-      .catch((e) => {
+        if (lessonFocus) {
+          await cacheWritingTask(lessonType, focusCacheKey(lessonFocus), t.prompt);
+        }
+      } catch (e) {
         const message = e instanceof Error ? e.message : 'Something went wrong.';
         Alert.alert('Could not load writing task', message);
-      })
-      .finally(() => setLoadingTask(false));
+      } finally {
+        setLoadingTask(false);
+      }
+    })();
   }, [conversation, isPracticeReplay, lessonFocus, lessonType, taskPrompt]);
 
   const submit = async () => {
@@ -130,6 +156,35 @@ export default function WritingScreen() {
 
     setSubmitting(true);
     try {
+      const online = await checkIsOnline();
+
+      if (!online && lessonFocus) {
+        const taskId = `writing-pending-${Date.now()}`;
+        const lessonDate = formatLocalDate();
+
+        await addPendingWritingTask({
+          id: taskId,
+          writtenResponse: trimmed,
+          lessonDate,
+          lessonType: activeLessonType,
+          grammarTopic:
+            lessonFocus.kind === 'grammar' ? lessonFocus.topic : lessonFocusLabel(lessonFocus),
+          writingPrompt: taskPrompt,
+          submittedAt: Date.now(),
+          evaluated: false,
+          warmUpConversation: conversation,
+          lessonFocusLabel: lessonFocusLabel(lessonFocus),
+          lessonTypeEnum: activeLessonType,
+        });
+
+        const evaluation = buildPendingWritingEvaluation(trimmed);
+        evaluation.pendingTaskId = taskId;
+        setResult(evaluation);
+        setLessonSession({ writingEvaluation: evaluation });
+        await addGems(OFFLINE_WRITING_GEMS);
+        return;
+      }
+
       const evalJson = await evaluateWriting(
         activeLessonType,
         taskPrompt,
@@ -168,6 +223,21 @@ export default function WritingScreen() {
     }
 
     try {
+      const online = await checkIsOnline();
+
+      if (!online && lessonFocus) {
+        const analysis = buildOfflineLessonAnalysis(
+          lessonType,
+          lessonFocus,
+          result,
+          taskPrompt,
+          false,
+        );
+        setLessonSession({ analysis });
+        router.push('/summary');
+        return;
+      }
+
       const normalizedWritingScores = {
         grammarScore: Math.max(0, Math.min(100, Math.round(result.grammarScore))),
         vocabularyScore: Math.max(0, Math.min(100, Math.round(result.vocabularyScore))),
@@ -279,51 +349,61 @@ export default function WritingScreen() {
             {conversationContent}
 
             <View style={styles.resultsHeader}>
-              <Text style={styles.resultsTitle}>Results</Text>
+              <Text style={styles.resultsTitle}>
+                {result.pendingEvaluation ? '✍️ Writing submitted — evaluation pending ⏳' : 'Results'}
+              </Text>
             </View>
 
-            <View style={styles.scoreCard}>
-              <ProgressBar label="Grammar" value={result.grammarScore} />
-              <ProgressBar label="Vocabulary" value={result.vocabularyScore} />
-              <ProgressBar label="Fluency" value={result.fluencyScore} />
-            </View>
-
-            <View style={styles.feedbackCard}>
-              <Text style={styles.feedbackTitle}>Javi’s feedback</Text>
-              <Text style={styles.feedbackText}>{result.feedback}</Text>
-            </View>
-
-            <View style={styles.compareWrap}>
-              <View style={[styles.compareCard, styles.compareOriginal]}>
-                <Text style={styles.compareTitle}>Original</Text>
-                <Text style={styles.compareText}>{result.originalText}</Text>
+            {result.pendingEvaluation ? (
+              <View style={styles.feedbackCard}>
+                <Text style={styles.feedbackText}>{result.feedback}</Text>
               </View>
-              <View style={[styles.compareCard, styles.compareCorrected]}>
-                <Text style={styles.compareTitle}>Corrected</Text>
-                <Text style={styles.compareText}>{result.correctedText}</Text>
-              </View>
-            </View>
+            ) : (
+              <>
+                <View style={styles.scoreCard}>
+                  <ProgressBar label="Grammar" value={result.grammarScore} />
+                  <ProgressBar label="Vocabulary" value={result.vocabularyScore} />
+                  <ProgressBar label="Fluency" value={result.fluencyScore} />
+                </View>
 
-            <View style={styles.correctionsSection}>
-              <Text style={styles.correctionsTitle}>Corrections</Text>
-              {result.corrections.length ? (
-                result.corrections.map((c, idx) => (
-                  <View key={`c-${idx}`} style={styles.correctionRow}>
-                    <View style={[styles.correctionChip, styles.correctionMistake]}>
-                      <Text style={styles.correctionChipLabel}>Mistake</Text>
-                      <Text style={styles.correctionChipText}>{c.mistake}</Text>
-                    </View>
-                    <View style={[styles.correctionChip, styles.correctionFix]}>
-                      <Text style={styles.correctionChipLabel}>Correction</Text>
-                      <Text style={styles.correctionChipText}>{c.correction}</Text>
-                    </View>
-                    <Text style={styles.correctionExplanation}>{c.explanation}</Text>
+                <View style={styles.feedbackCard}>
+                  <Text style={styles.feedbackTitle}>Javi’s feedback</Text>
+                  <Text style={styles.feedbackText}>{result.feedback}</Text>
+                </View>
+
+                <View style={styles.compareWrap}>
+                  <View style={[styles.compareCard, styles.compareOriginal]}>
+                    <Text style={styles.compareTitle}>Original</Text>
+                    <Text style={styles.compareText}>{result.originalText}</Text>
                   </View>
-                ))
-              ) : (
-                <Text style={styles.noCorrections}>No major issues found. Nice work!</Text>
-              )}
-            </View>
+                  <View style={[styles.compareCard, styles.compareCorrected]}>
+                    <Text style={styles.compareTitle}>Corrected</Text>
+                    <Text style={styles.compareText}>{result.correctedText}</Text>
+                  </View>
+                </View>
+
+                <View style={styles.correctionsSection}>
+                  <Text style={styles.correctionsTitle}>Corrections</Text>
+                  {result.corrections.length ? (
+                    result.corrections.map((c, idx) => (
+                      <View key={`c-${idx}`} style={styles.correctionRow}>
+                        <View style={[styles.correctionChip, styles.correctionMistake]}>
+                          <Text style={styles.correctionChipLabel}>Mistake</Text>
+                          <Text style={styles.correctionChipText}>{c.mistake}</Text>
+                        </View>
+                        <View style={[styles.correctionChip, styles.correctionFix]}>
+                          <Text style={styles.correctionChipLabel}>Correction</Text>
+                          <Text style={styles.correctionChipText}>{c.correction}</Text>
+                        </View>
+                        <Text style={styles.correctionExplanation}>{c.explanation}</Text>
+                      </View>
+                    ))
+                  ) : (
+                    <Text style={styles.noCorrections}>No major issues found. Nice work!</Text>
+                  )}
+                </View>
+              </>
+            )}
 
             <Pressable
               onPress={continueToSummary}

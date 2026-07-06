@@ -16,6 +16,7 @@ import {
   generateFluencyDrillQuestions,
   generateWordOrderDrillQuestions,
   type PrioritizedWeakAreaInput,
+  type QuickFireQuestion,
 } from '@/lib/claude';
 import { getTopErrorDNA, getWordOrderErrorDNA } from '@/lib/error-dna';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
@@ -29,6 +30,9 @@ import {
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
+import { checkIsOnline } from '@/lib/network-status';
+import { getOfflineGrammarDrillQuestions } from '@/lib/offline-practice-fallbacks';
+import { cachePracticeQuestions, getCachedPracticeQuestions } from '@/lib/practice-questions-cache';
 import { checkStreakMilestones, milestonesAfterDrill } from '@/lib/milestones';
 import { buildPriorityWeakAreas, appendDrillHistory, getDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
@@ -248,7 +252,40 @@ export default function PracticeScreen() {
     setStage('loading');
 
     try {
+      const online = await checkIsOnline();
+      const curriculum = await resolveGrammarCurriculum();
+      const weekDef = getWeekDefinition(curriculum.currentWeek);
+      const grammarWeek = effectiveDrill === 'grammar' ? weekDef.week : null;
+
+      const useCachedOrFallback = async (
+        drillKind: PracticeDrillKind,
+        week: number | null,
+        fallback?: () => QuickFireQuestion[],
+      ): Promise<QuickFireQuestion[] | null> => {
+        const cached = await getCachedPracticeQuestions(drillKind, week);
+        if (cached?.length) return cached;
+        if (!online && fallback) return fallback();
+        return null;
+      };
+
       if (effectiveDrill === 'word-order') {
+        if (!online) {
+          const offlineBatch = await useCachedOrFallback('word-order', null);
+          if (!offlineBatch?.length) {
+            Alert.alert(
+              'Offline',
+              'No saved word-order questions yet. Connect once while online to cache a drill set.',
+            );
+            setStage('choose');
+            return;
+          }
+          setQuestions(
+            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          );
+          setStage('drill');
+          return;
+        }
+
         const wordOrderTargets = (await getWordOrderErrorDNA()).slice(0, 2);
         const wordOrderBatch = await generateWordOrderDrillQuestions(TOTAL_QUESTIONS, wordOrderTargets);
 
@@ -258,6 +295,7 @@ export default function PracticeScreen() {
           return;
         }
 
+        await cachePracticeQuestions('word-order', null, wordOrderBatch);
         setQuestions(
           wordOrderBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
         );
@@ -268,8 +306,22 @@ export default function PracticeScreen() {
       const errorDnaTargets = await getTopErrorDNA(2);
 
       if (effectiveDrill === 'grammar') {
-        const curriculum = await resolveGrammarCurriculum();
-        const weekDef = getWeekDefinition(curriculum.currentWeek);
+        if (!online) {
+          const offlineBatch = await useCachedOrFallback('grammar', grammarWeek, () =>
+            getOfflineGrammarDrillQuestions(weekDef.week),
+          );
+          if (!offlineBatch?.length) {
+            Alert.alert('Could not load questions', 'Try again in a moment.');
+            setStage('choose');
+            return;
+          }
+          setQuestions(
+            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          );
+          setStage('drill');
+          return;
+        }
+
         const grammarBatch = await generateQuickFireQuestions([], TOTAL_QUESTIONS, {
           topic: weekDef.topic,
           weekNumber: weekDef.week,
@@ -283,6 +335,7 @@ export default function PracticeScreen() {
           return;
         }
 
+        await cachePracticeQuestions('grammar', grammarWeek, grammarBatch);
         setQuestions(
           grammarBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
         );
@@ -291,6 +344,23 @@ export default function PracticeScreen() {
       }
 
       if (effectiveDrill === 'fluency') {
+        if (!online) {
+          const offlineBatch = await useCachedOrFallback('fluency', null);
+          if (!offlineBatch?.length) {
+            Alert.alert(
+              'Offline',
+              'No saved fluency questions yet. Connect once while online to cache a drill set.',
+            );
+            setStage('choose');
+            return;
+          }
+          setQuestions(
+            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          );
+          setStage('drill');
+          return;
+        }
+
         const fluencyBatch = await generateFluencyDrillQuestions(
           prioritizedForPrompt,
           TOTAL_QUESTIONS,
@@ -303,8 +373,37 @@ export default function PracticeScreen() {
           return;
         }
 
+        await cachePracticeQuestions('fluency', null, fluencyBatch);
         setQuestions(
           fluencyBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+        );
+        setStage('drill');
+        return;
+      }
+
+      if (!online) {
+        const offlineBatch = await useCachedOrFallback('vocabulary', null);
+        if (offlineBatch?.length) {
+          setQuestions(
+            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          );
+          setStage('drill');
+          return;
+        }
+
+        const savedWords = await getSavedVocabulary();
+        const activeWords = getActiveVocabulary(savedWords);
+        const vocabBatch = buildSavedVocabQuestions(activeWords, Math.min(TOTAL_QUESTIONS, activeWords.length));
+        if (vocabBatch.length < 1) {
+          Alert.alert(
+            'Offline',
+            'No saved vocabulary drill yet. Connect once while online or save words from lessons.',
+          );
+          setStage('choose');
+          return;
+        }
+        setQuestions(
+          vocabBatch.map((question) => ({ kind: 'vocab' as const, question })),
         );
         setStage('drill');
         return;
@@ -323,6 +422,7 @@ export default function PracticeScreen() {
         setStage('choose');
         return;
       }
+      await cachePracticeQuestions('vocabulary', null, weakBatch);
       setQuestions(mixed.slice(0, TOTAL_QUESTIONS));
       setStage('drill');
     } catch (e) {

@@ -485,6 +485,36 @@ export async function updateLessonHistorySpeaking(
   return true;
 }
 
+export async function updateLessonHistoryWriting(
+  date: string,
+  lessonType: string,
+  patch: {
+    evaluation: import('@/lib/lesson-session').WritingEvaluation;
+    breakdown: LessonBreakdown;
+    overallScore?: number;
+  },
+): Promise<boolean> {
+  const history = await getLessonHistory();
+  const idx = findLessonHistoryIndex(history, date, lessonType);
+  if (idx < 0) return false;
+
+  const entry = history[idx];
+  history[idx] = {
+    ...entry,
+    overallScore: patch.overallScore ?? entry.overallScore,
+    breakdown: {
+      ...entry.breakdown,
+      ...patch.breakdown,
+      grammar: patch.breakdown.grammar ?? entry.breakdown.grammar,
+      vocabulary: patch.breakdown.vocabulary ?? entry.breakdown.vocabulary,
+      writing: patch.breakdown.writing ?? entry.breakdown.writing,
+      fluency: entry.breakdown.fluency,
+    },
+  };
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  return true;
+}
+
 export async function markLessonSpeakingExpired(date: string, lessonType: string): Promise<boolean> {
   const history = await getLessonHistory();
   const idx = findLessonHistoryIndex(history, date, lessonType);
@@ -499,7 +529,7 @@ export async function markLessonSpeakingExpired(date: string, lessonType: string
       vocabularyRangeScore: null,
       naturalFlowScore: null,
       combinedScore: null,
-      javiFeedback: 'Speaking expired — not evaluated',
+      javiFeedback: 'Speaking expired — audio deleted',
       exchangeCount: entry.speaking?.exchangeCount ?? 0,
       pendingEvaluation: false,
       expired: true,

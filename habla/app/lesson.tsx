@@ -1,9 +1,7 @@
-import { OfflineBanner } from '@/components/offline-banner';
 import {
   ConversationInputDock,
   useKeyboardScrollToEnd,
 } from '@/components/conversation-input-layout';
-import { useNetworkStatus } from '@/contexts/network-context';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
@@ -23,15 +21,29 @@ import {
 } from '@/lib/claude';
 import { parseJaviResponse, safeSpanish, stripReadyForWritingMarker } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
-import { addGems, OFFLINE_SPEAKING_ATTEMPT_GEMS } from '@/lib/gems';
+import { addGems, OFFLINE_SPEAKING_ATTEMPT_GEMS, OFFLINE_WRITING_GEMS } from '@/lib/gems';
 import { mergeErrorDnaFromLesson, getTopErrorsForLesson, type ErrorDNAItem } from '@/lib/error-dna';
+import { cacheLessonIntro, getCachedLessonIntro } from '@/lib/lesson-intro-cache';
 import {
   buildOfflineLessonAnalysis,
+  buildPendingWritingEvaluation,
+  addPendingLessonSummary,
+} from '@/lib/offline-lesson';
+import {
+  focusCacheKey,
+  getOfflineLessonOpening,
+  getOfflineWritingPrompt,
+  offlineWarmUpReply,
+} from '@/lib/offline-lesson-content';
+import {
   grammarTopicFromFocus,
   offlineJaviReply,
   OFFLINE_SPEAKING_INTRO,
+  writingScoresFromEvaluation,
 } from '@/lib/offline-speaking';
 import { addPendingAudioTask, saveRecordingToPendingAudio } from '@/lib/pending-audio-storage';
+import { addPendingWritingTask } from '@/lib/pending-writing-storage';
+import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
 import {
   conversationToJaviMessages,
   setLessonSession,
@@ -140,7 +152,6 @@ function ProgressBar({ label, value }: { label: string; value: number }) {
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { isOnline } = useNetworkStatus();
   const scrollRef = useRef<ScrollView>(null);
   const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
@@ -170,6 +181,7 @@ export default function LessonScreen() {
   const [phaseSummaryText, setPhaseSummaryText] = useState('');
   const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
   const [offlineSpeakingMode, setOfflineSpeakingMode] = useState(false);
+  const [offlineIntroNote, setOfflineIntroNote] = useState(false);
   const [pendingAudioPaths, setPendingAudioPaths] = useState<string[]>([]);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
@@ -280,10 +292,37 @@ export default function LessonScreen() {
           speakingEvaluation: undefined,
         });
 
+        const online = await checkIsOnline();
+        const weekNumber = focus.kind === 'grammar' ? focus.weekNumber : null;
+
+        if (!online) {
+          const cached = await getCachedLessonIntro(lessonKind, weekNumber);
+          const opening = cached
+            ? { spanish: cached.spanish, translation: cached.translation, usedBundle: false }
+            : getOfflineLessonOpening(lessonKind, focus);
+          setOfflineIntroNote(!cached && opening.usedBundle);
+          setWarmUpMessages([
+            {
+              id: newId(),
+              role: 'assistant',
+              spanish: opening.spanish,
+              translation: opening.translation,
+            },
+          ]);
+          return;
+        }
+
         const openingText = await generateWarmUpOpening(lessonKindToLessonType(lessonKind), focus, topErrors);
         const { text: openingClean, ready: openingReady } = stripReadyForWritingMarker(openingText);
         const parsed = parseJaviResponse(openingClean);
         if (openingReady) setWarmUpReadyForWriting(true);
+        void cacheLessonIntro({
+          lessonKind,
+          weekNumber,
+          spanish: parsed.spanish,
+          translation: parsed.translation ?? '',
+        });
+        setOfflineIntroNote(false);
         setWarmUpMessages([
           {
             id: newId(),
@@ -359,6 +398,16 @@ export default function LessonScreen() {
     setWarmUpMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
 
     try {
+      const online = await checkIsOnline();
+      if (!online) {
+        const reply = offlineWarmUpReply(javiCount);
+        setWarmUpMessages((prev) => [
+          ...prev,
+          { id: newId(), role: 'assistant', spanish: reply.spanish, translation: reply.translation },
+        ]);
+        return;
+      }
+
       const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount, topErrorDna);
       const { text: replyClean, ready } = stripReadyForWritingMarker(reply);
       const parsed = parseJaviResponse(replyClean);
@@ -391,9 +440,25 @@ export default function LessonScreen() {
     setLoadingWritingTask(true);
 
     try {
+      const online = await checkIsOnline();
+      const focusKey = focusCacheKey(lessonFocus);
+
+      if (!online) {
+        const cached = await getCachedWritingTask(lessonType, focusKey);
+        const prompt = cached ?? getOfflineWritingPrompt(lessonFocus);
+        setWritingPrompt(prompt);
+        setLessonSession({
+          warmUpConversation: toTurns(warmUpMessages),
+          conversation: toTurns(warmUpMessages),
+          writingTask: { prompt },
+        });
+        return;
+      }
+
       const prior = conversationToJaviMessages(toTurns(warmUpMessages));
       const task = await generateWritingTask(lessonType, prior, lessonFocus);
       setWritingPrompt(task.prompt);
+      await cacheWritingTask(lessonType, focusKey, task.prompt);
       setLessonSession({
         warmUpConversation: toTurns(warmUpMessages),
         conversation: toTurns(warmUpMessages),
@@ -409,7 +474,7 @@ export default function LessonScreen() {
 
   const submitWriting = async () => {
     const trimmed = writingText.trim();
-    if (!trimmed || writingSubmitting || !writingPrompt) return;
+    if (!trimmed || writingSubmitting || !writingPrompt || !lessonFocus) return;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -417,6 +482,40 @@ export default function LessonScreen() {
 
     setWritingSubmitting(true);
     try {
+      const online = await checkIsOnline();
+
+      if (!online) {
+        const taskId = `writing-pending-${Date.now()}`;
+        const lessonDate = formatLocalDate();
+        const warmUpTurns = toTurns(warmUpMessages);
+
+        await addPendingWritingTask({
+          id: taskId,
+          writtenResponse: trimmed,
+          lessonDate,
+          lessonType,
+          grammarTopic: grammarTopicFromFocus(lessonFocus),
+          writingPrompt,
+          submittedAt: Date.now(),
+          evaluated: false,
+          warmUpConversation: warmUpTurns,
+          lessonFocusLabel: lessonFocusLabel(lessonFocus),
+          lessonTypeEnum: lessonType,
+        });
+
+        const evaluation = buildPendingWritingEvaluation(trimmed);
+        evaluation.pendingTaskId = taskId;
+
+        setWritingResult(evaluation);
+        setLessonSession({ writingEvaluation: evaluation });
+        await addGems(OFFLINE_WRITING_GEMS);
+
+        setTimeout(() => {
+          void startSpeakingPhase(evaluation);
+        }, 600);
+        return;
+      }
+
       const evalJson = await evaluateWriting(
         lessonType,
         writingPrompt,
@@ -449,8 +548,9 @@ export default function LessonScreen() {
     }
   };
 
-  const startSpeakingPhase = async () => {
-    if (!lessonFocus || !writingResult || !writingPrompt) return;
+  const startSpeakingPhase = async (writingOverride?: WritingEvaluation) => {
+    const activeWriting = writingOverride ?? writingResult;
+    if (!lessonFocus || !activeWriting || !writingPrompt) return;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -569,12 +669,7 @@ export default function LessonScreen() {
         recordedAt: Date.now(),
         processed: false,
         writingPrompt,
-        writingScores: {
-          grammarScore: writingResult.grammarScore,
-          vocabularyScore: writingResult.vocabularyScore,
-          fluencyScore: writingResult.fluencyScore,
-          structureScore: writingResult.structureScore,
-        },
+        writingScores: writingScoresFromEvaluation(writingResult),
         lessonFocusLabel: lessonFocusLabel(lessonFocus),
         warmUpConversation: warmUpTurns,
         speakingConversation: updatedSpeakingTurns,
@@ -690,17 +785,43 @@ export default function LessonScreen() {
         structureScore: writingResult.structureScore,
       };
 
-      if (speakingOverride?.pendingEvaluation) {
+      if (speakingOverride?.pendingEvaluation || writingResult.pendingEvaluation) {
         const speakingEvaluation: SpeakingEvaluation = {
-          ...speakingOverride,
-          exchangeCount: speakingOverride.exchangeCount ?? speakingUserTurns,
+          fluencyScore: speakingOverride?.fluencyScore ?? null,
+          confidenceScore: speakingOverride?.confidenceScore ?? null,
+          vocabularyRangeScore: speakingOverride?.vocabularyRangeScore ?? null,
+          naturalFlowScore: speakingOverride?.naturalFlowScore ?? null,
+          combinedScore: speakingOverride?.combinedScore ?? null,
+          score: speakingOverride?.score ?? null,
+          javiFeedback: speakingOverride?.javiFeedback ?? 'Pending evaluation when back online.',
+          feedback: speakingOverride?.feedback ?? 'Pending evaluation when back online.',
+          exchangeCount: speakingOverride?.exchangeCount ?? speakingUserTurns,
+          pendingEvaluation: speakingOverride?.pendingEvaluation ?? true,
+          audioPaths: speakingOverride?.audioPaths,
+          pendingTaskId: speakingOverride?.pendingTaskId,
         };
         const analysis = buildOfflineLessonAnalysis(
           lessonType,
           lessonFocus,
           writingResult,
           writingPrompt,
+          !!speakingOverride?.pendingEvaluation,
         );
+
+        await addPendingLessonSummary({
+          id: `summary-pending-${Date.now()}`,
+          lessonDate: formatLocalDate(),
+          lessonType,
+          lessonTypeEnum: lessonType,
+          lessonFocusLabel: lessonFocusLabel(lessonFocus),
+          warmUpConversation: warmUpTurns,
+          speakingConversation: speakingTurns,
+          writingPrompt,
+          writingEvaluation: writingResult,
+          speakingEvaluation,
+          createdAt: Date.now(),
+          processed: false,
+        });
 
         setLessonSession({
           lessonType,
@@ -923,9 +1044,6 @@ export default function LessonScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      {phase === 'speaking' && offlineSpeakingMode ? (
-        <OfflineBanner message="📡 Offline — your speaking will be saved for review later" />
-      ) : null}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
@@ -979,6 +1097,10 @@ export default function LessonScreen() {
             <ActivityIndicator color={palette.muted} style={{ marginTop: 24 }} />
           ) : null}
 
+          {phase === 'warmup' && offlineIntroNote ? (
+            <Text style={styles.offlineNote}>📡 Offline — using a saved introduction</Text>
+          ) : null}
+
           {phase === 'warmup' || phase === 'writing' ? (
             <>
               {warmUpMessages.map((m) => (
@@ -1013,6 +1135,18 @@ export default function LessonScreen() {
 
           {phase === 'writing' && writingResult ? (
             <View style={styles.writingBlock}>
+              {writingResult.pendingEvaluation ? (
+                <>
+                  <Text style={styles.phaseTitle}>✍️ Writing submitted — evaluation pending ⏳</Text>
+                  <Text style={styles.feedbackBody}>{writingResult.feedback}</Text>
+                  <Pressable
+                    onPress={() => void startSpeakingPhase()}
+                    style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
+                    <Text style={styles.primaryButtonText}>Let&apos;s talk 🎤</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
               <Text style={styles.phaseTitle}>Javi&apos;s feedback</Text>
               <ProgressBar label="Grammar" value={writingResult.grammarScore} />
               <ProgressBar label="Vocabulary" value={writingResult.vocabularyScore} />
@@ -1057,6 +1191,8 @@ export default function LessonScreen() {
                 style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
                 <Text style={styles.primaryButtonText}>Let&apos;s talk 🎤</Text>
               </Pressable>
+                </>
+              )}
             </View>
           ) : null}
 
@@ -1207,6 +1343,12 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 16, flexGrow: 1 },
+  offlineNote: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    marginBottom: 10,
+  },
   writingBlock: { gap: 12 },
   phaseTitle: { fontSize: 16, fontWeight: '800', color: palette.text },
   taskCard: {

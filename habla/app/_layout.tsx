@@ -9,6 +9,7 @@ import 'react-native-reanimated';
 import { MilestoneProvider } from '@/contexts/milestone-context';
 import { NetworkProvider, useNetworkStatus } from '@/contexts/network-context';
 import { OfflineBanner } from '@/components/offline-banner';
+import { SyncIndicator } from '@/components/sync-indicator';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
@@ -22,7 +23,7 @@ export const unstable_settings = {
 function GlobalOfflineBanner() {
   const { isOnline, hydrated } = useNetworkStatus();
   if (!hydrated || isOnline) return null;
-  return <OfflineBanner message="📡 Offline mode — core features available" />;
+  return <OfflineBanner message="📡 Offline — your work is being saved locally" />;
 }
 
 function WrappedBootstrap() {
@@ -48,7 +49,7 @@ function WrappedBootstrap() {
           router.push('/wrapped');
         }
       }
-      if (type === 'speaking-evaluated') {
+      if (type === 'speaking-evaluated' || type === 'writing-evaluated' || type === 'writing-evaluated-batch') {
         router.push('/progress');
       }
       if (type === 'gem-unlock-expiry') {
@@ -80,6 +81,9 @@ export default function RootLayout() {
       <NetworkProvider>
         <View style={{ flex: 1 }}>
           <GlobalOfflineBanner />
+          <View style={{ position: 'absolute', top: 6, right: 14, zIndex: 50 }}>
+            <SyncIndicator />
+          </View>
           <MilestoneProvider>
             <WrappedBootstrap />
             <Stack>
