@@ -46,9 +46,10 @@ import {
   setReminderTime,
   type ReminderTime,
 } from '@/lib/streak-notifications';
+import { getOnboardingProfile, isAssessmentSkipped } from '@/lib/onboarding-storage';
 import { useCallback, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import {
   ActivityIndicator,
   Pressable,
@@ -102,6 +103,8 @@ export default function LevelScreen() {
   const [showResetModal, setShowResetModal] = useState(false);
   const [resetSuccess, setResetSuccess] = useState(false);
   const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
+  const [assessmentSkipped, setAssessmentSkipped] = useState(false);
+  const [confirmedLevel, setConfirmedLevel] = useState<string | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -132,6 +135,8 @@ export default function LevelScreen() {
             reminder,
             culturalNotes,
             milestoneHistory,
+            skippedAssessment,
+            onboardingProfile,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredVocabThemesFromStorage(),
@@ -144,6 +149,8 @@ export default function LevelScreen() {
             getReminderTime(),
             getCulturalNotes(),
             getMilestoneHistory(),
+            isAssessmentSkipped(),
+            getOnboardingProfile(),
           ]);
           if (cancelled) return;
 
@@ -168,6 +175,8 @@ export default function LevelScreen() {
             milestoneHistory.map((m) => m.id),
           );
           setMilestonesAchieved(achievedIds.size);
+          setAssessmentSkipped(skippedAssessment);
+          setConfirmedLevel(onboardingProfile?.confirmedLevel ?? null);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -232,6 +241,23 @@ export default function LevelScreen() {
           {resetSuccess ? (
             <View style={styles.resetSuccessBanner}>
               <Text style={styles.resetSuccessText}>Curriculum reset to Week 1 ✅</Text>
+            </View>
+          ) : null}
+
+          {assessmentSkipped ? (
+            <View style={styles.assessmentBanner}>
+              <Text style={styles.assessmentBannerText}>
+                Level self-assessed{confirmedLevel ? ` (${confirmedLevel})` : ''} — take the test to
+                confirm
+              </Text>
+              <Pressable
+                onPress={() => router.push('/onboarding?retake=1' as Href)}
+                style={({ pressed }) => [
+                  styles.assessmentBannerBtn,
+                  pressed && styles.assessmentBannerBtnPressed,
+                ]}>
+                <Text style={styles.assessmentBannerBtnText}>Take level assessment</Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -310,6 +336,7 @@ export default function LevelScreen() {
                 setReminderTimeState({ hour, minute });
               }}
               onResetCurriculum={handleResetCurriculum}
+              onRetakeAssessment={() => router.push('/onboarding?retake=1' as Href)}
               embedded
             />
           </CollapsibleProfileSection>
@@ -329,11 +356,13 @@ function SettingsSection({
   reminderTime,
   onReminderChange,
   onResetCurriculum,
+  onRetakeAssessment,
   embedded = false,
 }: {
   reminderTime: ReminderTime | null;
   onReminderChange: (hour: number, minute: number) => Promise<void>;
   onResetCurriculum: () => void;
+  onRetakeAssessment: () => void;
   embedded?: boolean;
 }) {
   const options: ReminderTime[] = [
@@ -370,6 +399,10 @@ function SettingsSection({
 
         <Pressable onPress={onResetCurriculum} style={styles.settingsDangerBtn}>
           <Text style={styles.settingsDangerText}>Reset grammar curriculum</Text>
+        </Pressable>
+
+        <Pressable onPress={onRetakeAssessment} style={styles.settingsActionBtn}>
+          <Text style={styles.settingsActionText}>Retake level assessment</Text>
         </Pressable>
       </View>
     </View>
@@ -690,6 +723,39 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: palette.green,
   },
+  assessmentBanner: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 16,
+    marginBottom: 14,
+    gap: 12,
+  },
+  assessmentBannerText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  assessmentBannerBtn: {
+    backgroundColor: palette.accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  assessmentBannerBtnPressed: { opacity: 0.9 },
+  assessmentBannerBtnText: { fontSize: 14, fontWeight: '800', color: '#0B0F14' },
+  settingsActionBtn: {
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 12,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  settingsActionText: { fontSize: 14, fontWeight: '800', color: palette.text },
   progressTrack: {
     height: 10,
     borderRadius: 999,

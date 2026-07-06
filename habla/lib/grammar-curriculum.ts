@@ -421,6 +421,16 @@ export async function resolveGrammarCurriculum(
   return state;
 }
 
+/** Set curriculum to a specific starting week (marks prior weeks completed). */
+export async function setGrammarCurriculumStartWeek(week: number): Promise<GrammarCurriculumState> {
+  const clamped = Math.max(1, Math.min(TOTAL_CURRICULUM_WEEKS, Math.trunc(week)));
+  const completedWeeks =
+    clamped > 1 ? Array.from({ length: clamped - 1 }, (_, i) => i + 1) : [];
+  const state = stateFromWeek(clamped, formatLocalDate(), completedWeeks);
+  await saveGrammarCurriculum(state);
+  return state;
+}
+
 export async function resetGrammarCurriculum(): Promise<GrammarCurriculumState> {
   const initial = stateFromWeek(1, formatLocalDate(), []);
   await saveGrammarCurriculum(initial);

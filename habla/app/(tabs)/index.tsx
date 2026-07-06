@@ -1,9 +1,9 @@
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   completeDailyChallenge,
@@ -19,6 +19,7 @@ import {
 } from '@/lib/gem-shop';
 import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
+import { getUserName, isOnboardingComplete, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
 const palette = {
@@ -46,6 +47,18 @@ export default function HomeScreen() {
   const [showShopBadge, setShowShopBadge] = useState(false);
   const [urgentUnlock, setUrgentUnlock] = useState<ReturnType<typeof getUrgentPendingUnlock>>(null);
   const [tick, setTick] = useState(() => Date.now());
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [greeting, setGreeting] = useState<string | null>(null);
+
+  useEffect(() => {
+    void isOnboardingComplete().then((complete) => {
+      if (!complete) {
+        router.replace('/onboarding' as Href);
+        return;
+      }
+      setOnboardingChecked(true);
+    });
+  }, [router]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -70,11 +83,12 @@ export default function HomeScreen() {
 
       void (async () => {
         try {
-          const [streak, gems, challenge, shopProgress] = await Promise.all([
+          const [streak, gems, challenge, shopProgress, name] = await Promise.all([
             getStreakState(),
             getTotalGems(),
             getTodaysChallengeForHome(),
             getGemShopProgress(),
+            getUserName(),
           ]);
           if (cancelled) return;
 
@@ -82,6 +96,7 @@ export default function HomeScreen() {
           setTotalGems(gems);
           setDailyChallenge(challenge);
           setUrgentUnlock(getUrgentPendingUnlock(shopProgress));
+          setGreeting(name ? timeBasedGreeting(name) : null);
 
           await refreshShopBadge(gems);
         } finally {
@@ -143,6 +158,12 @@ export default function HomeScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
 
+      {!onboardingChecked ? (
+        <View style={styles.loadingGate}>
+          <ActivityIndicator color={palette.accent} size="large" />
+        </View>
+      ) : (
+        <>
       <View style={styles.topBar}>
         <View style={styles.streakPill} accessibilityLabel="Current streak">
           <Text style={styles.streakEmoji}>🔥</Text>
@@ -166,6 +187,7 @@ export default function HomeScreen() {
 
       <View style={[styles.main, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.centerBlock}>
+          {greeting ? <Text style={styles.greeting}>{greeting}</Text> : null}
           <Text style={styles.title}>Habla</Text>
 
           {dailyChallenge ? (
@@ -246,6 +268,8 @@ export default function HomeScreen() {
           ) : null}
         </View>
       </View>
+        </>
+      )}
     </SafeAreaView>
   );
 }
@@ -309,6 +333,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingTop: 24,
+  },
+  greeting: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  loadingGate: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   title: {
     fontSize: 48,

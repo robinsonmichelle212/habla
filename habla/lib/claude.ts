@@ -1218,6 +1218,171 @@ Return JSON only.`;
   return parsed;
 }
 
+// ——— Placement assessment (onboarding) ———
+
+export type PlacementAssessmentResult = {
+  confirmedLevel:
+    | 'A1'
+    | 'A2'
+    | 'B1 Beginner'
+    | 'B1 Developing'
+    | 'B1 Confident'
+    | 'B1 Strong'
+    | 'B2 Emerging';
+  adjustedFromSelfAssessment: boolean;
+  adjustmentDirection: 'higher' | 'lower' | 'same';
+  keyStrengths: string[];
+  keyWeaknesses: string[];
+  grammarStartingWeek: number;
+  personalNote: string;
+};
+
+function buildAssessmentSystemPrompt(
+  userName: string,
+  selfAssessedLevel: string,
+  dialectPreference: string,
+): string {
+  return `You are Javi, a warm Spanish tutor assessing a learner's level during onboarding.
+Their name is ${userName}.
+They self-assessed as ${selfAssessedLevel}.
+Their dialect preference is ${dialectPreference}.
+
+Ask exactly these 4 questions in order.
+Pitch each question at the self-assessed level.
+After each response internally note the quality but do not comment on it — just continue naturally.
+Be warm, encouraging and non-judgmental throughout.
+After question 4 you will provide a level assessment (handled separately — never output JSON during the conversation).
+
+QUESTION 1 — Present tense (30 seconds):
+'Hola ${userName}! Cuéntame — ¿cómo es tu día típico? / Tell me about your typical day.'
+Assess: present tense usage, basic vocabulary, confidence.
+
+QUESTION 2 — Past tense (30 seconds):
+'¿Y qué hiciste el fin de semana pasado? / What did you do last weekend?'
+Assess: past tense usage, preterite vs imperfect distinction.
+
+QUESTION 3 — Opinion (45 seconds):
+'¿Por qué quieres aprender español? ¿Qué es lo más difícil para ti? / Why do you want to learn Spanish? What's hardest for you?'
+Assess: ability to express opinions, vocabulary range, sentence complexity.
+
+QUESTION 4 — Hypothetical (45 seconds):
+'Si pudieras vivir en cualquier ciudad de España o Latinoamérica, ¿dónde vivirías y por qué? / If you could live anywhere in Spain or Latin America, where would you live and why?'
+Assess: conditional tense, complex sentence construction, confidence with hypotheticals.
+
+RESPONSE FORMAT for each question:
+- 2–4 short sentences in Spanish at the learner's level
+- Then a new line: Translate: [English translation of your Spanish]
+- Do NOT evaluate the learner's previous answer out loud
+- Do NOT skip ahead — ask only the question for the step you are on`;
+}
+
+const ASSESSMENT_QUESTION_LABELS: Record<number, string> = {
+  1: 'QUESTION 1 (present tense — typical day)',
+  2: 'QUESTION 2 (past tense — last weekend)',
+  3: 'QUESTION 3 (opinion — why learn Spanish)',
+  4: 'QUESTION 4 (hypothetical — where to live)',
+};
+
+export async function generateAssessmentOpening(
+  userName: string,
+  selfAssessedLevel: string,
+  dialectPreference: string,
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 320,
+    system: buildAssessmentSystemPrompt(userName, selfAssessedLevel, dialectPreference),
+    messages: [
+      {
+        role: 'user',
+        content: `Begin the assessment. Ask ${ASSESSMENT_QUESTION_LABELS[1]} only.
+Start with a brief warm greeting using their name, then the question.`,
+      },
+    ],
+  });
+
+  return extractText(response);
+}
+
+export async function askJaviAssessmentFollowUp(
+  userName: string,
+  selfAssessedLevel: string,
+  dialectPreference: string,
+  questionNumber: 2 | 3 | 4,
+  priorExchanges: JaviMessage[],
+): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 320,
+    system: buildAssessmentSystemPrompt(userName, selfAssessedLevel, dialectPreference),
+    messages: [
+      ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
+      {
+        role: 'user' as const,
+        content: `The learner just answered. Now ask ${ASSESSMENT_QUESTION_LABELS[questionNumber]} only.
+Do not comment on their answer quality — transition naturally to the next question.`,
+      },
+    ],
+  });
+
+  return extractText(response);
+}
+
+export async function finalizePlacementAssessment(
+  userName: string,
+  selfAssessedLevel: string,
+  dialectPreference: string,
+  conversation: JaviMessage[],
+): Promise<PlacementAssessmentResult> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi completing a Spanish placement assessment.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `Based on this full assessment conversation, return the placement result.
+
+Learner name: ${userName}
+Self-assessed level: ${selfAssessedLevel}
+Dialect preference: ${dialectPreference}
+
+Conversation:
+${JSON.stringify(conversation)}
+
+Return JSON exactly:
+{
+  "confirmedLevel": "A1" | "A2" | "B1 Beginner" | "B1 Developing" | "B1 Confident" | "B1 Strong" | "B2 Emerging",
+  "adjustedFromSelfAssessment": boolean,
+  "adjustmentDirection": "higher" | "lower" | "same",
+  "keyStrengths": ["strength 1", "strength 2"],
+  "keyWeaknesses": ["weakness 1", "weakness 2"],
+  "grammarStartingWeek": integer 1-20,
+  "personalNote": "One warm encouraging sentence from Javi about what you noticed"
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 700,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as PlacementAssessmentResult;
+  const week = typeof parsed.grammarStartingWeek === 'number' ? parsed.grammarStartingWeek : 1;
+  return {
+    ...parsed,
+    grammarStartingWeek: Math.max(1, Math.min(20, Math.trunc(week))),
+    keyStrengths: Array.isArray(parsed.keyStrengths) ? parsed.keyStrengths.slice(0, 2) : [],
+    keyWeaknesses: Array.isArray(parsed.keyWeaknesses) ? parsed.keyWeaknesses.slice(0, 2) : [],
+  };
+}
+
 export type QuickFireQuestionType =
   | 'fill_blank'
   | 'translate_word'

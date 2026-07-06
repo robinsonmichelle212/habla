@@ -84,6 +84,7 @@ export default function RootLayout() {
             <WrappedBootstrap />
             <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+          <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen name="lesson" options={{ headerShown: false }} />
           <Stack.Screen name="practice" options={{ headerShown: false }} />
           <Stack.Screen name="writing" options={{ headerShown: false }} />
