@@ -12,7 +12,7 @@ import {
   type VocabMasteryEvent,
 } from '@/lib/saved-vocabulary';
 import {
-  generateQuickFireQuestions,
+  generateInterleavedPracticeQuestions,
   generateFluencyDrillQuestions,
   generateWordOrderDrillQuestions,
   type PrioritizedWeakAreaInput,
@@ -31,8 +31,9 @@ import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
 import { checkIsOnline } from '@/lib/network-status';
-import { getOfflineGrammarDrillQuestions } from '@/lib/offline-practice-fallbacks';
+import { buildInterleavedDrillPlan } from '@/lib/interleaving';
 import { cachePracticeQuestions, getCachedPracticeQuestions } from '@/lib/practice-questions-cache';
+import { getOfflineGrammarDrillQuestions } from '@/lib/offline-practice-fallbacks';
 import { checkStreakMilestones, milestonesAfterDrill } from '@/lib/milestones';
 import { buildPriorityWeakAreas, appendDrillHistory, getDrillHistory, getLessonHistory, type PriorityWeakArea } from '@/lib/practice-storage';
 import { checkQuickFireAnswer } from '@/lib/quick-fire';
@@ -268,6 +269,35 @@ export default function PracticeScreen() {
         return null;
       };
 
+      const errorDnaTargets = await getTopErrorDNA(2);
+      const lessonHistory = await getLessonHistory();
+      const drillPlan = buildInterleavedDrillPlan(
+        priorityWeakAreas,
+        curriculum,
+        lessonHistory,
+        grammarTopicHint,
+      );
+      const interleavedPlan =
+        effectiveDrill === 'grammar'
+          ? { ...drillPlan, primary: weekDef.topic }
+          : drillPlan;
+
+      const loadInterleavedBatch = async (): Promise<QuickFireQuestion[]> => {
+        if (!online) {
+          const cached = await getCachedPracticeQuestions(effectiveDrill, grammarWeek);
+          if (cached?.length) return cached;
+          if (effectiveDrill === 'grammar') {
+            return getOfflineGrammarDrillQuestions(weekDef.week);
+          }
+          return [];
+        }
+        const batch = await generateInterleavedPracticeQuestions(interleavedPlan, errorDnaTargets);
+        if (batch.length) {
+          await cachePracticeQuestions(effectiveDrill, grammarWeek, batch);
+        }
+        return batch;
+      };
+
       if (effectiveDrill === 'word-order') {
         if (!online) {
           const offlineBatch = await useCachedOrFallback('word-order', null);
@@ -286,58 +316,40 @@ export default function PracticeScreen() {
           return;
         }
 
-        const wordOrderTargets = (await getWordOrderErrorDNA()).slice(0, 2);
-        const wordOrderBatch = await generateWordOrderDrillQuestions(TOTAL_QUESTIONS, wordOrderTargets);
-
-        if (wordOrderBatch.length < 1) {
-          Alert.alert('Could not load questions', 'Try again in a moment.');
-          setStage('choose');
-          return;
-        }
-
-        await cachePracticeQuestions('word-order', null, wordOrderBatch);
-        setQuestions(
-          wordOrderBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
-        );
-        setStage('drill');
-        return;
-      }
-
-      const errorDnaTargets = await getTopErrorDNA(2);
-
-      if (effectiveDrill === 'grammar') {
-        if (!online) {
-          const offlineBatch = await useCachedOrFallback('grammar', grammarWeek, () =>
-            getOfflineGrammarDrillQuestions(weekDef.week),
-          );
-          if (!offlineBatch?.length) {
+        const interleavedBatch = await loadInterleavedBatch();
+        if (interleavedBatch.length < 1) {
+          const wordOrderTargets = (await getWordOrderErrorDNA()).slice(0, 2);
+          const wordOrderBatch = await generateWordOrderDrillQuestions(TOTAL_QUESTIONS, wordOrderTargets);
+          if (wordOrderBatch.length < 1) {
             Alert.alert('Could not load questions', 'Try again in a moment.');
             setStage('choose');
             return;
           }
+          await cachePracticeQuestions('word-order', null, wordOrderBatch);
           setQuestions(
-            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+            wordOrderBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
           );
           setStage('drill');
           return;
         }
 
-        const grammarBatch = await generateQuickFireQuestions([], TOTAL_QUESTIONS, {
-          topic: weekDef.topic,
-          weekNumber: weekDef.week,
-          focusVerbs: weekDef.focusVerbs,
-          includesContrast: weekDef.includesContrast,
-        }, errorDnaTargets);
+        setQuestions(
+          interleavedBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+        );
+        setStage('drill');
+        return;
+      }
 
-        if (grammarBatch.length < 1) {
+      if (effectiveDrill === 'grammar') {
+        const interleavedBatch = await loadInterleavedBatch();
+        if (!interleavedBatch.length) {
           Alert.alert('Could not load questions', 'Try again in a moment.');
           setStage('choose');
           return;
         }
 
-        await cachePracticeQuestions('grammar', grammarWeek, grammarBatch);
         setQuestions(
-          grammarBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          interleavedBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
         );
         setStage('drill');
         return;
@@ -361,21 +373,15 @@ export default function PracticeScreen() {
           return;
         }
 
-        const fluencyBatch = await generateFluencyDrillQuestions(
-          prioritizedForPrompt,
-          TOTAL_QUESTIONS,
-          errorDnaTargets,
-        );
-
-        if (fluencyBatch.length < 1) {
+        const interleavedBatch = await loadInterleavedBatch();
+        if (interleavedBatch.length < 1) {
           Alert.alert('Could not load questions', 'Try again in a moment.');
           setStage('choose');
           return;
         }
 
-        await cachePracticeQuestions('fluency', null, fluencyBatch);
         setQuestions(
-          fluencyBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          interleavedBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
         );
         setStage('drill');
         return;
@@ -413,7 +419,10 @@ export default function PracticeScreen() {
       const activeWords = getActiveVocabulary(savedWords);
       const vocabCount = Math.min(VOCAB_DRILL_SLOTS, activeWords.length);
       const weakCount = TOTAL_QUESTIONS - vocabCount;
-      const weakBatch = await generateQuickFireQuestions(prioritizedForPrompt, weakCount, undefined, errorDnaTargets);
+      const interleavedBatch = online
+        ? await loadInterleavedBatch()
+        : (await getCachedPracticeQuestions('vocabulary', null)) ?? [];
+      const weakBatch = interleavedBatch.slice(0, weakCount);
       const vocabBatch = buildSavedVocabQuestions(activeWords, vocabCount);
       const mixed = mixPracticeQuestions(weakBatch, vocabBatch);
 
@@ -422,7 +431,7 @@ export default function PracticeScreen() {
         setStage('choose');
         return;
       }
-      await cachePracticeQuestions('vocabulary', null, weakBatch);
+      await cachePracticeQuestions('vocabulary', null, interleavedBatch);
       setQuestions(mixed.slice(0, TOTAL_QUESTIONS));
       setStage('drill');
     } catch (e) {
@@ -430,7 +439,7 @@ export default function PracticeScreen() {
       Alert.alert('Could not load questions', message);
       setStage('choose');
     }
-  }, [loadingWeakAreas, priorityWeakAreas.length, prioritizedForPrompt]);
+  }, [grammarTopicHint, loadingWeakAreas, priorityWeakAreas, prioritizedForPrompt]);
 
   useEffect(() => {
     if (didAutoStartRef.current) return;
@@ -746,6 +755,9 @@ export default function PracticeScreen() {
               </Text>
 
               <View style={[styles.questionCard, flash === 'correct' && styles.flashGreenCard, flash === 'incorrect' && styles.flashRedCard]}>
+                {currentQuestion.kind === 'quick' && currentQuestion.question.focusLabel ? (
+                  <Text style={styles.focusLabel}>{currentQuestion.question.focusLabel}</Text>
+                ) : null}
                 {currentQuestion.kind === 'quick' && currentQuestion.question.targetsErrorDna ? (
                   <Text style={styles.javiWatchingLabel}>Javi's watching this one 👀</Text>
                 ) : null}
@@ -1071,6 +1083,13 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: palette.accent,
     marginBottom: 8,
+  },
+  focusLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.blue,
+    marginBottom: 6,
+    letterSpacing: 0.3,
   },
   questionType: {
     fontSize: 12,

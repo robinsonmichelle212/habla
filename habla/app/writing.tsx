@@ -16,6 +16,7 @@ import {
 import { checkIsOnline } from '@/lib/network-status';
 import { addPendingWritingTask } from '@/lib/pending-writing-storage';
 import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
+import { buildInterleavingContext } from '@/lib/interleaving';
 import { formatLocalDate } from '@/lib/streak';
 import { WRITING_PRACTICE_KEY } from '@/components/score-detail-modals';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -130,6 +131,7 @@ export default function WritingScreen() {
           lessonType,
           conversationToJaviMessages(conversation),
           lessonFocus!,
+          await buildInterleavingContext(),
         );
         setTaskPrompt(t.prompt);
         setLessonSession({ writingTask: { prompt: t.prompt } });

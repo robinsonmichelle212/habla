@@ -13,6 +13,7 @@ import {
   askJaviWarmUp,
   evaluateSpeakingFluency,
   evaluateWriting,
+  evaluateFeynmanExplanation,
   generateSpeakingIntro,
   generateWarmUpOpening,
   generateWritingTask,
@@ -52,6 +53,13 @@ import {
   type WritingEvaluation,
 } from '@/lib/lesson-session';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
+import {
+  buildFeynmanQuestion,
+  markFeynmanCompletedForWeek,
+  shouldTriggerFeynman,
+} from '@/lib/feynman-storage';
+import { buildInterleavingContext, type InterleavingContext } from '@/lib/interleaving';
+import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
 import { checkIsOnline } from '@/lib/network-status';
 import { getLessonHistory } from '@/lib/practice-storage';
@@ -99,7 +107,7 @@ const palette = {
 };
 
 type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
-type LessonPhase = 'warmup' | 'writing' | 'speaking';
+type LessonPhase = 'warmup' | 'feynman' | 'writing' | 'speaking';
 type SpeakingStep = 'intro' | 'conversation' | 'phase-summary';
 
 type ChatMessage = {
@@ -121,6 +129,7 @@ const WARMUP_SKIP_AFTER_MESSAGES = 5;
 const HEARD_TRANSCRIPT_MS = 5000;
 const PHASE_SUMMARY_MS = 2000;
 const SPEAKING_USER_TURNS = 3;
+const MAX_FEYNMAN_ATTEMPTS = 2;
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -167,6 +176,9 @@ export default function LessonScreen() {
   const [warmUpInput, setWarmUpInput] = useState('');
   const [warmUpSending, setWarmUpSending] = useState(false);
   const [warmUpReadyForWriting, setWarmUpReadyForWriting] = useState(false);
+  const [feynmanNeeded, setFeynmanNeeded] = useState(false);
+  const [feynmanAttempts, setFeynmanAttempts] = useState(0);
+  const [interleavingContext, setInterleavingContext] = useState<InterleavingContext | null>(null);
 
   const [writingPrompt, setWritingPrompt] = useState('');
   const [loadingWritingTask, setLoadingWritingTask] = useState(false);
@@ -197,7 +209,7 @@ export default function LessonScreen() {
   const lessonType = lessonKindToLessonType(lessonKind);
 
   const indicatorStep = useMemo(() => {
-    if (phase === 'warmup' || phase === 'writing') return 0;
+    if (phase === 'warmup' || phase === 'feynman' || phase === 'writing') return 0;
     if (phase === 'speaking') return speakingUserTurns >= 2 ? 2 : 1;
     return 0;
   }, [phase, speakingUserTurns]);
@@ -252,6 +264,9 @@ export default function LessonScreen() {
     setWarmUpMessages([]);
     setWarmUpInput('');
     setWarmUpReadyForWriting(false);
+    setFeynmanNeeded(false);
+    setFeynmanAttempts(0);
+    setInterleavingContext(null);
     setWritingPrompt('');
     setWritingText('');
     setWritingResult(null);
@@ -279,6 +294,13 @@ export default function LessonScreen() {
         if (cancelled) return;
         setTopErrorDna(topErrors);
         setLessonFocus(focus);
+        const [needsFeynman, interleaving] = await Promise.all([
+          shouldTriggerFeynman(lessonKind, focus),
+          buildInterleavingContext(),
+        ]);
+        if (cancelled) return;
+        setFeynmanNeeded(needsFeynman);
+        setInterleavingContext(interleaving);
         setLessonSession({
           lessonType: lessonKindToLessonType(lessonKind),
           lessonFocus: focus,
@@ -379,9 +401,104 @@ export default function LessonScreen() {
     };
   }, []);
 
+  const completeFeynmanAndStartWriting = async () => {
+    const curriculum = await resolveGrammarCurriculum();
+    await markFeynmanCompletedForWeek(curriculum.currentWeek);
+    setFeynmanNeeded(false);
+    void startWritingPhase();
+  };
+
+  const beginFeynmanPhase = () => {
+    if (!lessonFocus) return;
+    const question = buildFeynmanQuestion(lessonFocus);
+    setPhase('feynman');
+    setFeynmanAttempts(0);
+    setWarmUpMessages((prev) => [
+      ...prev,
+      {
+        id: newId(),
+        role: 'assistant',
+        spanish: question.spanish,
+        translation: question.translation,
+      },
+    ]);
+  };
+
+  const proceedAfterWarmup = () => {
+    if (feynmanNeeded && phase !== 'feynman') {
+      beginFeynmanPhase();
+      return;
+    }
+    void startWritingPhase();
+  };
+
+  const handleFeynmanResponse = async (trimmed: string) => {
+    if (!lessonFocus || warmUpSending) return;
+
+    const attempt = feynmanAttempts + 1;
+    setFeynmanAttempts(attempt);
+    setWarmUpSending(true);
+
+    try {
+      const online = await checkIsOnline();
+      const question = buildFeynmanQuestion(lessonFocus);
+
+      if (!online) {
+        setWarmUpMessages((prev) => [
+          ...prev,
+          {
+            id: newId(),
+            role: 'assistant',
+            spanish: 'Perfecto. Lo entiendes bien. Ahora vamos a practicarlo.',
+            translation: 'Perfect. You understand it well. Now let\'s practise it.',
+          },
+        ]);
+        setTimeout(() => {
+          void completeFeynmanAndStartWriting();
+        }, 800);
+        return;
+      }
+
+      const evaluation = await evaluateFeynmanExplanation(
+        lessonType,
+        lessonFocus,
+        question.conceptLabel,
+        trimmed,
+        attempt,
+      );
+
+      setWarmUpMessages((prev) => [
+        ...prev,
+        {
+          id: newId(),
+          role: 'assistant',
+          spanish: evaluation.javiSpanish,
+          translation: evaluation.javiTranslation,
+        },
+      ]);
+
+      if (evaluation.moveToWriting || attempt >= MAX_FEYNMAN_ATTEMPTS) {
+        setTimeout(() => {
+          void completeFeynmanAndStartWriting();
+        }, 800);
+      }
+    } catch {
+      Alert.alert('Connection issue', 'Check your internet and try again.');
+    } finally {
+      setWarmUpSending(false);
+    }
+  };
+
   const sendWarmUpMessage = async () => {
     const trimmed = warmUpInput.trim();
     if (!trimmed || warmUpSending || !lessonFocus) return;
+
+    if (phase === 'feynman') {
+      setWarmUpInput('');
+      setWarmUpMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
+      await handleFeynmanResponse(trimmed);
+      return;
+    }
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -429,7 +546,17 @@ export default function LessonScreen() {
       "Skip Javi's explanation and go straight to writing?",
       [
         { text: 'No', style: 'cancel' },
-        { text: 'Yes', onPress: () => void startWritingPhase() },
+        {
+          text: 'Yes',
+          onPress: () => {
+            void (async () => {
+              const curriculum = await resolveGrammarCurriculum();
+              await markFeynmanCompletedForWeek(curriculum.currentWeek);
+              setFeynmanNeeded(false);
+              void startWritingPhase();
+            })();
+          },
+        },
       ],
     );
   };
@@ -456,7 +583,12 @@ export default function LessonScreen() {
       }
 
       const prior = conversationToJaviMessages(toTurns(warmUpMessages));
-      const task = await generateWritingTask(lessonType, prior, lessonFocus);
+      const task = await generateWritingTask(
+        lessonType,
+        prior,
+        lessonFocus,
+        interleavingContext ?? undefined,
+      );
       setWritingPrompt(task.prompt);
       await cacheWritingTask(lessonType, focusKey, task.prompt);
       setLessonSession({
@@ -586,7 +718,13 @@ export default function LessonScreen() {
     }
 
     try {
-      const introText = await generateSpeakingIntro(lessonType, writingPrompt, lessonFocus, topErrorDna);
+      const introText = await generateSpeakingIntro(
+        lessonType,
+        writingPrompt,
+        lessonFocus,
+        topErrorDna,
+        interleavingContext ?? undefined,
+      );
       const parsed = parseJaviResponse(introText);
       const introMsg: ChatMessage = {
         id: newId(),
@@ -718,6 +856,7 @@ export default function LessonScreen() {
         lessonFocus,
         writingPrompt,
         topErrorDna,
+        interleavingContext ?? undefined,
       );
       const parsed = parseJaviResponse(replyText);
       setSpeakingMessages((prev) => [
@@ -1101,7 +1240,7 @@ export default function LessonScreen() {
             <Text style={styles.offlineNote}>📡 Offline — using a saved introduction</Text>
           ) : null}
 
-          {phase === 'warmup' || phase === 'writing' ? (
+          {phase === 'warmup' || phase === 'feynman' || phase === 'writing' ? (
             <>
               {warmUpMessages.map((m) => (
                 <TextMessageBubble
@@ -1111,16 +1250,25 @@ export default function LessonScreen() {
                   translation={m.translation}
                   messageKey={m.id}
                   animateTyping={
-                    phase === 'warmup' && m.role === 'assistant' && m.id === latestWarmUpJaviId
+                    (phase === 'warmup' || phase === 'feynman') &&
+                    m.role === 'assistant' &&
+                    m.id === latestWarmUpJaviId
                   }
                 />
               ))}
               {phase === 'warmup' && warmUpReadyForWriting ? (
                 <Pressable
-                  onPress={() => void startWritingPhase()}
+                  onPress={() => proceedAfterWarmup()}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
-                  <Text style={styles.primaryButtonText}>Ready to write ✍️</Text>
+                  <Text style={styles.primaryButtonText}>
+                    {feynmanNeeded ? 'Explain it back to Javi 🧠' : 'Ready to write ✍️'}
+                  </Text>
                 </Pressable>
+              ) : null}
+              {phase === 'feynman' ? (
+                <Text style={styles.feynmanHint}>
+                  Explain the concept in your own words — Javi will check your understanding before writing.
+                </Text>
               ) : null}
               {phase === 'warmup' && showWarmUpSkip ? (
                 <Pressable
@@ -1213,7 +1361,7 @@ export default function LessonScreen() {
           ) : null}
         </ScrollView>
 
-        {phase === 'warmup' ? (
+        {phase === 'warmup' || phase === 'feynman' ? (
           <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
             <View style={styles.composeRow}>
               <TextInput
@@ -1348,6 +1496,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.muted,
     marginBottom: 10,
+  },
+  feynmanHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    marginTop: 4,
+    lineHeight: 18,
   },
   writingBlock: { gap: 12 },
   phaseTitle: { fontSize: 16, fontWeight: '800', color: palette.text },

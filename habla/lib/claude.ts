@@ -3,6 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dna';
 
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
+import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 import type { SpanishWrappedReport } from '@/lib/wrapped-data';
 import {
@@ -181,7 +182,11 @@ General:
 Vocabulary teaching (all lesson types):
 - Roughly once per conversation (not every message), naturally introduce 1–2 words slightly above B1 level.
 - Use each new word in a natural Spanish sentence first, then briefly explain in Spanish on a new line starting with "Por cierto —" e.g. "Por cierto — 'conseguir' means to achieve or to get. You might want to save that one."
-- Keep it conversational — never turn into a vocabulary list. The learner can save words with the app's Save a word feature.${buildErrorDnaAppendix(topErrors)}`;
+- Keep it conversational — never turn into a vocabulary list. The learner can save words with the app's Save a word feature.
+
+INTERLEAVING: Always mix current grammar focus with vocabulary from a different theme than this week's vocabulary lesson. In conversation naturally reference vocabulary from previous weeks to force retrieval. In writing tasks use current grammar with non-current vocabulary themes.
+
+FEYNMAN TECHNIQUE: On the first lesson of each new grammar curriculum week, after your introduction, ask the user to explain the grammar rule back to you in Spanish in their own words with an example. Evaluate their explanation and address specific gaps only. Maximum 2 Feynman exchanges before moving to writing phase. Only use Feynman on Grammar and Structure lessons.${buildErrorDnaAppendix(topErrors)}`;
 }
 
 function extractText(response: Anthropic.Messages.Message): string {
@@ -375,6 +380,21 @@ export async function askJavi(
   return extractText(response);
 }
 
+function interleavingSpeakingHint(interleaving?: InterleavingContext): string {
+  if (!interleaving?.previousVocabTheme) return '';
+  return `
+
+INTERLEAVING (speaking): Naturally weave vocabulary from the previous theme "${interleaving.previousVocabTheme}" into your replies while staying on today's topic. Example: if this week is Travel but last week was Food, ask something like "When you travel do you enjoy trying local food?" — force retrieval of older vocabulary alongside new content.`;
+}
+
+function interleavingWritingHint(focus: LessonFocusContext, interleaving?: InterleavingContext): string {
+  if (!interleaving || (focus.kind !== 'grammar' && focus.kind !== 'structure')) return '';
+  const current = interleaving.currentVocabTheme ?? 'this week\'s vocabulary lesson theme';
+  return `
+
+INTERLEAVING (required): Mix today's grammar/structure focus with vocabulary from "${interleaving.writingVocabTheme}" — NOT "${current}". Example: if grammar is Preterite and this week's vocab theme is Food, require Travel vocabulary in the writing task instead.`;
+}
+
 const WARMUP_PHASE_APPENDIX = `
 LESSON PHASE: WARM-UP (written exchange only).
 - Greet the learner and introduce today's topic and focus clearly.
@@ -407,7 +427,8 @@ LESSON PHASE: SPEAKING (voice only — learner listens to you).
 - If they make a significant error, correct it very gently inline in one short clause, then continue immediately:
   e.g. "Sí, exactamente — fuiste, not ibas in that context. Anyway, tell me more about..."
 - Never stop the flow for a correction. Never evaluate or score them during the conversation.
-- Use today's lesson vocabulary and grammar naturally in your replies — model correct usage without lecturing.`;
+- Use today's lesson vocabulary and grammar naturally in your replies — model correct usage without lecturing.
+- Use interleaving: reference vocabulary from previous weeks naturally to force retrieval practice.`;
 
 export async function generateWarmUpOpening(
   lessonType: LessonType,
@@ -473,6 +494,7 @@ export async function generateSpeakingIntro(
   writingTaskPrompt: string,
   focus: LessonFocusContext,
   topErrors: ErrorDNAInput[] = [],
+  interleaving?: InterleavingContext,
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -480,7 +502,7 @@ export async function generateSpeakingIntro(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
-    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}`,
+    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}`,
     messages: [
       {
         role: 'user',
@@ -509,6 +531,7 @@ export async function askJaviSpeakingConversation(
   focus: LessonFocusContext,
   speakingTopic: string,
   topErrors: ErrorDNAInput[] = [],
+  interleaving?: InterleavingContext,
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -516,7 +539,7 @@ export async function askJaviSpeakingConversation(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 280,
-    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}
+    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}
 Today's speaking theme (keep conversation on this topic): ${speakingTopic}`,
     messages: [
       ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
@@ -596,6 +619,80 @@ ${lessonType === 'Structure' ? '\nBonus: note if word order sounded natural in c
     score,
     pronunciationNotes: Array.isArray(parsed.pronunciationNotes) ? parsed.pronunciationNotes : [],
     feedback: typeof parsed.feedback === 'string' ? parsed.feedback : '',
+  };
+}
+
+export type FeynmanEvaluationJson = {
+  verdict: 'correct' | 'partial' | 'wrong';
+  javiSpanish: string;
+  javiTranslation: string;
+  moveToWriting: boolean;
+};
+
+export async function evaluateFeynmanExplanation(
+  lessonType: LessonType,
+  focus: LessonFocusContext,
+  conceptLabel: string,
+  userExplanation: string,
+  attemptNumber: number,
+): Promise<FeynmanEvaluationJson> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi using the Feynman Technique to check if a B1 learner truly understands a grammar/structure concept.
+Return ONLY valid JSON. No markdown.
+
+FEYNMAN RULES:
+- Check if they captured the core rule correctly and if their example sentence is correct.
+- If correct: confirm warmly and set moveToWriting true. Spanish: "Perfecto. Lo entiendes bien. Ahora vamos a practicarlo."
+- If partial (gaps): address ONLY the specific gap in one sentence, not the whole concept. Ask them to try again in one sentence. Set moveToWriting false unless this is attempt 2.
+- If completely wrong: clarify the single most important point in one sentence, then ask them to explain back. Set moveToWriting false unless this is attempt 2.
+- On attempt 2: always set moveToWriting true even if still imperfect — encourage and move on.
+- Maximum 2 exchanges total.`;
+
+  const user = `Evaluate this learner explanation (attempt ${attemptNumber} of 2).
+
+Concept they should explain: ${conceptLabel}
+Lesson type: ${lessonType}
+${focus.kind === 'grammar' ? `Grammar focus: ${focus.topic} (${focus.topicSpanish})` : ''}
+${focus.kind === 'structure' ? `Structure focus: ${focus.topic.title} — ${focus.topic.summary}` : ''}
+
+Learner's explanation in Spanish:
+${userExplanation}
+
+Return JSON exactly:
+{
+  "verdict": "correct" | "partial" | "wrong",
+  "javiSpanish": "Javi's reply in Spanish (2 short sentences max)",
+  "javiTranslation": "English translation of javiSpanish",
+  "moveToWriting": boolean
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 450,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as FeynmanEvaluationJson;
+  const verdict =
+    parsed.verdict === 'correct' || parsed.verdict === 'partial' || parsed.verdict === 'wrong'
+      ? parsed.verdict
+      : 'partial';
+
+  return {
+    verdict,
+    javiSpanish: typeof parsed.javiSpanish === 'string' ? parsed.javiSpanish.trim() : 'Bien — sigamos practicando.',
+    javiTranslation:
+      typeof parsed.javiTranslation === 'string'
+        ? parsed.javiTranslation.trim()
+        : 'Good — let\'s keep practising.',
+    moveToWriting:
+      attemptNumber >= 2 ||
+      Boolean(parsed.moveToWriting) ||
+      verdict === 'correct',
   };
 }
 
@@ -959,6 +1056,7 @@ export async function generateWritingTask(
   lessonType: LessonType,
   conversation: JaviMessage[],
   focus: LessonFocusContext,
+  interleaving?: InterleavingContext,
 ): Promise<WritingTaskJson> {
   const anthropic = getClient();
   const model = getModel();
@@ -967,7 +1065,7 @@ export async function generateWritingTask(
 Return ONLY valid JSON. No markdown.`;
 
   const user = `Create a writing task prompt for a B1 learner.
-${writingTaskFocusLine(focus)}
+${writingTaskFocusLine(focus)}${interleavingWritingHint(focus, interleaving)}
 Keep it friendly, short, and clear.
 
 Return JSON exactly:
@@ -1411,6 +1509,7 @@ export type QuickFireQuestion = {
   expectedAnswer: string;
   acceptableAnswers?: string[];
   targetsErrorDna?: boolean;
+  focusLabel?: string;
   wordOrderSubtype?: WordOrderSubtype;
   constructionTag?: string;
 };
@@ -1590,6 +1689,100 @@ Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
         ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
         : undefined,
       targetsErrorDna: Boolean(q.targetsErrorDna),
+      focusLabel: typeof q.focusLabel === 'string' ? q.focusLabel.trim() : undefined,
+    }));
+}
+
+export type InterleavedDrillPlan = {
+  primary: string;
+  secondary: string;
+  mastered: string;
+  preview: string;
+};
+
+export async function generateInterleavedPracticeQuestions(
+  plan: InterleavedDrillPlan,
+  errorDnaTargets: ErrorDNAInput[] = [],
+): Promise<QuickFireQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+  const count = 10;
+
+  const errorDnaBlock =
+    errorDnaTargets.length > 0
+      ? `
+Up to 2 questions may target these recurring user errors:
+${formatErrorDnaForDrillPrompt(errorDnaTargets)}
+For those set "targetsErrorDna": true.`
+      : '';
+
+  const system = `You are Javi, a Spanish tutor creating interleaved B1 drill questions.
+Return ONLY valid JSON. No markdown. No extra keys.
+
+${CORE_VOCABULARY_PROMPT}`;
+
+  const user = `Generate exactly ${count} interleaved Spanish practice questions using INTERLEAVING — mix topics within one session.
+
+Distribution (each question MUST include a short focusLabel):
+- 4 questions on PRIMARY weak area: "${plan.primary}"
+- 3 questions on SECONDARY weak area: "${plan.secondary}"
+- 2 questions on MASTERED area (retrieval practice / spaced review): "${plan.mastered}"
+- 1 PREVIEW question on next grammar topic: "${plan.preview}"
+
+${errorDnaBlock}
+
+Question types — vary across: fill_blank, translate_word, correct_mistake, choose_word, quick_translate, conjugate, choose_tense, translate_tense, reorder_words, spot_structure_error, complete_structure, choose_construction.
+
+Rules:
+- Short prompts. Answers brief (1–6 words usually).
+- focusLabel: subtle 2–4 word label shown to learner e.g. "Preterite", "Travel vocab", "Present (review)", "Future (preview)"
+- Shuffle order — do NOT group by focus area.
+- expectedAnswer is primary correct answer.
+- acceptableAnswers: optional valid variants.
+
+Return JSON exactly:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "fill_blank",
+      "prompt": "...",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."],
+      "focusLabel": "Preterite",
+      "targetsErrorDna": false
+    }
+  ]
+}
+
+Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1800,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const text = extractText(response);
+  const parsed = extractFirstJsonObject(text) as { questions: QuickFireQuestion[] };
+  if (!Array.isArray(parsed.questions)) return [];
+
+  return parsed.questions
+    .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
+    .slice(0, count)
+    .map((q, i) => ({
+      id: String(q.id ?? i + 1),
+      type: QUICK_FIRE_TYPES.includes(q.type as QuickFireQuestionType)
+        ? (q.type as QuickFireQuestionType)
+        : QUICK_FIRE_TYPES[i % QUICK_FIRE_TYPES.length],
+      prompt: q.prompt.trim(),
+      expectedAnswer: q.expectedAnswer.trim(),
+      acceptableAnswers: Array.isArray(q.acceptableAnswers)
+        ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+        : undefined,
+      targetsErrorDna: Boolean(q.targetsErrorDna),
+      focusLabel: typeof q.focusLabel === 'string' ? q.focusLabel.trim() : undefined,
     }));
 }
 
