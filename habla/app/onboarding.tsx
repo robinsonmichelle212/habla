@@ -16,6 +16,7 @@ import {
   DIALECT_OPTIONS,
   dialectLabel,
   getOnboardingProfile,
+  shouldShowOnboarding,
   SELF_ASSESSMENT_OPTIONS,
   type ConfirmedLevel,
   type DialectPreference,
@@ -145,6 +146,15 @@ export default function OnboardingScreen() {
 
   const dialectLabelText = dialectPreference ? dialectLabel(dialectPreference) : '';
   const selfLevelLabel = selfAssessedLevel ?? '';
+
+  useEffect(() => {
+    if (isRetake) return;
+    void shouldShowOnboarding().then((show) => {
+      if (!show) {
+        router.replace('/(tabs)' as Href);
+      }
+    });
+  }, [isRetake, router]);
 
   useEffect(() => {
     if (step === 'welcome') {

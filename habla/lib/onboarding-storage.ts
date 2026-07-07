@@ -1,9 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { setGrammarCurriculumStartWeek } from '@/lib/grammar-curriculum';
-import { formatLocalDate } from '@/lib/streak';
+import { getTotalGems } from '@/lib/gems';
+import { getLessonHistory } from '@/lib/practice-storage';
+import { formatLocalDate, getStreakState } from '@/lib/streak';
 
 export const ONBOARDING_COMPLETE_KEY = 'onboardingComplete';
+export const DEMO_MODE_KEY = 'habla.demoMode';
 export const USER_NAME_KEY = 'userName';
 export const DIALECT_PREFERENCE_KEY = 'dialectPreference';
 export const SELF_ASSESSED_LEVEL_KEY = 'selfAssessedLevel';
@@ -138,6 +141,60 @@ export async function isOnboardingComplete(): Promise<boolean> {
   return value === 'true';
 }
 
+function envDemoModeEnabled(): boolean {
+  const raw = process.env.EXPO_PUBLIC_HABLA_DEMO_MODE?.trim().toLowerCase();
+  return raw === '1' || raw === 'true' || raw === 'yes' || raw === 'owner';
+}
+
+/**
+ * Demo mode is intended for the app owner/creator to test features quickly.
+ * In development builds this defaults to true.
+ */
+export async function isDemoModeEnabled(): Promise<boolean> {
+  if (__DEV__) return true;
+  if (envDemoModeEnabled()) return true;
+  return (await AsyncStorage.getItem(DEMO_MODE_KEY)) === 'true';
+}
+
+export async function setDemoModeEnabled(enabled: boolean): Promise<void> {
+  await AsyncStorage.setItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
+}
+
+/** True when the user already has saved progress (lost onboarding flag, dev reload, etc.). */
+export async function hasExistingAppProgress(): Promise<boolean> {
+  const [history, gems, streak] = await Promise.all([
+    getLessonHistory(),
+    getTotalGems(),
+    getStreakState(),
+  ]);
+  return (
+    history.length > 0 ||
+    gems > 0 ||
+    streak.currentStreak > 0 ||
+    streak.longestStreak > 0
+  );
+}
+
+/**
+ * Whether to show onboarding. If progress exists but the flag was lost,
+ * restores onboardingComplete without touching gems, streak, or curriculum.
+ */
+export async function shouldShowOnboarding(): Promise<boolean> {
+  if (await isDemoModeEnabled()) {
+    await AsyncStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+    return false;
+  }
+
+  if (await isOnboardingComplete()) return false;
+
+  if (await hasExistingAppProgress()) {
+    await AsyncStorage.setItem(ONBOARDING_COMPLETE_KEY, 'true');
+    return false;
+  }
+
+  return true;
+}
+
 export async function getUserName(): Promise<string | null> {
   const name = await AsyncStorage.getItem(USER_NAME_KEY);
   return name?.trim() || null;
@@ -191,6 +248,8 @@ export async function completeOnboarding(
   options: CompleteOnboardingOptions = {},
 ): Promise<void> {
   const week = Math.max(1, Math.min(20, profile.grammarCurriculumStartWeek));
+  const preserveProgress =
+    options.retake || (await hasExistingAppProgress()) || (await isDemoModeEnabled());
 
   await AsyncStorage.multiSet([
     [ONBOARDING_COMPLETE_KEY, 'true'],
@@ -204,12 +263,11 @@ export async function completeOnboarding(
     [ASSESSMENT_SKIPPED_KEY, profile.assessmentSkipped ? 'true' : 'false'],
   ]);
 
-  if (!options.retake) {
+  if (!preserveProgress) {
     await AsyncStorage.setItem('totalGems', '0');
     await AsyncStorage.setItem('currentStreak', '0');
+    await setGrammarCurriculumStartWeek(week);
   }
-
-  await setGrammarCurriculumStartWeek(week);
 }
 
 export async function buildSkippedAssessmentProfile(

@@ -13,6 +13,7 @@ import { SyncIndicator } from '@/components/sync-indicator';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
+import { runOneTimeGemRestoration } from '@/lib/gem-restoration';
 import { ensurePreviousMonthWrapped } from '@/lib/wrapped-storage';
 import { notifyWrappedReadyNow, scheduleWrappedMonthlyNotification } from '@/lib/wrapped-notifications';
 
@@ -31,6 +32,7 @@ function WrappedBootstrap() {
 
   useEffect(() => {
     void (async () => {
+      await runOneTimeGemRestoration();
       await initStreakNotifications();
       await scheduleWrappedMonthlyNotification();
       const created = await ensurePreviousMonthWrapped();

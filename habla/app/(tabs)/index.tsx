@@ -19,7 +19,7 @@ import {
 } from '@/lib/gem-shop';
 import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
-import { getUserName, isOnboardingComplete, timeBasedGreeting } from '@/lib/onboarding-storage';
+import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
 const palette = {
@@ -51,8 +51,8 @@ export default function HomeScreen() {
   const [greeting, setGreeting] = useState<string | null>(null);
 
   useEffect(() => {
-    void isOnboardingComplete().then((complete) => {
-      if (!complete) {
+    void shouldShowOnboarding().then((show) => {
+      if (show) {
         router.replace('/onboarding' as Href);
         return;
       }
