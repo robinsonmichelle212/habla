@@ -248,8 +248,28 @@ export async function completeOnboarding(
   options: CompleteOnboardingOptions = {},
 ): Promise<void> {
   const week = Math.max(1, Math.min(20, profile.grammarCurriculumStartWeek));
+  const [[, existingGemsRaw], [, existingStreakRaw], [, existingHistoryRaw]] =
+    await AsyncStorage.multiGet(['totalGems', 'currentStreak', 'lessonHistory']);
+
+  const existingGems = existingGemsRaw ? Number.parseInt(existingGemsRaw, 10) : 0;
+  const existingStreak = existingStreakRaw ? Number.parseInt(existingStreakRaw, 10) : 0;
+  let existingHistoryCount = 0;
+  if (existingHistoryRaw) {
+    try {
+      const parsed = JSON.parse(existingHistoryRaw);
+      existingHistoryCount = Array.isArray(parsed) ? parsed.length : 0;
+    } catch {
+      existingHistoryCount = 0;
+    }
+  }
+
+  const hasExistingProgressData =
+    (Number.isFinite(existingGems) && existingGems > 0) ||
+    (Number.isFinite(existingStreak) && existingStreak > 0) ||
+    existingHistoryCount > 0;
+
   const preserveProgress =
-    options.retake || (await hasExistingAppProgress()) || (await isDemoModeEnabled());
+    options.retake || hasExistingProgressData || (await isDemoModeEnabled());
 
   await AsyncStorage.multiSet([
     [ONBOARDING_COMPLETE_KEY, 'true'],
@@ -264,8 +284,19 @@ export async function completeOnboarding(
   ]);
 
   if (!preserveProgress) {
-    await AsyncStorage.setItem('totalGems', '0');
-    await AsyncStorage.setItem('currentStreak', '0');
+    // First install only: initialize these keys. Existing values are always preserved.
+    if (!existingGemsRaw) {
+      await AsyncStorage.setItem('totalGems', '0');
+    }
+    if (!existingStreakRaw) {
+      await AsyncStorage.setItem('currentStreak', '0');
+    }
+    await setGrammarCurriculumStartWeek(week);
+    return;
+  }
+
+  // Reassessment should still update curriculum start week without touching progress.
+  if (options.retake) {
     await setGrammarCurriculumStartWeek(week);
   }
 }
