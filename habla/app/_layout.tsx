@@ -14,6 +14,7 @@ import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
 import { runOneTimeGemRestoration } from '@/lib/gem-restoration';
+import { repairMissingSessionPlaceholders } from '@/lib/practice-storage';
 import { ensurePreviousMonthWrapped } from '@/lib/wrapped-storage';
 import { notifyWrappedReadyNow, scheduleWrappedMonthlyNotification } from '@/lib/wrapped-notifications';
 
@@ -33,6 +34,7 @@ function WrappedBootstrap() {
   useEffect(() => {
     void (async () => {
       await runOneTimeGemRestoration();
+      await repairMissingSessionPlaceholders();
       await initStreakNotifications();
       await scheduleWrappedMonthlyNotification();
       const created = await ensurePreviousMonthWrapped();

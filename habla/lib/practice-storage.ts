@@ -1,7 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { LessonType } from '@/lib/claude';
-import { formatLocalDate } from '@/lib/streak';
+import { formatLocalDate, getStreakState } from '@/lib/streak';
 
 const STORAGE_KEY = 'lessonHistory';
 const MAX_LESSON_HISTORY = 200;
@@ -92,12 +92,15 @@ export type SpeakingHistoryRecord = {
 
 export type LessonHistoryEntry = {
   date: string; // YYYY-MM-DD
-  overallScore: number;
+  overallScore: number | null;
   breakdown: LessonBreakdown;
   weakAreas: string[];
   focusAreas: string[];
   lessonType: string;
   speaking?: SpeakingHistoryRecord;
+  /** Offline session before history was persisted — no score breakdown. */
+  placeholder?: boolean;
+  note?: string;
   /** @deprecated legacy flat scores — kept for old entries */
   scores?: {
     grammar: number;
@@ -126,6 +129,8 @@ export type WeekChartDay = {
   dayLabel: string;
   score: number | null;
   activityType: 'none' | 'lesson' | 'drill' | 'both';
+  /** Grey bar — session happened but was not recorded with scores. */
+  placeholder?: boolean;
 };
 
 export type TodayScoreInfo = {
@@ -143,6 +148,10 @@ export type BestWeekDayInfo = {
 };
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+export const DAY_LETTER_LABELS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'] as const;
+
+export const OFFLINE_PLACEHOLDER_NOTE =
+  'Session completed offline before offline support was added';
 const DRILL_STORAGE_KEY = 'drillHistory';
 const MAX_DRILL_SESSIONS = 30;
 const LESSON_SCORE_WEIGHT = 0.7;
@@ -369,44 +378,68 @@ function normalizeSpeakingRecord(raw: unknown): SpeakingHistoryRecord | undefine
 
 function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
   if (!Array.isArray(raw)) return [];
-  return raw
-    .map((item) => {
-      const obj = item as Partial<LessonHistoryEntry>;
-      const legacyScores = obj.scores
-        ? {
-            grammar: toScore(obj.scores.grammar),
-            vocabulary: toScore(obj.scores.vocabulary),
-            fluency: toScore(obj.scores.fluency),
-          }
-        : undefined;
+  const entries: LessonHistoryEntry[] = [];
 
-      const breakdown = normalizeBreakdown(obj.breakdown, legacyScores);
-      const overallScore =
-        obj.overallScore != null
-          ? toScore(obj.overallScore)
-          : (() => {
-              const parts = [
-                breakdown.grammar.score,
-                breakdown.vocabulary.score,
-                breakdown.fluency.score,
-                breakdown.writing.score,
-              ];
-              if (breakdown.structure) parts.push(breakdown.structure.score);
-              return Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
-            })();
+  for (const item of raw) {
+    const obj = item as Partial<LessonHistoryEntry>;
+    if (obj.placeholder === true) {
+      const date = typeof obj?.date === 'string' ? obj.date : '';
+      if (!date) continue;
+      entries.push({
+        date,
+        overallScore: null,
+        breakdown: normalizeBreakdown({}, undefined),
+        weakAreas: [],
+        focusAreas: [],
+        lessonType: typeof obj.lessonType === 'string' ? obj.lessonType : 'Unknown',
+        placeholder: true,
+        note:
+          typeof obj.note === 'string' && obj.note.trim()
+            ? obj.note.trim()
+            : OFFLINE_PLACEHOLDER_NOTE,
+      });
+      continue;
+    }
 
-      return {
-        date: typeof obj?.date === 'string' ? obj.date : '',
-        overallScore,
-        breakdown,
-        weakAreas: toStringList(obj?.weakAreas),
-        focusAreas: toStringList(obj?.focusAreas),
-        lessonType: typeof obj?.lessonType === 'string' ? obj.lessonType : 'Lesson',
-        speaking: normalizeSpeakingRecord(obj.speaking),
-        scores: legacyScores,
-      };
-    })
-    .filter((entry) => !!entry.date);
+    const legacyScores = obj.scores
+      ? {
+          grammar: toScore(obj.scores.grammar),
+          vocabulary: toScore(obj.scores.vocabulary),
+          fluency: toScore(obj.scores.fluency),
+        }
+      : undefined;
+
+    const breakdown = normalizeBreakdown(obj.breakdown, legacyScores);
+    const overallScore =
+      obj.overallScore != null
+        ? toScore(obj.overallScore)
+        : (() => {
+            const parts = [
+              breakdown.grammar.score,
+              breakdown.vocabulary.score,
+              breakdown.fluency.score,
+              breakdown.writing.score,
+            ];
+            if (breakdown.structure) parts.push(breakdown.structure.score);
+            return Math.round(parts.reduce((a, b) => a + b, 0) / parts.length);
+          })();
+
+    const date = typeof obj?.date === 'string' ? obj.date : '';
+    if (!date) continue;
+
+    entries.push({
+      date,
+      overallScore,
+      breakdown,
+      weakAreas: toStringList(obj?.weakAreas),
+      focusAreas: toStringList(obj?.focusAreas),
+      lessonType: typeof obj?.lessonType === 'string' ? obj.lessonType : 'Lesson',
+      speaking: normalizeSpeakingRecord(obj.speaking),
+      scores: legacyScores,
+    });
+  }
+
+  return entries;
 }
 
 export function lessonTypeLabel(lessonType: LessonType): string {
@@ -430,9 +463,51 @@ export function scoreBarColor(score: number): string {
   return '#F87171';
 }
 
-/** Overall session score (0–100). */
+/** Overall session score (0–100). Placeholder entries return 0 for legacy callers. */
 export function overallLessonScore(entry: LessonHistoryEntry): number {
+  if (entry.placeholder || entry.overallScore == null) return 0;
   return entry.overallScore;
+}
+
+export function isPlaceholderLesson(entry: LessonHistoryEntry): boolean {
+  return entry.placeholder === true;
+}
+
+function createOfflinePlaceholderEntry(date: string): LessonHistoryEntry {
+  return {
+    date,
+    overallScore: null,
+    breakdown: normalizeBreakdown({}, undefined),
+    weakAreas: [],
+    focusAreas: [],
+    lessonType: 'Unknown',
+    placeholder: true,
+    note: OFFLINE_PLACEHOLDER_NOTE,
+  };
+}
+
+/**
+ * Backfill lessonHistory for streak-active days in the last 7 days that have no entry
+ * (e.g. sessions completed before offline history was added). Streak credit is preserved.
+ */
+export async function repairMissingSessionPlaceholders(
+  today: string = formatLocalDate(),
+): Promise<number> {
+  const [history, streakState] = await Promise.all([getLessonHistory(), getStreakState()]);
+
+  const lessonDates = new Set(history.map((e) => e.date));
+  const missingActiveDays = streakState.last7Days.filter(
+    (d) => d.completed && !lessonDates.has(d.date),
+  );
+
+  if (!missingActiveDays.length) return 0;
+
+  const placeholders = missingActiveDays.map((d) => createOfflinePlaceholderEntry(d.date));
+  const next = [...history, ...placeholders]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .slice(-MAX_LESSON_HISTORY);
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  return placeholders.length;
 }
 
 export async function getLessonHistory(): Promise<LessonHistoryEntry[]> {
@@ -592,9 +667,13 @@ function isWithinLastCalendarDays(dateStr: string, today: string, dayCount: numb
 }
 
 function bestLessonScoreForDay(lessons: LessonHistoryEntry[], date: string): number | null {
-  const dayLessons = lessons.filter((e) => e.date === date);
+  const dayLessons = lessons.filter((e) => e.date === date && !e.placeholder);
   if (!dayLessons.length) return null;
   return Math.max(...dayLessons.map((e) => overallLessonScore(e)));
+}
+
+function hasPlaceholderLessonForDay(lessons: LessonHistoryEntry[], date: string): boolean {
+  return lessons.some((e) => e.date === date && e.placeholder);
 }
 
 function bestDrillScoreForDay(drills: DrillHistoryEntry[], date: string): number | null {
@@ -607,7 +686,7 @@ function getBestLessonEntryForDay(
   lessons: LessonHistoryEntry[],
   date: string,
 ): LessonHistoryEntry | null {
-  const dayLessons = lessons.filter((e) => e.date === date);
+  const dayLessons = lessons.filter((e) => e.date === date && !e.placeholder);
   if (!dayLessons.length) return null;
   return dayLessons.reduce((best, e) =>
     overallLessonScore(e) > overallLessonScore(best) ? e : best,
@@ -651,7 +730,7 @@ export function getTodaysLessonEntry(
   history: LessonHistoryEntry[],
   today: string = formatLocalDate(),
 ): LessonHistoryEntry | null {
-  const todays = history.filter((e) => e.date === today);
+  const todays = history.filter((e) => e.date === today && !e.placeholder);
   if (!todays.length) return null;
   return todays[todays.length - 1];
 }
@@ -776,11 +855,13 @@ export function getWeekScoreChart(
     const date = formatLocalDate(d);
     const lessonScore = bestLessonScoreForDay(history, date);
     const drillScore = bestDrillScoreForDay(drills, date);
+    const placeholder = hasPlaceholderLessonForDay(history, date) && lessonScore == null;
     days.push({
       date,
       dayLabel: DAY_LABELS[d.getDay()],
-      score: combinedDayScore(lessonScore, drillScore),
-      activityType: dayActivityType(lessonScore, drillScore),
+      score: placeholder ? null : combinedDayScore(lessonScore, drillScore),
+      activityType: placeholder ? 'lesson' : dayActivityType(lessonScore, drillScore),
+      placeholder,
     });
   }
 

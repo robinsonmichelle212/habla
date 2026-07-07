@@ -11,6 +11,7 @@ import {
   getTodayScoreInfo,
   getTopScoreThisWeek,
   getWeekScoreChart,
+  repairMissingSessionPlaceholders,
   type DrillHistoryEntry,
   type LessonHistoryEntry,
   type TodayScoreInfo,
@@ -70,6 +71,7 @@ export default function ProgressScreen() {
       setLoading(true);
       void (async () => {
         try {
+          await repairMissingSessionPlaceholders();
           const [lessonHistory, drillHistory, wraps, unread] = await Promise.all([
             getLessonHistory(),
             getDrillHistory(),

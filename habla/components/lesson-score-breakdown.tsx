@@ -74,6 +74,7 @@ export function LessonScoreBreakdownModal({
     null;
   const breakdown = entry?.breakdown;
   const isPracticeOnly = !entry && !!drillEntry;
+  const isOfflineSession = entry?.placeholder === true;
 
   useEffect(() => {
     if (!visible) return;
@@ -134,6 +135,13 @@ export function LessonScoreBreakdownModal({
             <View style={styles.emptyCard}>
               <Text style={styles.emptyText}>No lesson data yet. Complete a lesson to see your breakdown.</Text>
             </View>
+          ) : isOfflineSession ? (
+            <View style={styles.offlineCard}>
+              <Text style={styles.offlineTitle}>Offline session</Text>
+              <Text style={styles.offlineText}>
+                {entry?.note ?? 'Session completed before scores were saved locally.'}
+              </Text>
+            </View>
           ) : (
             <>
               <Text style={styles.overallScore}>{overall}%</Text>
@@ -190,11 +198,17 @@ export function LessonScoreBreakdownModal({
                   <View style={styles.chartLegend}>
                     <Text style={styles.legendItem}>■ Lesson</Text>
                     <Text style={styles.legendItem}>□ Practice only</Text>
+                    <Text style={styles.legendItem}>▪ Offline session</Text>
                   </View>
                   <View style={styles.chartRow}>
                     {weekChart.map((day) => {
-                      const hasScore = day.score != null;
-                      const barColor = hasScore ? scoreBarColor(day.score!) : palette.grey;
+                      const isOffline = day.placeholder === true;
+                      const hasScore = day.score != null && !isOffline;
+                      const barColor = isOffline
+                        ? palette.grey
+                        : hasScore
+                          ? scoreBarColor(day.score!)
+                          : palette.grey;
                       const isDrillOnly = day.activityType === 'drill';
                       return (
                         <View key={day.date} style={styles.chartCol}>
@@ -203,16 +217,16 @@ export function LessonScoreBreakdownModal({
                               style={[
                                 styles.chartBarFill,
                                 {
-                                  height: hasScore ? `${Math.max(8, day.score!)}%` : '8%',
+                                  height: isOffline || hasScore ? `${Math.max(8, hasScore ? day.score! : 8)}%` : '8%',
                                   backgroundColor: barColor,
-                                  opacity: isDrillOnly ? 0.45 : 1,
+                                  opacity: isOffline ? 0.55 : isDrillOnly ? 0.45 : 1,
                                 },
                               ]}
                             />
                           </View>
                           <Text style={styles.chartDay}>{day.dayLabel}</Text>
-                          <Text style={styles.chartScore}>
-                            {hasScore ? `${day.score}%` : '—'}
+                          <Text style={[styles.chartScore, isOffline && styles.chartOfflineLabel]}>
+                            {isOffline ? 'Offline session' : hasScore ? `${day.score}%` : '—'}
                           </Text>
                         </View>
                       );
@@ -360,6 +374,17 @@ const styles = StyleSheet.create({
     marginTop: 20,
   },
   emptyText: { fontSize: 15, fontWeight: '600', color: palette.muted, lineHeight: 22 },
+  offlineCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: palette.grey,
+    padding: 20,
+    marginTop: 20,
+    gap: 8,
+  },
+  offlineTitle: { fontSize: 18, fontWeight: '900', color: palette.muted },
+  offlineText: { fontSize: 14, fontWeight: '600', color: palette.muted, lineHeight: 20 },
   overallScore: {
     fontSize: 64,
     fontWeight: '900',
@@ -475,6 +500,7 @@ const styles = StyleSheet.create({
   chartBarFill: { width: '100%', borderRadius: 8, minHeight: 4 },
   chartDay: { fontSize: 11, fontWeight: '800', color: palette.muted },
   chartScore: { fontSize: 9, fontWeight: '700', color: palette.muted, marginTop: 2 },
+  chartOfflineLabel: { fontSize: 8, fontWeight: '700', color: palette.grey },
   listCard: {
     backgroundColor: palette.surface,
     borderRadius: 16,

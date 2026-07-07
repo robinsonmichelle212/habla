@@ -19,6 +19,9 @@ import {
 } from '@/lib/gem-shop';
 import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
+import { DailyActivityRow } from '@/components/daily-activity-row';
+import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activity';
+import { repairMissingSessionPlaceholders } from '@/lib/practice-storage';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
@@ -49,6 +52,7 @@ export default function HomeScreen() {
   const [tick, setTick] = useState(() => Date.now());
   const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [greeting, setGreeting] = useState<string | null>(null);
+  const [activityDays, setActivityDays] = useState<DailyActivityDay[]>([]);
 
   useEffect(() => {
     void shouldShowOnboarding().then((show) => {
@@ -83,12 +87,14 @@ export default function HomeScreen() {
 
       void (async () => {
         try {
-          const [streak, gems, challenge, shopProgress, name] = await Promise.all([
+          await repairMissingSessionPlaceholders();
+          const [streak, gems, challenge, shopProgress, name, weekActivity] = await Promise.all([
             getStreakState(),
             getTotalGems(),
             getTodaysChallengeForHome(),
             getGemShopProgress(),
             getUserName(),
+            getLast7DaysActivity(),
           ]);
           if (cancelled) return;
 
@@ -97,6 +103,7 @@ export default function HomeScreen() {
           setDailyChallenge(challenge);
           setUrgentUnlock(getUrgentPendingUnlock(shopProgress));
           setGreeting(name ? timeBasedGreeting(name) : null);
+          setActivityDays(weekActivity);
 
           await refreshShopBadge(gems);
         } finally {
@@ -184,6 +191,8 @@ export default function HomeScreen() {
           ) : null}
         </Pressable>
       </View>
+
+      {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
 
       <View style={[styles.main, { paddingBottom: Math.max(insets.bottom, 16) }]}>
         <View style={styles.centerBlock}>

@@ -15,10 +15,12 @@ import {
 } from '@/lib/gem-shop-notifications';
 import { deductGems, getTotalGems } from '@/lib/gems';
 import { getProfileBadges } from '@/lib/profile-badges';
+import { formatLocalDate } from '@/lib/streak';
 
 const PROGRESS_KEY = 'gemShopProgress';
 const TOTAL_SPENT_KEY = 'gemShopTotalSpent';
 const LEGACY_UNLOCKS_KEY = 'gemShopUnlocks';
+const GEM_PLAY_DATES_KEY = 'gemRoundPlayDates';
 
 export type BonusRoundId =
   | 'quiz'
@@ -603,6 +605,41 @@ export async function recordRoundPlayed(roundId: BonusRoundId, level: RoundLevel
     totalPlays: round.totalPlays + 1,
   };
   await saveProgress(progress);
+  await appendGemRoundPlayDate(formatLocalDate());
+}
+
+async function appendGemRoundPlayDate(date: string): Promise<void> {
+  const raw = await AsyncStorage.getItem(GEM_PLAY_DATES_KEY);
+  let dates: string[] = [];
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        dates = parsed.filter((d): d is string => typeof d === 'string');
+      }
+    } catch {
+      dates = [];
+    }
+  }
+  if (!dates.includes(date)) {
+    dates.push(date);
+  }
+  // Keep recent play dates only (last 60 days worth of strings is plenty).
+  const trimmed = dates.slice(-60);
+  await AsyncStorage.setItem(GEM_PLAY_DATES_KEY, JSON.stringify(trimmed));
+}
+
+/** Dates (YYYY-MM-DD) when a gem shop bonus round was played. */
+export async function getGemRoundPlayDates(): Promise<Set<string>> {
+  const raw = await AsyncStorage.getItem(GEM_PLAY_DATES_KEY);
+  if (!raw) return new Set();
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter((d): d is string => typeof d === 'string'));
+  } catch {
+    return new Set();
+  }
 }
 
 export async function recordLevelCompleted(roundId: BonusRoundId, level: RoundLevel): Promise<void> {

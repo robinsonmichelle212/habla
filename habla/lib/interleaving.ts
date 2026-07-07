@@ -81,7 +81,7 @@ export function buildMasteredPracticeArea(
 
   const recent = lessons.slice(-8);
   for (const lesson of recent) {
-    if (lesson.overallScore >= 75 && lesson.focusAreas[0]) {
+    if (!lesson.placeholder && (lesson.overallScore ?? 0) >= 75 && lesson.focusAreas[0]) {
       return lesson.focusAreas[0];
     }
   }
