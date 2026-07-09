@@ -135,6 +135,8 @@ export type LessonSessionState = {
   comprehensionEvaluation?: ReadComprehensionEvaluation;
   culturalNoteSaved?: string;
   wordsSavedFromReading?: { spanish: string; english: string }[];
+  /** Shown once on the summary screen after a graceful phase transition. */
+  summaryNotice?: string;
 };
 
 let state: LessonSessionState = {

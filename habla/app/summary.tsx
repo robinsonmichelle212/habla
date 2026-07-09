@@ -12,6 +12,10 @@ import {
 } from '@/lib/milestones';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
+import {
+  isOverallScorePending,
+  resolveSummaryAnalysis,
+} from '@/lib/lesson-summary-fallback';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
@@ -19,7 +23,7 @@ import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storag
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -70,7 +74,7 @@ function formatSpeakingMetric(
   expired: boolean,
 ): string {
   if (expired) return 'Expired';
-  if (pending || value == null) return 'Pending';
+  if (pending || value == null) return 'Pending ⏳';
   return `${Math.round(value)}%`;
 }
 
@@ -78,10 +82,12 @@ export default function SummaryScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const session = useMemo(() => getLessonSession(), []);
-  const analysis = session.analysis;
+  const analysis = useMemo(() => resolveSummaryAnalysis(session), [session]);
   const lessonType = session.lessonType;
   const writing = session.writingEvaluation;
   const speaking = session.speakingEvaluation;
+  const summaryNotice = session.summaryNotice;
+  const scorePending = isOverallScorePending(session, analysis);
   const didRecordRef = useRef(false);
   const pendingCelebrationsRef = useRef<MilestoneCelebration[]>([]);
   const milestoneGemPulse = useRef(new Animated.Value(1)).current;
@@ -106,6 +112,83 @@ export default function SummaryScreen() {
   const [challengeLoading, setChallengeLoading] = useState(false);
   const didGenerateChallengeRef = useRef(false);
 
+  const buildLessonHistoryEntry = useCallback(() => {
+    if (!analysis || !lessonType) return null;
+    const today = formatLocalDate();
+    const baseBreakdown = analysis.breakdown ?? {
+      grammar: {
+        score: Math.round(writing?.grammarScore ?? 0),
+        topic: 'Grammar',
+        details: [],
+      },
+      vocabulary: {
+        score: Math.round(writing?.vocabularyScore ?? 0),
+        topic: 'Vocabulary',
+        details: [],
+      },
+      fluency: {
+        score: Math.round(writing?.fluencyScore ?? 0),
+        details: [],
+      },
+      writing: {
+        score: Math.round(
+          ((writing?.grammarScore ?? 0) +
+            (writing?.vocabularyScore ?? 0) +
+            (writing?.fluencyScore ?? 0)) /
+            3,
+        ),
+        details: [],
+      },
+    };
+    const breakdown = mergeWritingIntoBreakdown(
+      baseBreakdown,
+      writing ?? undefined,
+      session.writingTask?.prompt,
+    );
+
+    return {
+      date: today,
+      overallScore: scorePending
+        ? null
+        : (analysis.overallScore ?? analysis.correctnessScore ?? 0),
+      breakdown,
+      weakAreas: analysis.weakAreas ?? [],
+      focusAreas: analysis.focusAreas ?? [],
+      lessonType: lessonTypeLabel(lessonType),
+      speaking: speaking
+        ? {
+            fluencyScore: speaking.pendingEvaluation ? null : speaking.fluencyScore,
+            confidenceScore: speaking.pendingEvaluation ? null : speaking.confidenceScore,
+            vocabularyRangeScore: speaking.pendingEvaluation
+              ? null
+              : speaking.vocabularyRangeScore,
+            naturalFlowScore: speaking.pendingEvaluation ? null : speaking.naturalFlowScore,
+            combinedScore: speaking.pendingEvaluation ? null : speaking.combinedScore,
+            javiFeedback: speaking.javiFeedback,
+            exchangeCount: speaking.exchangeCount,
+            pendingEvaluation: speaking.pendingEvaluation,
+            expired: speaking.expired,
+            audioPaths: speaking.audioPaths,
+          }
+        : undefined,
+    };
+  }, [analysis, lessonType, scorePending, session.writingTask?.prompt, speaking, writing]);
+
+  const saveLessonHistoryWithRetry = useCallback(
+    (entry: NonNullable<ReturnType<typeof buildLessonHistoryEntry>>) => {
+      const attemptSave = (attempt: number) => {
+        void upsertLessonHistoryEntry(entry).catch((err) => {
+          console.error(`[Habla] lessonHistory save failed (attempt ${attempt}):`, err);
+          if (attempt < 3) {
+            setTimeout(() => attemptSave(attempt + 1), 3000 * attempt);
+          }
+        });
+      };
+      attemptSave(1);
+    },
+    [],
+  );
+
   useEffect(() => {
     if (didRecordRef.current) return;
     didRecordRef.current = true;
@@ -115,9 +198,10 @@ export default function SummaryScreen() {
         const currentStreak = res.state.currentStreak;
         const today = formatLocalDate();
 
-        const overallScore =
-          analysis?.overallScore ?? analysis?.correctnessScore ?? 0;
-        const gems = calculateLessonGems(overallScore);
+        const overallScore = scorePending
+          ? 0
+          : (analysis?.overallScore ?? analysis?.correctnessScore ?? 0);
+        const gems = scorePending ? 0 : calculateLessonGems(overallScore);
 
         const beforeGems = await getTotalGems();
         setGemsBefore(beforeGems);
@@ -137,66 +221,14 @@ export default function SummaryScreen() {
         }
 
         if (analysis && lessonType) {
-          const baseBreakdown = analysis.breakdown ?? {
-            grammar: {
-              score: Math.round(writing?.grammarScore ?? 0),
-              topic: 'Grammar',
-              details: [],
-            },
-            vocabulary: {
-              score: Math.round(writing?.vocabularyScore ?? 0),
-              topic: 'Vocabulary',
-              details: [],
-            },
-            fluency: {
-              score: Math.round(writing?.fluencyScore ?? 0),
-              details: [],
-            },
-            writing: {
-              score: Math.round(
-                ((writing?.grammarScore ?? 0) +
-                  (writing?.vocabularyScore ?? 0) +
-                  (writing?.fluencyScore ?? 0)) /
-                  3,
-              ),
-              details: [],
-            },
-          };
-          const breakdown = mergeWritingIntoBreakdown(
-            baseBreakdown,
-            writing ?? undefined,
-            session.writingTask?.prompt,
-          );
-
-          const lessonHistoryEntry = {
-            date: today,
-            overallScore: analysis.overallScore ?? analysis.correctnessScore ?? 0,
-            breakdown,
-            weakAreas: analysis.weakAreas ?? [],
-            focusAreas: analysis.focusAreas ?? [],
-            lessonType: lessonTypeLabel(lessonType),
-            speaking: speaking
-              ? {
-                  fluencyScore: speaking.pendingEvaluation ? null : speaking.fluencyScore,
-                  confidenceScore: speaking.pendingEvaluation ? null : speaking.confidenceScore,
-                  vocabularyRangeScore: speaking.pendingEvaluation
-                    ? null
-                    : speaking.vocabularyRangeScore,
-                  naturalFlowScore: speaking.pendingEvaluation ? null : speaking.naturalFlowScore,
-                  combinedScore: speaking.pendingEvaluation ? null : speaking.combinedScore,
-                  javiFeedback: speaking.javiFeedback,
-                  exchangeCount: speaking.exchangeCount,
-                  pendingEvaluation: speaking.pendingEvaluation,
-                  expired: speaking.expired,
-                  audioPaths: speaking.audioPaths,
-                }
-              : undefined,
-          };
-          console.log('[Habla] Saving to lessonHistory:', JSON.stringify(lessonHistoryEntry, null, 2));
-
-          await upsertLessonHistoryEntry(lessonHistoryEntry).catch(() => {
-            // Non-blocking: summary should not fail if lesson history cannot be saved.
-          });
+          const lessonHistoryEntry = buildLessonHistoryEntry();
+          if (lessonHistoryEntry) {
+            console.log(
+              '[Habla] Saving to lessonHistory:',
+              JSON.stringify(lessonHistoryEntry, null, 2),
+            );
+            saveLessonHistoryWithRetry(lessonHistoryEntry);
+          }
 
           if (!didGenerateChallengeRef.current) {
             didGenerateChallengeRef.current = true;
@@ -347,7 +379,7 @@ export default function SummaryScreen() {
   };
 
   const hasAnalysis = !!analysis;
-  const overallScore = Math.round(analysis?.overallScore ?? 0);
+  const overallScore = scorePending ? 0 : Math.round(analysis?.overallScore ?? 0);
   const revealEnabled = hasAnalysis && mode === 'summary' && streakHydrated;
 
   const reveal = useSummaryReveal({
@@ -400,6 +432,11 @@ export default function SummaryScreen() {
           </>
         ) : mode === 'summary' ? (
           <>
+            {summaryNotice ? (
+              <View style={styles.banner}>
+                <Text style={styles.bannerText}>{summaryNotice}</Text>
+              </View>
+            ) : null}
             <Animated.Text
               style={[
                 styles.pageTitle,
@@ -428,10 +465,15 @@ export default function SummaryScreen() {
                 progress={reveal.scoreProgress}
                 scale={reveal.scoreScale}
                 opacity={reveal.scoreOpacity}
+                pending={scorePending}
               />
               <Animated.View style={{ opacity: reveal.scoreOpacity }}>
                 <Text style={styles.scoreHint}>
-                  {lessonType === 'Read' ? 'comprehension + discussion' : 'accuracy in writing · fluency in speaking'}
+                  {scorePending
+                    ? 'Some scores are still being calculated'
+                    : lessonType === 'Read'
+                      ? 'comprehension + discussion'
+                      : 'accuracy in writing · fluency in speaking'}
                 </Text>
               </Animated.View>
             </View>
@@ -720,7 +762,11 @@ export default function SummaryScreen() {
 
                 <View style={[styles.scoreBlock, styles.supplementaryCard]}>
                   <Text style={styles.scoreLabel}>Correctness score</Text>
-                  <Text style={styles.scoreValue}>{Math.round(analysis.correctnessScore)}%</Text>
+                  <Text style={styles.scoreValue}>
+                    {scorePending || writing?.pendingEvaluation
+                      ? 'Pending ⏳'
+                      : `${Math.round(analysis.correctnessScore)}%`}
+                  </Text>
                   <Text style={styles.scoreHint}>grammar + vocabulary</Text>
                 </View>
 

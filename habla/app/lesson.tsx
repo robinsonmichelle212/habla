@@ -72,9 +72,19 @@ import {
   recoverUnregisteredSessions,
 } from '@/lib/session-recovery';
 import {
+  buildFallbackLessonAnalysis,
+  buildPendingSpeakingEvaluation,
+} from '@/lib/lesson-summary-fallback';
+import {
   computeSpeakingCombinedScore,
   speakingPhaseSummaryLabel,
 } from '@/lib/speaking-score';
+import {
+  LESSON_ANALYSIS_TIMEOUT_MS,
+  SPEAKING_EVAL_TIMEOUT_MS,
+  TimeoutError,
+  withTimeout,
+} from '@/lib/with-timeout';
 import { formatLocalDate } from '@/lib/streak';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import {
@@ -138,6 +148,9 @@ const HEARD_TRANSCRIPT_MS = 5000;
 const PHASE_SUMMARY_MS = 2000;
 const SPEAKING_USER_TURNS = 3;
 const MAX_FEYNMAN_ATTEMPTS = 2;
+const SPEAKING_SKIP_LINK_MS = 30_000;
+const FINISH_FALLBACK_NOTICE = 'Almost there — let\'s see your results 📊';
+const SPEAKING_TIMEOUT_NOTICE = 'Taking longer than expected — moving to summary';
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -209,12 +222,91 @@ export default function LessonScreen() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
   const [finishing, setFinishing] = useState(false);
+  const [showSkipToSummary, setShowSkipToSummary] = useState(false);
+  const [phaseTransitionNotice, setPhaseTransitionNotice] = useState<string | null>(null);
+  const finishLessonRef = useRef<(speaking?: SpeakingEvaluation, notice?: string) => Promise<void>>(
+    async () => {},
+  );
+  const pendingSpeakingEvalRef = useRef<SpeakingEvaluation | null>(null);
+
+  useEffect(() => {
+    if (phase !== 'speaking') {
+      setShowSkipToSummary(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowSkipToSummary(true), SPEAKING_SKIP_LINK_MS);
+    return () => clearTimeout(timer);
+  }, [phase]);
 
   voiceStateRef.current = voiceState;
   speakingStepRef.current = speakingStep;
 
   const showWarmUpSkip = warmUpMessages.length >= WARMUP_SKIP_AFTER_MESSAGES;
   const lessonType = lessonKindToLessonType(lessonKind);
+
+  const scheduleBackgroundSpeakingEval = useCallback(
+    (
+      transcripts: string[],
+      conversation: JaviMessage[],
+      lessonDate: string,
+      typeLabel: string,
+    ) => {
+      void withTimeout(
+        evaluateSpeakingFluency(lessonType, writingPrompt ?? '', transcripts, conversation),
+        60_000,
+        'background-speaking-eval',
+      )
+        .then(async (evalJson) => {
+          const combinedScore = computeSpeakingCombinedScore({
+            fluencyScore: evalJson.fluencyScore,
+            confidenceScore: evalJson.confidenceScore,
+            vocabularyRangeScore: evalJson.vocabularyRangeScore,
+            naturalFlowScore: evalJson.naturalFlowScore,
+          });
+          await upsertLessonHistoryEntry(
+            buildHistoryEntryFromAnalysis({
+              date: lessonDate,
+              lessonType: typeLabel,
+              analysis: buildFallbackLessonAnalysis({
+                lessonType,
+                lessonFocus: lessonFocus!,
+                writing: writingResult!,
+                writingPrompt: writingPrompt!,
+                speaking: {
+                  fluencyScore: evalJson.fluencyScore,
+                  confidenceScore: evalJson.confidenceScore,
+                  vocabularyRangeScore: evalJson.vocabularyRangeScore,
+                  naturalFlowScore: evalJson.naturalFlowScore,
+                  combinedScore,
+                  score: combinedScore,
+                  javiFeedback: evalJson.feedback,
+                  feedback: evalJson.feedback,
+                  pronunciationNotes: evalJson.pronunciationNotes,
+                  exchangeCount: transcripts.length,
+                  pendingEvaluation: false,
+                },
+              }),
+              speaking: {
+                fluencyScore: evalJson.fluencyScore,
+                confidenceScore: evalJson.confidenceScore,
+                vocabularyRangeScore: evalJson.vocabularyRangeScore,
+                naturalFlowScore: evalJson.naturalFlowScore,
+                combinedScore,
+                score: combinedScore,
+                javiFeedback: evalJson.feedback,
+                feedback: evalJson.feedback,
+                pronunciationNotes: evalJson.pronunciationNotes,
+                exchangeCount: transcripts.length,
+              },
+            }),
+          );
+        })
+        .catch((err) => {
+          console.warn('[Habla] Background speaking evaluation retry failed:', err);
+        });
+    },
+    [lessonFocus, lessonType, writingPrompt, writingResult],
+  );
 
   const indicatorStep = useMemo(() => {
     if (phase === 'warmup' || phase === 'feynman' || phase === 'writing') return 0;
@@ -751,13 +843,20 @@ export default function LessonScreen() {
     }
   };
 
-  const showPhaseSummaryAndFinish = (speakingEvaluation: SpeakingEvaluation) => {
+  const showPhaseSummaryAndFinish = (
+    speakingEvaluation: SpeakingEvaluation,
+    notice?: string,
+  ) => {
+    pendingSpeakingEvalRef.current = speakingEvaluation;
+    if (notice) setPhaseTransitionNotice(notice);
+
     setPhaseSummaryText(
-      speakingPhaseSummaryLabel(
-        speakingEvaluation.combinedScore,
-        speakingEvaluation.exchangeCount,
-        speakingEvaluation.pendingEvaluation,
-      ),
+      notice ??
+        speakingPhaseSummaryLabel(
+          speakingEvaluation.combinedScore,
+          speakingEvaluation.exchangeCount,
+          speakingEvaluation.pendingEvaluation,
+        ),
     );
     setSpeakingStep('phase-summary');
 
@@ -778,8 +877,18 @@ export default function LessonScreen() {
     }
 
     setTimeout(() => {
-      void finishLesson(speakingEvaluation);
+      void finishLessonRef.current(speakingEvaluation, notice);
     }, PHASE_SUMMARY_MS);
+  };
+
+  const skipToSummary = () => {
+    if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
+    stopJaviSpeech();
+    const pendingSpeaking = buildPendingSpeakingEvaluation(
+      speakingUserTurns,
+      'Skipped to summary — speaking score pending.',
+    );
+    void finishLessonRef.current(pendingSpeaking, 'Skipping to summary…');
   };
 
   const processOfflineSpeakingTurn = async (audioUri: string, nextTurn: number) => {
@@ -901,12 +1010,36 @@ export default function LessonScreen() {
           { role: 'user', content: trimmed },
           { role: 'assistant', content: parsed.spanish },
         ];
-        const evalJson = await evaluateSpeakingFluency(
-          lessonType,
-          writingPrompt,
-          [...speakingTranscripts, trimmed],
-          fullConversation,
-        );
+        const transcripts = [...speakingTranscripts, trimmed];
+        let evalJson;
+        try {
+          evalJson = await withTimeout(
+            evaluateSpeakingFluency(
+              lessonType,
+              writingPrompt,
+              transcripts,
+              fullConversation,
+            ),
+            SPEAKING_EVAL_TIMEOUT_MS,
+            'speaking-fluency-eval',
+          );
+        } catch (evalErr) {
+          console.error('[Habla] Speaking evaluation failed:', evalErr);
+          const pendingSpeaking = buildPendingSpeakingEvaluation(nextTurn);
+          if (evalErr instanceof TimeoutError) {
+            scheduleBackgroundSpeakingEval(
+              transcripts,
+              fullConversation,
+              formatLocalDate(),
+              lessonTypeLabel(lessonType),
+            );
+            showPhaseSummaryAndFinish(pendingSpeaking, SPEAKING_TIMEOUT_NOTICE);
+          } else {
+            showPhaseSummaryAndFinish(pendingSpeaking, FINISH_FALLBACK_NOTICE);
+          }
+          return;
+        }
+
         const combinedScore = computeSpeakingCombinedScore({
           fluencyScore: evalJson.fluencyScore,
           confidenceScore: evalJson.confidenceScore,
@@ -928,20 +1061,87 @@ export default function LessonScreen() {
       } else {
         setVoiceStateSafe('idle');
       }
-    } catch {
+    } catch (err) {
+      console.error('[Habla] processSpeakingTurn failed:', err);
+      if (nextTurn >= SPEAKING_USER_TURNS) {
+        showPhaseSummaryAndFinish(
+          buildPendingSpeakingEvaluation(nextTurn),
+          FINISH_FALLBACK_NOTICE,
+        );
+        return;
+      }
       setVoiceError('Connection issue — check your internet');
       setVoiceStateSafe('idle');
     }
   };
 
-  const finishLesson = async (speakingOverride?: SpeakingEvaluation) => {
-    if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
-    setFinishing(true);
-    stopJaviSpeech();
-
-    try {
+  const navigateToSummary = useCallback(
+    async (params: {
+      speakingEvaluation: SpeakingEvaluation;
+      analysis: ReturnType<typeof buildOfflineLessonAnalysis>;
+      notice?: string;
+    }) => {
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
+
+      setLessonSession({
+        lessonType,
+        lessonFocus: lessonFocus!,
+        warmUpConversation: warmUpTurns,
+        speakingConversation: speakingTurns,
+        conversation: [...warmUpTurns, ...speakingTurns],
+        writingTask: { prompt: writingPrompt! },
+        writingEvaluation: writingResult!,
+        speakingEvaluation: params.speakingEvaluation,
+        analysis: params.analysis,
+        summaryNotice: params.notice,
+      });
+
+      try {
+        await upsertLessonHistoryEntry(
+          buildHistoryEntryFromAnalysis({
+            date: formatLocalDate(),
+            lessonType: lessonTypeLabel(lessonType),
+            analysis: params.analysis,
+            speaking: params.speakingEvaluation,
+            writingPending: writingResult!.pendingEvaluation,
+          }),
+        );
+        await clearLessonCheckpoint();
+      } catch (saveErr) {
+        console.error('[Habla] Summary save failed, persisting progress:', saveErr);
+        await persistLessonProgress({
+          date: formatLocalDate(),
+          lessonType: lessonTypeLabel(lessonType),
+          focusLabel: lessonFocusLabel(lessonFocus!),
+          writing: writingResult!,
+          writingPrompt: writingPrompt!,
+          speaking: params.speakingEvaluation,
+        }).catch(() => {});
+      }
+
+      router.push('/summary');
+    },
+    [
+      lessonFocus,
+      lessonType,
+      router,
+      speakingMessages,
+      warmUpMessages,
+      writingPrompt,
+      writingResult,
+    ],
+  );
+
+  const finishLesson = useCallback(
+    async (speakingOverride?: SpeakingEvaluation, notice?: string) => {
+      if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
+      setFinishing(true);
+      stopJaviSpeech();
+
+      const warmUpTurns = toTurns(warmUpMessages);
+      const speakingTurns = toTurns(speakingMessages);
+      const transitionNotice = notice ?? phaseTransitionNotice ?? undefined;
       const writingScores = {
         grammarScore: writingResult.grammarScore,
         vocabularyScore: writingResult.vocabularyScore,
@@ -949,183 +1149,241 @@ export default function LessonScreen() {
         structureScore: writingResult.structureScore,
       };
 
-      if (speakingOverride?.pendingEvaluation || writingResult.pendingEvaluation) {
-        const speakingEvaluation: SpeakingEvaluation = {
-          fluencyScore: speakingOverride?.fluencyScore ?? null,
-          confidenceScore: speakingOverride?.confidenceScore ?? null,
-          vocabularyRangeScore: speakingOverride?.vocabularyRangeScore ?? null,
-          naturalFlowScore: speakingOverride?.naturalFlowScore ?? null,
-          combinedScore: speakingOverride?.combinedScore ?? null,
-          score: speakingOverride?.score ?? null,
-          javiFeedback: speakingOverride?.javiFeedback ?? 'Pending evaluation when back online.',
-          feedback: speakingOverride?.feedback ?? 'Pending evaluation when back online.',
-          exchangeCount: speakingOverride?.exchangeCount ?? speakingUserTurns,
-          pendingEvaluation: speakingOverride?.pendingEvaluation ?? true,
-          audioPaths: speakingOverride?.audioPaths,
-          pendingTaskId: speakingOverride?.pendingTaskId,
-        };
-        const analysis = buildOfflineLessonAnalysis(
-          lessonType,
-          lessonFocus,
-          writingResult,
-          writingPrompt,
-          !!speakingOverride?.pendingEvaluation,
-        );
+      try {
+        if (speakingOverride?.pendingEvaluation || writingResult.pendingEvaluation) {
+          const speakingEvaluation: SpeakingEvaluation = {
+            fluencyScore: speakingOverride?.fluencyScore ?? null,
+            confidenceScore: speakingOverride?.confidenceScore ?? null,
+            vocabularyRangeScore: speakingOverride?.vocabularyRangeScore ?? null,
+            naturalFlowScore: speakingOverride?.naturalFlowScore ?? null,
+            combinedScore: speakingOverride?.combinedScore ?? null,
+            score: speakingOverride?.score ?? null,
+            javiFeedback: speakingOverride?.javiFeedback ?? 'Pending evaluation when back online.',
+            feedback: speakingOverride?.feedback ?? 'Pending evaluation when back online.',
+            exchangeCount: speakingOverride?.exchangeCount ?? speakingUserTurns,
+            pendingEvaluation: speakingOverride?.pendingEvaluation ?? true,
+            audioPaths: speakingOverride?.audioPaths,
+            pendingTaskId: speakingOverride?.pendingTaskId,
+          };
+          const analysis = buildOfflineLessonAnalysis(
+            lessonType,
+            lessonFocus,
+            writingResult,
+            writingPrompt,
+            !!speakingOverride?.pendingEvaluation,
+          );
 
-        await addPendingLessonSummary({
-          id: `summary-pending-${Date.now()}`,
-          lessonDate: formatLocalDate(),
-          lessonType,
-          lessonTypeEnum: lessonType,
-          lessonFocusLabel: lessonFocusLabel(lessonFocus),
-          warmUpConversation: warmUpTurns,
-          speakingConversation: speakingTurns,
-          writingPrompt,
-          writingEvaluation: writingResult,
-          speakingEvaluation,
-          createdAt: Date.now(),
-          processed: false,
-        });
+          await addPendingLessonSummary({
+            id: `summary-pending-${Date.now()}`,
+            lessonDate: formatLocalDate(),
+            lessonType,
+            lessonTypeEnum: lessonType,
+            lessonFocusLabel: lessonFocusLabel(lessonFocus),
+            warmUpConversation: warmUpTurns,
+            speakingConversation: speakingTurns,
+            writingPrompt,
+            writingEvaluation: writingResult,
+            speakingEvaluation,
+            createdAt: Date.now(),
+            processed: false,
+          });
 
-        setLessonSession({
-          lessonType,
-          lessonFocus,
-          warmUpConversation: warmUpTurns,
-          speakingConversation: speakingTurns,
-          conversation: [...warmUpTurns, ...speakingTurns],
-          writingTask: { prompt: writingPrompt },
-          writingEvaluation: writingResult,
-          speakingEvaluation,
-          analysis,
-        });
-
-        await upsertLessonHistoryEntry(
-          buildHistoryEntryFromAnalysis({
-            date: formatLocalDate(),
-            lessonType: lessonTypeLabel(lessonType),
+          await navigateToSummary({
+            speakingEvaluation,
             analysis,
+            notice: transitionNotice,
+          });
+          return;
+        }
+
+        const fluencyScore =
+          speakingOverride?.fluencyScore != null
+            ? Math.round(speakingOverride.fluencyScore)
+            : null;
+        const confidenceScore =
+          speakingOverride?.confidenceScore != null
+            ? Math.round(speakingOverride.confidenceScore)
+            : null;
+        const vocabularyRangeScore =
+          speakingOverride?.vocabularyRangeScore != null
+            ? Math.round(speakingOverride.vocabularyRangeScore)
+            : null;
+        const naturalFlowScore =
+          speakingOverride?.naturalFlowScore != null
+            ? Math.round(speakingOverride.naturalFlowScore)
+            : null;
+
+        const hasSpeakingScores =
+          fluencyScore != null &&
+          confidenceScore != null &&
+          vocabularyRangeScore != null &&
+          naturalFlowScore != null;
+
+        let speakingEvaluation: SpeakingEvaluation;
+
+        if (!hasSpeakingScores) {
+          speakingEvaluation = buildPendingSpeakingEvaluation(
+            speakingOverride?.exchangeCount ?? speakingUserTurns,
+          );
+          const analysis = buildFallbackLessonAnalysis({
+            lessonType,
+            lessonFocus,
+            writing: writingResult,
+            writingPrompt,
             speaking: speakingEvaluation,
-            writingPending: writingResult.pendingEvaluation,
-          }),
-        );
-        await clearLessonCheckpoint();
+          });
+          await navigateToSummary({
+            speakingEvaluation,
+            analysis,
+            notice: transitionNotice ?? FINISH_FALLBACK_NOTICE,
+          });
+          return;
+        }
 
-        router.push('/summary');
-        return;
-      }
+        const combinedScore =
+          speakingOverride?.combinedScore ??
+          computeSpeakingCombinedScore({
+            fluencyScore: fluencyScore!,
+            confidenceScore: confidenceScore!,
+            vocabularyRangeScore: vocabularyRangeScore!,
+            naturalFlowScore: naturalFlowScore!,
+          });
+        const javiFeedback = speakingOverride?.javiFeedback ?? '';
 
-      const fluencyScore = Math.round(speakingOverride?.fluencyScore ?? 0);
-      const confidenceScore = Math.round(speakingOverride?.confidenceScore ?? 0);
-      const vocabularyRangeScore = Math.round(speakingOverride?.vocabularyRangeScore ?? 0);
-      const naturalFlowScore = Math.round(speakingOverride?.naturalFlowScore ?? 0);
-      const combinedScore =
-        speakingOverride?.combinedScore ??
-        computeSpeakingCombinedScore({
-          fluencyScore,
-          confidenceScore,
-          vocabularyRangeScore,
-          naturalFlowScore,
-        });
-      const javiFeedback = speakingOverride?.javiFeedback ?? '';
+        speakingEvaluation = {
+          fluencyScore: fluencyScore!,
+          confidenceScore: confidenceScore!,
+          vocabularyRangeScore: vocabularyRangeScore!,
+          naturalFlowScore: naturalFlowScore!,
+          combinedScore,
+          score: combinedScore,
+          javiFeedback,
+          feedback: javiFeedback,
+          pronunciationNotes: speakingOverride?.pronunciationNotes ?? [],
+          exchangeCount: speakingOverride?.exchangeCount ?? speakingUserTurns,
+        };
 
-      const speakingEvalJson = {
-        score: combinedScore,
-        fluencyScore,
-        confidenceScore,
-        vocabularyRangeScore,
-        naturalFlowScore,
-        pronunciationNotes: speakingOverride?.pronunciationNotes ?? [],
-        feedback: javiFeedback,
-      };
+        const speakingEvalJson = {
+          score: combinedScore,
+          fluencyScore: fluencyScore!,
+          confidenceScore: confidenceScore!,
+          vocabularyRangeScore: vocabularyRangeScore!,
+          naturalFlowScore: naturalFlowScore!,
+          pronunciationNotes: speakingOverride?.pronunciationNotes ?? [],
+          feedback: javiFeedback,
+        };
 
-      const speakingEvaluation: SpeakingEvaluation = {
-        fluencyScore,
-        confidenceScore,
-        vocabularyRangeScore,
-        naturalFlowScore,
-        combinedScore,
-        score: combinedScore,
-        javiFeedback,
-        feedback: javiFeedback,
-        pronunciationNotes: speakingOverride?.pronunciationNotes ?? [],
-        exchangeCount: speakingOverride?.exchangeCount ?? speakingUserTurns,
-      };
+        let analysisJson;
+        try {
+          analysisJson = await withTimeout(
+            analyzeLessonPhases(
+              lessonType,
+              conversationToJaviMessages(warmUpTurns),
+              conversationToJaviMessages(speakingTurns),
+              writingScores,
+              speakingEvalJson,
+              lessonFocusLabel(lessonFocus),
+            ),
+            LESSON_ANALYSIS_TIMEOUT_MS,
+            'lesson-phase-analysis',
+          );
+        } catch (analysisErr) {
+          console.error('[Habla] analyzeLessonPhases failed:', analysisErr);
+          analysisJson = null;
+        }
 
-      const analysisJson = await analyzeLessonPhases(
-        lessonType,
-        conversationToJaviMessages(warmUpTurns),
-        conversationToJaviMessages(speakingTurns),
-        writingScores,
-        speakingEvalJson,
-        lessonFocusLabel(lessonFocus),
-      );
+        const analysis = analysisJson
+          ? (() => {
+              const w = Math.round(
+                (writingScores.grammarScore +
+                  writingScores.vocabularyScore +
+                  writingScores.fluencyScore) /
+                  3,
+              );
+              const baseBreakdown = analysisJson.breakdown ?? {
+                grammar: {
+                  score: writingScores.grammarScore,
+                  topic: lessonFocusLabel(lessonFocus),
+                  details: [],
+                  mistakes: [],
+                },
+                vocabulary: {
+                  score: writingScores.vocabularyScore,
+                  topic: 'Vocabulary',
+                  details: [],
+                },
+                fluency: { score: speakingEvaluation.score ?? 0, details: [] },
+                writing: { score: w, details: [] },
+              };
+              return {
+                strongAreas: analysisJson.strongAreas ?? [],
+                weakAreas: analysisJson.weakAreas ?? [],
+                focusAreas: analysisJson.focusAreas ?? [],
+                correctnessScore: analysisJson.correctnessScore ?? 0,
+                overallScore: analysisJson.overallScore ?? 0,
+                encouragingMessage: analysisJson.encouragingMessage ?? '',
+                breakdown: mergeWritingIntoBreakdown(
+                  baseBreakdown,
+                  writingResult,
+                  writingPrompt,
+                ),
+              };
+            })()
+          : buildFallbackLessonAnalysis({
+              lessonType,
+              lessonFocus,
+              writing: writingResult,
+              writingPrompt,
+              speaking: speakingEvaluation,
+            });
 
-      const w = Math.round(
-        (writingScores.grammarScore + writingScores.vocabularyScore + writingScores.fluencyScore) / 3,
-      );
-      const baseBreakdown = analysisJson.breakdown ?? {
-        grammar: { score: writingScores.grammarScore, topic: lessonFocusLabel(lessonFocus), details: [], mistakes: [] },
-        vocabulary: { score: writingScores.vocabularyScore, topic: 'Vocabulary', details: [] },
-        fluency: { score: speakingEvaluation.score, details: [] },
-        writing: { score: w, details: [] },
-      };
+        if (analysisJson?.errorDNA?.length) {
+          await mergeErrorDnaFromLesson(analysisJson.errorDNA).catch((dnaErr) => {
+            console.warn('[Habla] errorDNA merge failed:', dnaErr);
+          });
+        }
 
-      const analysis = {
-        strongAreas: analysisJson.strongAreas ?? [],
-        weakAreas: analysisJson.weakAreas ?? [],
-        focusAreas: analysisJson.focusAreas ?? [],
-        correctnessScore: analysisJson.correctnessScore ?? 0,
-        overallScore: analysisJson.overallScore ?? 0,
-        encouragingMessage: analysisJson.encouragingMessage ?? '',
-        breakdown: mergeWritingIntoBreakdown(baseBreakdown, writingResult, writingPrompt),
-      };
-
-      if (analysisJson.errorDNA?.length) {
-        await mergeErrorDnaFromLesson(analysisJson.errorDNA);
-      }
-
-      setLessonSession({
-        lessonType,
-        lessonFocus,
-        warmUpConversation: warmUpTurns,
-        speakingConversation: speakingTurns,
-        conversation: [...warmUpTurns, ...speakingTurns],
-        writingTask: { prompt: writingPrompt },
-        writingEvaluation: writingResult,
-        speakingEvaluation,
-        analysis,
-      });
-
-      await upsertLessonHistoryEntry(
-        buildHistoryEntryFromAnalysis({
-          date: formatLocalDate(),
-          lessonType: lessonTypeLabel(lessonType),
+        await navigateToSummary({
+          speakingEvaluation,
           analysis,
-          speaking: speakingEvaluation,
-        }),
-      );
-      await clearLessonCheckpoint();
-
-      router.push('/summary');
-    } catch {
-      if (speakingOverride && lessonFocus && writingResult && writingPrompt) {
-        await persistLessonProgress({
-          date: formatLocalDate(),
-          lessonType: lessonTypeLabel(lessonType),
-          focusLabel: lessonFocusLabel(lessonFocus),
+          notice: transitionNotice,
+        });
+      } catch (err) {
+        console.error('[Habla] finishLesson failed:', err);
+        const speakingEvaluation =
+          speakingOverride ??
+          buildPendingSpeakingEvaluation(speakingUserTurns);
+        const analysis = buildFallbackLessonAnalysis({
+          lessonType,
+          lessonFocus,
           writing: writingResult,
           writingPrompt,
-          speaking: speakingOverride,
+          speaking: speakingEvaluation,
         });
+        await navigateToSummary({
+          speakingEvaluation,
+          analysis,
+          notice: transitionNotice ?? FINISH_FALLBACK_NOTICE,
+        });
+      } finally {
+        setFinishing(false);
       }
-      Alert.alert(
-        'Could not finish lesson',
-        'Your session was saved locally. Tap Continue to retry, or reopen the app to recover progress.',
-      );
-    } finally {
-      setFinishing(false);
-    }
-  };
+    },
+    [
+      finishing,
+      lessonFocus,
+      lessonType,
+      navigateToSummary,
+      phaseTransitionNotice,
+      speakingMessages,
+      speakingUserTurns,
+      warmUpMessages,
+      writingPrompt,
+      writingResult,
+    ],
+  );
+
+  finishLessonRef.current = finishLesson;
 
   const handlePressIn = async () => {
     if (
@@ -1426,7 +1684,10 @@ export default function LessonScreen() {
                     onPress={() =>
                       void (async () => {
                         await recoverUnregisteredSessions();
-                        await finishLesson();
+                        await finishLessonRef.current(
+                          pendingSpeakingEvalRef.current ?? undefined,
+                          phaseTransitionNotice ?? undefined,
+                        );
                       })()
                     }
                     disabled={finishing}
@@ -1529,6 +1790,15 @@ export default function LessonScreen() {
               onPressOut={() => void handlePressOut()}
             />
             <Text style={styles.voiceHint}>{voiceHint}</Text>
+            {showSkipToSummary && speakingStep !== 'phase-summary' && !finishing ? (
+              <Pressable
+                onPress={skipToSummary}
+                style={({ pressed }) => [styles.skipToSummaryLink, pressed && styles.skipToSummaryPressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Skip to summary">
+                <Text style={styles.skipToSummaryText}>Skip to summary →</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
       </KeyboardAvoidingView>
@@ -1738,6 +2008,14 @@ const styles = StyleSheet.create({
   heardText: { fontSize: 13, color: palette.muted, textAlign: 'center' },
   errorText: { fontSize: 13, color: palette.error, textAlign: 'center' },
   voiceHint: { fontSize: 13, fontWeight: '600', color: palette.muted, textAlign: 'center' },
+  skipToSummaryLink: { marginTop: 10, paddingVertical: 6, paddingHorizontal: 8 },
+  skipToSummaryPressed: { opacity: 0.7 },
+  skipToSummaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+  },
   speakingActions: { gap: 0, marginTop: 4 },
   phaseSummaryCard: {
     backgroundColor: palette.surface,

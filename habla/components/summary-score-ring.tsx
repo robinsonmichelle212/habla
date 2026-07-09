@@ -15,9 +15,10 @@ type Props = {
   progress: Animated.Value;
   scale: Animated.Value;
   opacity: Animated.Value;
+  pending?: boolean;
 };
 
-export function SummaryScoreRing({ score, progress, scale, opacity }: Props) {
+export function SummaryScoreRing({ score, progress, scale, opacity, pending }: Props) {
   const strokeDashoffset = progress.interpolate({
     inputRange: [0, 100],
     outputRange: [CIRCUMFERENCE, 0],
@@ -56,7 +57,11 @@ export function SummaryScoreRing({ score, progress, scale, opacity }: Props) {
         />
       </Svg>
       <View style={styles.center}>
-        <Text style={[styles.score, { color: scoreColorFor(score) }]}>{score}%</Text>
+        {pending ? (
+          <Text style={[styles.score, styles.pendingScore]}>Pending ⏳</Text>
+        ) : (
+          <Text style={[styles.score, { color: scoreColorFor(score) }]}>{score}%</Text>
+        )}
       </View>
     </Animated.View>
   );
@@ -81,5 +86,10 @@ const styles = StyleSheet.create({
     fontSize: 44,
     fontWeight: '800',
     letterSpacing: -1,
+  },
+  pendingScore: {
+    fontSize: 22,
+    color: '#8B95A5',
+    letterSpacing: 0,
   },
 });
