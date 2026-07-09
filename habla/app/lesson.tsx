@@ -1355,6 +1355,25 @@ export default function LessonScreen() {
                 <View style={styles.phaseSummaryCard}>
                   <Text style={styles.phaseSummaryTitle}>Speaking complete</Text>
                   <Text style={styles.phaseSummaryText}>{phaseSummaryText}</Text>
+                  <Pressable
+                    onPress={() => void finishLesson()}
+                    disabled={finishing}
+                    style={({ pressed }) => [
+                      styles.phaseSummaryButton,
+                      finishing && styles.phaseSummaryButtonDisabled,
+                      pressed && !finishing && styles.phaseSummaryButtonPressed,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Continue to lesson summary">
+                    {finishing ? (
+                      <ActivityIndicator color="#0B0F14" size="small" />
+                    ) : (
+                      <Text style={styles.phaseSummaryButtonText}>Continue</Text>
+                    )}
+                  </Pressable>
+                  <Text style={styles.phaseSummaryHint}>
+                    If this screen hangs, tap Continue to refresh and finish.
+                  </Text>
                 </View>
               ) : null}
             </>
@@ -1663,5 +1682,25 @@ const styles = StyleSheet.create({
     color: palette.text,
     textAlign: 'center',
     lineHeight: 22,
+  },
+  phaseSummaryButton: {
+    marginTop: 6,
+    backgroundColor: palette.accent,
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    minWidth: 120,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  phaseSummaryButtonPressed: { backgroundColor: palette.accentPressed },
+  phaseSummaryButtonDisabled: { opacity: 0.55 },
+  phaseSummaryButtonText: { fontSize: 14, fontWeight: '800', color: '#0B0F14' },
+  phaseSummaryHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    lineHeight: 17,
   },
 });
