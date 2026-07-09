@@ -45,6 +45,7 @@ export default function HomeScreen() {
   const [currentStreak, setCurrentStreak] = useState(0);
   const [totalGems, setTotalGems] = useState(0);
   const [dailyChallenge, setDailyChallenge] = useState<DailyChallenge | null>(null);
+  const [challengeExpanded, setChallengeExpanded] = useState(false);
   const [challengeConfirm, setChallengeConfirm] = useState(false);
   const [completingChallenge, setCompletingChallenge] = useState(false);
   const [showShopBadge, setShowShopBadge] = useState(false);
@@ -154,7 +155,8 @@ export default function HomeScreen() {
         setTimeout(() => {
           setDailyChallenge(null);
           setChallengeConfirm(false);
-        }, 1500);
+          setChallengeExpanded(false);
+        }, 2000);
       }
     } finally {
       setCompletingChallenge(false);
@@ -170,114 +172,131 @@ export default function HomeScreen() {
           <ActivityIndicator color={palette.accent} size="large" />
         </View>
       ) : (
-        <>
-      <View style={styles.topBar}>
-        <View style={styles.streakPill} accessibilityLabel="Current streak">
-          <Text style={styles.streakEmoji}>🔥</Text>
-          <Text style={styles.streakNumber}>{streakHydrated ? String(currentStreak) : '—'}</Text>
-        </View>
+        <View style={[styles.page, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View style={styles.topBar}>
+            <Text style={styles.greeting} numberOfLines={1}>
+              {greeting ?? 'Habla 👋'}
+            </Text>
+            <Pressable
+              onPress={() => void openGemShop()}
+              style={({ pressed }) => [styles.gemsPill, pressed && styles.gemsPillPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={showShopBadge ? 'Open gem shop, new unlock available' : 'Open gem shop'}>
+              <Text style={styles.gemEmoji}>💎</Text>
+              <Text style={styles.gemCount}>{streakHydrated ? String(totalGems) : '—'}</Text>
+              {showShopBadge ? (
+                <View style={styles.shopBadge}>
+                  <Text style={styles.shopBadgeText}>!</Text>
+                </View>
+              ) : null}
+            </Pressable>
+          </View>
 
-        <Pressable
-          onPress={() => void openGemShop()}
-          style={({ pressed }) => [styles.gemsPill, pressed && styles.gemsPillPressed]}
-          accessibilityRole="button"
-          accessibilityLabel={showShopBadge ? 'Open gem shop, new unlock available' : 'Open gem shop'}>
-          <Text style={styles.gemEmoji}>💎</Text>
-          <Text style={styles.gemCount}>{streakHydrated ? String(totalGems) : '—'}</Text>
-          {showShopBadge ? (
-            <View style={styles.shopBadge}>
-              <Text style={styles.shopBadgeText}>!</Text>
-            </View>
-          ) : null}
-        </Pressable>
-      </View>
+          <View style={styles.streakRow} accessibilityLabel="Current streak">
+            <Text style={styles.streakEmoji}>🔥</Text>
+            <Text style={styles.streakNumber}>{streakHydrated ? String(currentStreak) : '—'}</Text>
+          </View>
 
-      {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
-
-      <View style={[styles.main, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <View style={styles.centerBlock}>
-          {greeting ? <Text style={styles.greeting}>{greeting}</Text> : null}
-          <Text style={styles.title}>Habla</Text>
+          {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
 
           {dailyChallenge ? (
-            <View style={styles.challengeCard}>
-              <Text style={styles.challengeEyebrow}>Today&apos;s thinking challenge</Text>
-              <Text style={styles.challengeText}>{dailyChallenge.text}</Text>
+            <View
+              style={[
+                styles.challengeCard,
+                !challengeExpanded && !challengeConfirm && styles.challengeCardCollapsed,
+              ]}>
               {challengeConfirm ? (
-                <Text style={styles.challengeConfirm}>💎 +1 Nice work! 🌟</Text>
+                <Text style={styles.challengeDoneText}>✅ Challenge complete · +1 💎</Text>
               ) : (
-                <Pressable
-                  onPress={() => void handleCompleteChallenge()}
-                  disabled={completingChallenge}
-                  style={({ pressed }) => [
-                    styles.challengeButton,
-                    pressed && styles.challengeButtonPressed,
-                    completingChallenge && styles.challengeButtonDisabled,
-                  ]}
-                  accessibilityRole="button"
-                  accessibilityLabel="Mark challenge complete">
-                  <Text style={styles.challengeButtonText}>
-                    {completingChallenge ? 'Saving…' : 'I did it ✅'}
-                  </Text>
-                </Pressable>
+                <View style={styles.challengeRow}>
+                  <Pressable
+                    style={styles.challengeTextCol}
+                    onPress={() => setChallengeExpanded((prev) => !prev)}
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      challengeExpanded ? 'Collapse challenge' : 'Expand challenge text'
+                    }>
+                    <Text style={styles.challengeLabel}>💡 Today&apos;s Challenge</Text>
+                    <Text
+                      style={styles.challengeText}
+                      numberOfLines={challengeExpanded ? undefined : 2}
+                      ellipsizeMode="tail">
+                      {dailyChallenge.text}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() => void handleCompleteChallenge()}
+                    disabled={completingChallenge}
+                    style={({ pressed }) => [
+                      styles.challengePill,
+                      pressed && styles.challengePillPressed,
+                      completingChallenge && styles.challengePillDisabled,
+                    ]}
+                    accessibilityRole="button"
+                    accessibilityLabel="Mark challenge complete">
+                    <Text style={styles.challengePillText}>
+                      {completingChallenge ? '…' : 'I did it ✅'}
+                    </Text>
+                  </Pressable>
+                </View>
               )}
             </View>
           ) : null}
-        </View>
 
-        <View style={styles.actions}>
-          <Pressable
-            onPress={handleStartLesson}
-            style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}
-            accessibilityRole="button"
-            accessibilityLabel="Start today's lesson">
-            <Text style={styles.primaryButtonText}>Start Today&apos;s Lesson</Text>
-          </Pressable>
+          <View style={styles.flexSpacer} />
 
-          <Pressable
-            onPress={() => {
-              if (Platform.OS !== 'web') {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              }
-              router.push('/practice');
-            }}
-            style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
-            accessibilityRole="button"
-            accessibilityLabel="Practice mode">
-            <Text style={styles.secondaryButtonText}>Practice</Text>
-          </Pressable>
-          <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
+          <View style={styles.actions}>
+            <Pressable
+              onPress={handleStartLesson}
+              style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="Start today's lesson">
+              <Text style={styles.primaryButtonText}>Start Today&apos;s Lesson</Text>
+            </Pressable>
 
-          {urgentUnlock ? (
             <Pressable
               onPress={() => {
                 if (Platform.OS !== 'web') {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 }
-                router.push({
-                  pathname: '/bonus-round',
-                  params: { round: urgentUnlock.roundId, level: String(urgentUnlock.level) },
-                });
+                router.push('/practice');
               }}
-              style={({ pressed }) => [styles.urgentCard, pressed && styles.urgentCardPressed]}
+              style={({ pressed }) => [styles.secondaryButton, pressed && styles.secondaryButtonPressed]}
               accessibilityRole="button"
-              accessibilityLabel={`${urgentUnlock.roundName} level ${urgentUnlock.level} expires soon`}>
-              <Text
-                style={[
-                  styles.urgentCardText,
-                  urgentUnlock.expiresAt - tick < 60 * 60 * 1000 && styles.urgentCardTextRed,
-                  urgentUnlock.expiresAt - tick < 6 * 60 * 60 * 1000 &&
-                    urgentUnlock.expiresAt - tick >= 60 * 60 * 1000 &&
-                    styles.urgentCardTextAmber,
-                ]}>
-                ⏰ {urgentUnlock.roundName} Level {urgentUnlock.level} expires in{' '}
-                {formatExpiryCountdownShort(urgentUnlock.expiresAt, tick)} — Play now
-              </Text>
+              accessibilityLabel="Practice mode">
+              <Text style={styles.secondaryButtonText}>Practice</Text>
             </Pressable>
-          ) : null}
+            <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
+
+            {urgentUnlock ? (
+              <Pressable
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  }
+                  router.push({
+                    pathname: '/bonus-round',
+                    params: { round: urgentUnlock.roundId, level: String(urgentUnlock.level) },
+                  });
+                }}
+                style={({ pressed }) => [styles.urgentCard, pressed && styles.urgentCardPressed]}
+                accessibilityRole="button"
+                accessibilityLabel={`${urgentUnlock.roundName} level ${urgentUnlock.level} expires soon`}>
+                <Text
+                  style={[
+                    styles.urgentCardText,
+                    urgentUnlock.expiresAt - tick < 60 * 60 * 1000 && styles.urgentCardTextRed,
+                    urgentUnlock.expiresAt - tick < 6 * 60 * 60 * 1000 &&
+                      urgentUnlock.expiresAt - tick >= 60 * 60 * 1000 &&
+                      styles.urgentCardTextAmber,
+                  ]}>
+                  ⏰ {urgentUnlock.roundName} Level {urgentUnlock.level} expires in{' '}
+                  {formatExpiryCountdownShort(urgentUnlock.expiresAt, tick)} — Play now
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
-      </View>
-        </>
       )}
     </SafeAreaView>
   );
@@ -288,20 +307,31 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: palette.background,
   },
+  page: {
+    flex: 1,
+    paddingHorizontal: 20,
+    gap: 12,
+  },
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
+    paddingTop: 4,
+    gap: 12,
   },
-  streakPill: {
+  greeting: {
+    flex: 1,
+    fontSize: 16,
+    fontWeight: '700',
+    color: palette.text,
+  },
+  streakRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 8,
   },
-  streakEmoji: { fontSize: 22 },
-  streakNumber: { fontSize: 20, fontWeight: '900', color: palette.text },
+  streakEmoji: { fontSize: 36 },
+  streakNumber: { fontSize: 44, fontWeight: '900', color: palette.text, letterSpacing: -1 },
   gemsPill: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -313,6 +343,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
     position: 'relative',
+    flexShrink: 0,
   },
   gemsPillPressed: { opacity: 0.88 },
   gemEmoji: { fontSize: 18 },
@@ -332,79 +363,71 @@ const styles = StyleSheet.create({
     borderColor: palette.background,
   },
   shopBadgeText: { fontSize: 10, fontWeight: '900', color: '#FFFFFF', lineHeight: 12 },
-  main: {
+  flexSpacer: {
     flex: 1,
-    paddingHorizontal: 20,
-    justifyContent: 'space-between',
-  },
-  centerBlock: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingTop: 24,
-  },
-  greeting: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: palette.muted,
-    textAlign: 'center',
-    marginBottom: 4,
+    minHeight: 12,
   },
   loadingGate: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  title: {
-    fontSize: 48,
-    fontWeight: '800',
-    letterSpacing: -1.5,
-    color: palette.text,
-    marginBottom: 28,
-    textAlign: 'center',
-  },
   challengeCard: {
-    width: '100%',
     backgroundColor: palette.surface,
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    padding: 18,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  challengeCardCollapsed: {
+    maxHeight: 70,
+    overflow: 'hidden',
+  },
+  challengeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 10,
   },
-  challengeEyebrow: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: palette.accent,
+  challengeTextCol: {
+    flex: 1,
+    minWidth: 0,
+  },
+  challengeLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: palette.muted,
     textTransform: 'uppercase',
-    letterSpacing: 0.6,
+    letterSpacing: 0.8,
+    marginBottom: 2,
   },
   challengeText: {
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '600',
     color: palette.text,
-    lineHeight: 24,
+    lineHeight: 18,
   },
-  challengeConfirm: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: palette.gem,
-    marginTop: 4,
+  challengePill: {
+    flexShrink: 0,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    backgroundColor: palette.background,
   },
-  challengeButton: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.accent,
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    marginTop: 4,
+  challengePillPressed: { opacity: 0.85 },
+  challengePillDisabled: { opacity: 0.5 },
+  challengePillText: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: palette.text,
   },
-  challengeButtonPressed: { backgroundColor: palette.accentPressed },
-  challengeButtonDisabled: { opacity: 0.6 },
-  challengeButtonText: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#0B0F14',
+  challengeDoneText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.text,
+    textAlign: 'center',
   },
   actions: {
     gap: 10,

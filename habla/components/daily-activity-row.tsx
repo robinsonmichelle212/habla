@@ -95,9 +95,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'flex-end',
     gap: 10,
-    paddingHorizontal: 20,
-    paddingTop: 10,
-    paddingBottom: 4,
   },
   dayCol: {
     alignItems: 'center',
