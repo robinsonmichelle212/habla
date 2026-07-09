@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { LessonType } from '@/lib/claude';
+import type { SpeakingEvaluation } from '@/lib/lesson-session';
 import { formatLocalDate, getStreakState } from '@/lib/streak';
 
 const STORAGE_KEY = 'lessonHistory';
@@ -524,6 +525,66 @@ export async function appendLessonHistory(entry: LessonHistoryEntry): Promise<vo
   const current = await getLessonHistory();
   const next = [...current, entry].slice(-MAX_LESSON_HISTORY);
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+}
+
+export async function hasLessonHistoryFor(date: string, lessonType: string): Promise<boolean> {
+  const history = await getLessonHistory();
+  return history.some((e) => e.date === date && e.lessonType === lessonType);
+}
+
+export function speakingEvaluationToHistoryRecord(
+  speaking: SpeakingEvaluation,
+): SpeakingHistoryRecord {
+  const pending = speaking.pendingEvaluation === true || speaking.expired === true;
+  return {
+    fluencyScore: pending ? null : speaking.fluencyScore,
+    confidenceScore: pending ? null : speaking.confidenceScore,
+    vocabularyRangeScore: pending ? null : speaking.vocabularyRangeScore,
+    naturalFlowScore: pending ? null : speaking.naturalFlowScore,
+    combinedScore: pending ? null : speaking.combinedScore,
+    javiFeedback: speaking.javiFeedback,
+    exchangeCount: speaking.exchangeCount,
+    pendingEvaluation: speaking.pendingEvaluation,
+    expired: speaking.expired,
+    audioPaths: speaking.audioPaths,
+  };
+}
+
+function isRicherLessonEntry(candidate: LessonHistoryEntry, existing: LessonHistoryEntry): boolean {
+  if (existing.placeholder && !candidate.placeholder) return true;
+  if (candidate.overallScore != null && existing.overallScore == null) return true;
+  if (candidate.speaking && !candidate.speaking.pendingEvaluation && existing.speaking?.pendingEvaluation) {
+    return true;
+  }
+  return false;
+}
+
+/** Create or upgrade a lesson history row without duplicating date + lesson type. */
+export async function upsertLessonHistoryEntry(
+  entry: LessonHistoryEntry,
+): Promise<'created' | 'updated' | 'unchanged'> {
+  const history = await getLessonHistory();
+  const idx = findLessonHistoryIndex(history, entry.date, entry.lessonType);
+
+  if (idx < 0) {
+    const next = [...history, entry].slice(-MAX_LESSON_HISTORY);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    return 'created';
+  }
+
+  const existing = history[idx];
+  if (!isRicherLessonEntry(entry, existing)) {
+    return 'unchanged';
+  }
+
+  history[idx] = {
+    ...existing,
+    ...entry,
+    breakdown: entry.breakdown ?? existing.breakdown,
+    speaking: entry.speaking ?? existing.speaking,
+  };
+  await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+  return 'updated';
 }
 
 function findLessonHistoryIndex(

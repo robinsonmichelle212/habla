@@ -15,7 +15,7 @@ import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/le
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
-import { appendLessonHistory, lessonTypeLabel } from '@/lib/practice-storage';
+import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storage';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -194,7 +194,7 @@ export default function SummaryScreen() {
           };
           console.log('[Habla] Saving to lessonHistory:', JSON.stringify(lessonHistoryEntry, null, 2));
 
-          await appendLessonHistory(lessonHistoryEntry).catch(() => {
+          await upsertLessonHistoryEntry(lessonHistoryEntry).catch(() => {
             // Non-blocking: summary should not fail if lesson history cannot be saved.
           });
 

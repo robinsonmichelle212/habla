@@ -11,7 +11,12 @@ import {
   type PendingWritingTask,
 } from '@/lib/pending-writing-storage';
 import { getPendingLessonSummaries, updatePendingLessonSummary } from '@/lib/offline-lesson';
-import { getLessonHistory, updateLessonHistoryWriting } from '@/lib/practice-storage';
+import {
+  getLessonHistory,
+  hasLessonHistoryFor,
+  updateLessonHistoryWriting,
+} from '@/lib/practice-storage';
+import { persistLessonProgress } from '@/lib/session-recovery';
 import type { WritingEvaluation } from '@/lib/lesson-session';
 
 export type WritingSyncResult = {
@@ -78,6 +83,27 @@ async function processWritingTask(task: PendingWritingTask): Promise<number | nu
   const writingAvg = Math.round(
     (evaluation.grammarScore + evaluation.vocabularyScore + evaluation.fluencyScore) / 3,
   );
+
+  if (!(await hasLessonHistoryFor(task.lessonDate, task.lessonType))) {
+    await persistLessonProgress({
+      date: task.lessonDate,
+      lessonType: task.lessonType,
+      focusLabel: task.lessonFocusLabel,
+      writing: evaluation,
+      writingPrompt: task.writingPrompt,
+      speaking: {
+        fluencyScore: null,
+        confidenceScore: null,
+        vocabularyRangeScore: null,
+        naturalFlowScore: null,
+        combinedScore: null,
+        score: null,
+        javiFeedback: '',
+        exchangeCount: 0,
+        pendingEvaluation: false,
+      },
+    });
+  }
 
   const history = await getLessonHistory();
   const hasEntry = history.some(

@@ -11,12 +11,12 @@ import {
   getTodayScoreInfo,
   getTopScoreThisWeek,
   getWeekScoreChart,
-  repairMissingSessionPlaceholders,
   type DrillHistoryEntry,
   type LessonHistoryEntry,
   type TodayScoreInfo,
   type WeekChartDay,
 } from '@/lib/practice-storage';
+import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { buildWrappedTeaser, monthLabel } from '@/lib/wrapped-data';
 import { getUnreadWrappedMonth, getWrappedHistory } from '@/lib/wrapped-storage';
 import * as Haptics from 'expo-haptics';
@@ -71,7 +71,7 @@ export default function ProgressScreen() {
       setLoading(true);
       void (async () => {
         try {
-          await repairMissingSessionPlaceholders();
+          await recoverUnregisteredSessions();
           const [lessonHistory, drillHistory, wraps, unread] = await Promise.all([
             getLessonHistory(),
             getDrillHistory(),

@@ -74,13 +74,14 @@ function buildFocusInstructions(focus: LessonFocusContext): string {
 LESSON STRUCTURE — follow in order across the conversation:
 
 PART 1 — WHY AND WHEN (your first 2–3 messages in this session):
-- Explain in simple B1 Spanish when this grammar point is used and why it matters.
+- The learner has an on-screen conjugation guide: when to use the tense, regular endings, and tables for all 10 focus verbs.
+- Explain in simple B1 Spanish when this grammar point is used and why it matters — do not repeat the full tables in chat; point to the panel.
 - Use the Translate: line on every message so learners can tap individual words for meaning.
-- Give 2 real-life examples using high-frequency vocabulary (core 50 words first).
-- Example style: "El pretérito indefinido se usa para acciones completadas en el pasado."
+- Give 2 real-life examples using focus verbs from the tables.
+- Example style: "El pretérito indefinido se usa para acciones completadas en el pasado. Mira 'tener' en la tabla — tuve, tuviste…"
 
 PART 2 — GUIDED PRACTICE (next 3–4 exchanges):
-- Create sentences using ONLY top-1000 most common Spanish words.
+- Reference regular -ar/-er/-ir endings from the guide, then practise irregular stems from the 10 verb tables.
 - Ask the learner to respond using the target tense/structure.
 - Use this week's focus verbs: ${focus.focusVerbs.join(', ')}.
 - Gently correct mistakes and explain why in one short sentence.
@@ -397,16 +398,19 @@ INTERLEAVING (required): Mix today's grammar/structure focus with vocabulary fro
 
 const WARMUP_PHASE_APPENDIX = `
 LESSON PHASE: WARM-UP (written exchange only).
+- The learner sees a conjugation reference panel above the chat with: when to use today's tense, regular -ar/-er/-ir endings, and full tables for this week's 10 focus verbs (irregular forms highlighted in orange).
+- Reference the on-screen tables ("mira la tabla de tener") instead of typing out full conjugation lists in chat.
 - Greet the learner and introduce today's topic and focus clearly.
-- Highlight key verbs, vocabulary, and/or structures they should use today.
+- Highlight key verbs they should use today and point them to tap each verb in the reference panel.
 - Keep each message to 2 short Spanish sentences maximum, then Translate: line.
 - Be warm and practical — this prepares them for writing and speaking later.
 
 Before the writing task you must cover (across multiple messages, no rush):
-1) Why this topic matters — when and why it is used.
-2) How it works — explain the pattern with at least 3 clear example sentences (each with Translate: line).
-3) One simple comprehension-check question to the learner.
-4) After they answer, confirm understanding and readiness.
+1) Why this topic matters — when and why it is used (they can read the "When to use" section on screen).
+2) How regular verbs work — point to the regular endings, then contrast with 2–3 irregular focus verbs from the tables.
+3) At least 3 clear example sentences using this week's focus verbs (each with Translate: line).
+4) One simple comprehension-check question to the learner.
+5) After they answer, confirm understanding and readiness.
 
 Minimum: at least 5 of your warm-up messages before signalling completion. No maximum — continue until the concept is fully explained.
 
@@ -415,6 +419,7 @@ When you have fully explained the concept with all necessary examples and the us
 [READY_FOR_WRITING]
 Do not use this marker until you have:
 - Explained when and why this tense/topic is used
+- Referenced regular endings AND at least 3 irregular focus verbs from the on-screen tables
 - Given at least 3 clear examples
 - Checked understanding with one simple question
 - Confirmed the user is ready to proceed`;
@@ -441,7 +446,9 @@ export async function generateWarmUpOpening(
   const openingPrompt =
     focus.kind === 'structure'
       ? `Start the warm-up. Explain why today's structure point matters (${focus.topic.title}): ${focus.topic.summary}. Use clear English and Spanish examples. Explain WHY, not just the rule. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
-      : 'Start the warm-up. Introduce today\'s topic, explain why it matters, and highlight 2–3 verbs or structures to practise. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.';
+      : focus.kind === 'grammar'
+        ? `Start the warm-up for ${focus.topic} (week ${focus.weekNumber}). The learner sees conjugation tables for: ${focus.focusVerbs.join(', ')}. Explain when and why this tense is used, point them to the regular endings on screen, and highlight 2–3 irregular focus verbs to study in the tables. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
+        : 'Start the warm-up. Introduce today\'s topic, explain why it matters, and highlight 2–3 verbs or structures to practise. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.';
 
   const response = await anthropic.messages.create({
     model,

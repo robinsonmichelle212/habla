@@ -11,7 +11,11 @@ import { processPendingAudioTasks } from '@/lib/pending-audio-sync';
 import { getPendingAudioTasks } from '@/lib/pending-audio-storage';
 import { processPendingWritingTasks } from '@/lib/pending-writing-sync';
 import { getPendingWritingTasks } from '@/lib/pending-writing-storage';
-import { updateLessonHistorySpeaking } from '@/lib/practice-storage';
+import {
+  buildHistoryEntryFromPendingSummary,
+  recoverUnregisteredSessions,
+} from '@/lib/session-recovery';
+import { hasLessonHistoryFor, updateLessonHistorySpeaking, upsertLessonHistoryEntry } from '@/lib/practice-storage';
 
 export type SyncResult = {
   writingProcessed: number;
@@ -74,6 +78,9 @@ async function processPendingLessonSummaries(): Promise<number> {
 
   for (const item of items) {
     if (item.speakingEvaluation.pendingEvaluation || item.writingEvaluation.pendingEvaluation) {
+      if (!(await hasLessonHistoryFor(item.lessonDate, item.lessonType))) {
+        await upsertLessonHistoryEntry(buildHistoryEntryFromPendingSummary(item));
+      }
       continue;
     }
 
@@ -105,6 +112,10 @@ async function processPendingLessonSummaries(): Promise<number> {
         speakingEvalJson,
         item.lessonFocusLabel,
       );
+
+      if (!(await hasLessonHistoryFor(item.lessonDate, item.lessonType))) {
+        await upsertLessonHistoryEntry(buildHistoryEntryFromPendingSummary(item));
+      }
 
       await updateLessonHistorySpeaking(
         item.lessonDate,
@@ -149,6 +160,7 @@ export async function runPendingSync(options?: { notify?: boolean }): Promise<Sy
     const writing = await processPendingWritingTasks({ notify: options?.notify });
     const audio = await processPendingAudioTasks({ notify: options?.notify });
     const summariesProcessed = await processPendingLessonSummaries();
+    await recoverUnregisteredSessions();
 
     return {
       writingProcessed: writing.processed,

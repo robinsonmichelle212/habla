@@ -4,6 +4,8 @@ import {
 } from '@/components/conversation-input-layout';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
+import { LessonTimer } from '@/components/lesson-timer';
+import { Phase1VerbGuide } from '@/components/phase1-verb-guide';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { TextMessageBubble } from '@/components/text-message-bubble';
 import { VoiceConversationLog } from '@/components/voice-conversation-log';
@@ -62,7 +64,13 @@ import { buildInterleavingContext, type InterleavingContext } from '@/lib/interl
 import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
 import { checkIsOnline } from '@/lib/network-status';
-import { getLessonHistory } from '@/lib/practice-storage';
+import { saveLessonCheckpoint, clearLessonCheckpoint } from '@/lib/lesson-checkpoint';
+import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storage';
+import {
+  buildHistoryEntryFromAnalysis,
+  persistLessonProgress,
+  recoverUnregisteredSessions,
+} from '@/lib/session-recovery';
 import {
   computeSpeakingCombinedScore,
   speakingPhaseSummaryLabel,
@@ -752,6 +760,23 @@ export default function LessonScreen() {
       ),
     );
     setSpeakingStep('phase-summary');
+
+    if (lessonFocus && writingResult && writingPrompt) {
+      void saveLessonCheckpoint({
+        id: `checkpoint-${Date.now()}`,
+        lessonDate: formatLocalDate(),
+        lessonType: lessonTypeLabel(lessonType),
+        lessonTypeEnum: lessonType,
+        lessonFocusLabel: lessonFocusLabel(lessonFocus),
+        warmUpConversation: toTurns(warmUpMessages),
+        speakingConversation: toTurns(speakingMessages),
+        writingPrompt,
+        writingEvaluation: writingResult,
+        speakingEvaluation,
+        savedAt: Date.now(),
+      });
+    }
+
     setTimeout(() => {
       void finishLesson(speakingEvaluation);
     }, PHASE_SUMMARY_MS);
@@ -974,6 +999,17 @@ export default function LessonScreen() {
           analysis,
         });
 
+        await upsertLessonHistoryEntry(
+          buildHistoryEntryFromAnalysis({
+            date: formatLocalDate(),
+            lessonType: lessonTypeLabel(lessonType),
+            analysis,
+            speaking: speakingEvaluation,
+            writingPending: writingResult.pendingEvaluation,
+          }),
+        );
+        await clearLessonCheckpoint();
+
         router.push('/summary');
         return;
       }
@@ -1060,9 +1096,32 @@ export default function LessonScreen() {
         analysis,
       });
 
+      await upsertLessonHistoryEntry(
+        buildHistoryEntryFromAnalysis({
+          date: formatLocalDate(),
+          lessonType: lessonTypeLabel(lessonType),
+          analysis,
+          speaking: speakingEvaluation,
+        }),
+      );
+      await clearLessonCheckpoint();
+
       router.push('/summary');
     } catch {
-      Alert.alert('Could not finish lesson', 'Check your internet and try again.');
+      if (speakingOverride && lessonFocus && writingResult && writingPrompt) {
+        await persistLessonProgress({
+          date: formatLocalDate(),
+          lessonType: lessonTypeLabel(lessonType),
+          focusLabel: lessonFocusLabel(lessonFocus),
+          writing: writingResult,
+          writingPrompt,
+          speaking: speakingOverride,
+        });
+      }
+      Alert.alert(
+        'Could not finish lesson',
+        'Your session was saved locally. Tap Continue to retry, or reopen the app to recover progress.',
+      );
     } finally {
       setFinishing(false);
     }
@@ -1223,7 +1282,12 @@ export default function LessonScreen() {
               })}
             </ScrollView>
           </View>
-          <LessonPhaseIndicator activeStep={indicatorStep} />
+          <View style={styles.phaseTimerRow}>
+            <View style={styles.phaseIndicatorWrap}>
+              <LessonPhaseIndicator activeStep={indicatorStep} />
+            </View>
+            <LessonTimer resetKey={lessonKind} paused={finishing} />
+          </View>
         </View>
 
         <ScrollView
@@ -1242,6 +1306,9 @@ export default function LessonScreen() {
 
           {phase === 'warmup' || phase === 'feynman' || phase === 'writing' ? (
             <>
+              {phase === 'warmup' && lessonFocus?.kind === 'grammar' ? (
+                <Phase1VerbGuide focus={lessonFocus} />
+              ) : null}
               {warmUpMessages.map((m) => (
                 <TextMessageBubble
                   key={m.id}
@@ -1356,7 +1423,12 @@ export default function LessonScreen() {
                   <Text style={styles.phaseSummaryTitle}>Speaking complete</Text>
                   <Text style={styles.phaseSummaryText}>{phaseSummaryText}</Text>
                   <Pressable
-                    onPress={() => void finishLesson()}
+                    onPress={() =>
+                      void (async () => {
+                        await recoverUnregisteredSessions();
+                        await finishLesson();
+                      })()
+                    }
                     disabled={finishing}
                     style={({ pressed }) => [
                       styles.phaseSummaryButton,
@@ -1507,6 +1579,14 @@ const styles = StyleSheet.create({
   },
   lessonPillTextSelected: {
     color: palette.accent,
+  },
+  phaseTimerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  phaseIndicatorWrap: {
+    flex: 1,
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 16, flexGrow: 1 },

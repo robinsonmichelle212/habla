@@ -21,7 +21,7 @@ import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
 import { DailyActivityRow } from '@/components/daily-activity-row';
 import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activity';
-import { repairMissingSessionPlaceholders } from '@/lib/practice-storage';
+import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
@@ -87,7 +87,7 @@ export default function HomeScreen() {
 
       void (async () => {
         try {
-          await repairMissingSessionPlaceholders();
+          await recoverUnregisteredSessions();
           const [streak, gems, challenge, shopProgress, name, weekActivity] = await Promise.all([
             getStreakState(),
             getTotalGems(),

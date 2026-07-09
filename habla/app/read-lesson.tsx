@@ -1,3 +1,4 @@
+import { LessonTimer } from '@/components/lesson-timer';
 import { ReadTextView } from '@/components/read-text-view';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { VoiceConversationLog } from '@/components/voice-conversation-log';
@@ -480,7 +481,7 @@ export default function ReadLessonScreen() {
             <Text style={styles.backLink}>← Back</Text>
           </Pressable>
           <Text style={styles.headerTitle}>Read 📖</Text>
-          <View style={styles.headerSpacer} />
+          <LessonTimer paused={phase === 'finishing'} />
         </View>
 
         <View style={styles.phaseRow}>
@@ -631,7 +632,6 @@ const styles = StyleSheet.create({
   },
   backLink: { fontSize: 16, fontWeight: '700', color: palette.accent, minWidth: 72 },
   headerTitle: { fontSize: 18, fontWeight: '900', color: palette.text },
-  headerSpacer: { minWidth: 72 },
   phaseRow: {
     flexDirection: 'row',
     justifyContent: 'center',

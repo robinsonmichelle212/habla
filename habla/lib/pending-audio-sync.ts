@@ -12,7 +12,11 @@ import {
   updatePendingAudioTask,
 } from '@/lib/pending-audio-storage';
 import { getPendingLessonSummaries, updatePendingLessonSummary } from '@/lib/offline-lesson';
-import { markLessonSpeakingExpired, updateLessonHistorySpeaking } from '@/lib/practice-storage';
+import {
+  hasLessonHistoryFor,
+  updateLessonHistorySpeaking,
+} from '@/lib/practice-storage';
+import { persistLessonProgress } from '@/lib/session-recovery';
 import type { SpeakingEvaluation } from '@/lib/lesson-session';
 import type { SpeakingHistoryRecord } from '@/lib/practice-storage';
 import { computeSpeakingCombinedScore } from '@/lib/speaking-score';
@@ -103,16 +107,6 @@ async function processTask(task: PendingAudioTask, notify: boolean): Promise<boo
     pendingEvaluation: false,
   };
 
-  await updateLessonHistorySpeaking(
-    task.lessonDate,
-    task.lessonType,
-    speakingRecord,
-    analysisJson.overallScore ?? combinedScore,
-  );
-
-  await updatePendingAudioTask(task.id, { processed: true });
-  await Promise.all(task.audioPaths.map((p) => deletePendingAudioFile(p)));
-
   const speakingEvaluation: SpeakingEvaluation = {
     fluencyScore: evalJson.fluencyScore,
     confidenceScore: evalJson.confidenceScore,
@@ -126,6 +120,36 @@ async function processTask(task: PendingAudioTask, notify: boolean): Promise<boo
     exchangeCount: transcripts.length,
     pendingEvaluation: false,
   };
+
+  if (!(await hasLessonHistoryFor(task.lessonDate, task.lessonType))) {
+    await persistLessonProgress({
+      date: task.lessonDate,
+      lessonType: task.lessonType,
+      focusLabel: task.lessonFocusLabel,
+      writing: {
+        originalText: '',
+        correctedText: '',
+        grammarScore: task.writingScores.grammarScore,
+        vocabularyScore: task.writingScores.vocabularyScore,
+        fluencyScore: task.writingScores.fluencyScore,
+        structureScore: task.writingScores.structureScore,
+        feedback: 'Recovered from offline speaking session.',
+        corrections: [],
+      },
+      writingPrompt: task.writingPrompt,
+      speaking: speakingEvaluation,
+    });
+  }
+
+  await updateLessonHistorySpeaking(
+    task.lessonDate,
+    task.lessonType,
+    speakingRecord,
+    analysisJson.overallScore ?? combinedScore,
+  );
+
+  await updatePendingAudioTask(task.id, { processed: true });
+  await Promise.all(task.audioPaths.map((p) => deletePendingAudioFile(p)));
 
   const summaries = await getPendingLessonSummaries();
   for (const summary of summaries) {
