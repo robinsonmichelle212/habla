@@ -17,10 +17,11 @@ import {
   type WeekChartDay,
 } from '@/lib/practice-storage';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
+import { hasLastSummary } from '@/lib/last-summary-storage';
 import { buildWrappedTeaser, monthLabel } from '@/lib/wrapped-data';
 import { getUnreadWrappedMonth, getWrappedHistory } from '@/lib/wrapped-storage';
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
@@ -58,6 +59,7 @@ export default function ProgressScreen() {
   const [showTodayModal, setShowTodayModal] = useState(false);
   const [showWeekModal, setShowWeekModal] = useState(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
+  const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -72,17 +74,19 @@ export default function ProgressScreen() {
       void (async () => {
         try {
           await recoverUnregisteredSessions();
-          const [lessonHistory, drillHistory, wraps, unread] = await Promise.all([
+          const [lessonHistory, drillHistory, wraps, unread, lastSummary] = await Promise.all([
             getLessonHistory(),
             getDrillHistory(),
             getWrappedHistory(),
             getUnreadWrappedMonth(),
+            hasLastSummary(),
           ]);
           if (cancelled) return;
           setLessons(lessonHistory);
           setDrills(drillHistory);
           setWrappedHistory(wraps);
           setUnreadWrapped(unread);
+          setShowLastSummaryLink(lastSummary);
           setTodaysScoreInfo(getTodayScoreInfo(lessonHistory, drillHistory));
           setTopScoreWeek(getTopScoreThisWeek(lessonHistory, drillHistory));
           const bestWeek = getBestDayThisWeek(lessonHistory, drillHistory);
@@ -120,6 +124,16 @@ export default function ProgressScreen() {
         showsVerticalScrollIndicator={false}>
         <Text style={styles.pageTitle}>Progress 📈</Text>
         <Text style={styles.pageSubtitle}>Your level, scores, and monthly recap</Text>
+
+        {showLastSummaryLink ? (
+          <Pressable
+            onPress={() => router.push('/last-summary' as Href)}
+            style={({ pressed }) => [styles.lastSummaryLink, pressed && styles.lastSummaryPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="View last summary">
+            <Text style={styles.lastSummaryText}>View last summary →</Text>
+          </Pressable>
+        ) : null}
 
         {!loading ? (
           <View style={styles.scoreRow}>
@@ -295,6 +309,17 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: progressPalette.muted,
     marginBottom: 16,
+  },
+  lastSummaryLink: {
+    alignSelf: 'flex-start',
+    marginBottom: 12,
+    paddingVertical: 4,
+  },
+  lastSummaryPressed: { opacity: 0.75 },
+  lastSummaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: progressPalette.muted,
   },
   scoreRow: {
     flexDirection: 'row',

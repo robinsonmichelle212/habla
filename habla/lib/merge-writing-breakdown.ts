@@ -24,8 +24,8 @@ export function mergeWritingIntoBreakdown(
       accentIssues: writing.accentIssues ?? [],
       structuralFeedback: writing.structuralFeedback ?? [],
       writingPrompt: writingPrompt ?? breakdown.writing.writingPrompt,
-      details: breakdown.writing.details.length
-        ? breakdown.writing.details
+      details: (breakdown.writing.details ?? []).length
+        ? (breakdown.writing.details ?? [])
         : [writing.feedback].filter(Boolean),
     },
   };

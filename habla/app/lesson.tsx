@@ -49,6 +49,7 @@ import { addPendingWritingTask } from '@/lib/pending-writing-storage';
 import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
 import {
   conversationToJaviMessages,
+  getLessonSession,
   setLessonSession,
   type LessonConversationTurn,
   type SpeakingEvaluation,
@@ -85,6 +86,8 @@ import {
   TimeoutError,
   withTimeout,
 } from '@/lib/with-timeout';
+import { saveLastSummary } from '@/lib/last-summary-storage';
+import { buildSafeSummaryPayload } from '@/lib/summary-safe-data';
 import { formatLocalDate } from '@/lib/streak';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import {
@@ -1096,6 +1099,13 @@ export default function LessonScreen() {
         analysis: params.analysis,
         summaryNotice: params.notice,
       });
+
+      try {
+        const payload = buildSafeSummaryPayload(getLessonSession());
+        await saveLastSummary(payload);
+      } catch (saveSummaryErr) {
+        console.error('[Habla] Pre-render lastSummary save failed:', saveSummaryErr);
+      }
 
       try {
         await upsertLessonHistoryEntry(

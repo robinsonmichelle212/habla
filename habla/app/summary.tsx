@@ -1,3 +1,4 @@
+import { SummaryErrorBoundary } from '@/components/summary-error-boundary';
 import { SummaryScoreRing } from '@/components/summary-score-ring';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
@@ -5,6 +6,7 @@ import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChalle
 import { useSummaryReveal } from '@/hooks/use-summary-reveal';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, calculateLessonGems, getTotalGems, OFFLINE_SPEAKING_ATTEMPT_GEMS } from '@/lib/gems';
+import { saveLastSummary } from '@/lib/last-summary-storage';
 import {
   checkPersonalBestMilestone,
   milestonesOnLessonComplete,
@@ -12,11 +14,13 @@ import {
 } from '@/lib/milestones';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
-import {
-  isOverallScorePending,
-  resolveSummaryAnalysis,
-} from '@/lib/lesson-summary-fallback';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
+import {
+  buildSafeSummaryPayload,
+  logSummaryData,
+  safeNumber,
+  type SafeSummaryPayload,
+} from '@/lib/summary-safe-data';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storage';
@@ -54,12 +58,14 @@ const palette = {
   blueBg: 'rgba(96, 165, 250, 0.12)',
 };
 
-function splitBilingualMessage(message: string): { spanish: string; english?: string } {
-  const idx = message.indexOf(' / ');
-  if (idx === -1) return { spanish: message };
+function splitBilingualMessage(message: string | null | undefined): { spanish: string; english?: string } {
+  const safe = typeof message === 'string' ? message : '';
+  if (!safe.trim()) return { spanish: '¡Buen trabajo!' };
+  const idx = safe.indexOf(' / ');
+  if (idx === -1) return { spanish: safe };
   return {
-    spanish: message.slice(0, idx).trim(),
-    english: message.slice(idx + 3).trim(),
+    spanish: safe.slice(0, idx).trim(),
+    english: safe.slice(idx + 3).trim(),
   };
 }
 
@@ -80,19 +86,69 @@ function formatSpeakingMetric(
 
 export default function SummaryScreen() {
   const router = useRouter();
+  const payload = useMemo(() => {
+    try {
+      const session = getLessonSession();
+      const built = buildSafeSummaryPayload(session);
+      logSummaryData(built);
+      return built;
+    } catch (err) {
+      console.error('[Habla] buildSafeSummaryPayload failed:', err);
+      return buildSafeSummaryPayload({
+        warmUpConversation: [],
+        speakingConversation: [],
+        conversation: [],
+      });
+    }
+  }, []);
+
+  useMemo(() => {
+    void saveLastSummary(payload).catch((err) => {
+      console.error('[Habla] saveLastSummary failed:', err);
+    });
+    return null;
+  }, [payload]);
+
+  const goHome = () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+    resetLessonSession();
+    router.replace('/(tabs)');
+  };
+
+  return (
+    <SummaryErrorBoundary payload={payload} onGoHome={goHome}>
+      <SummaryScreenInner payload={payload} onGoHome={goHome} />
+    </SummaryErrorBoundary>
+  );
+}
+
+function SummaryScreenInner({
+  payload,
+  onGoHome,
+}: {
+  payload: SafeSummaryPayload;
+  onGoHome: () => void;
+}) {
+  const router = useRouter();
   const insets = useSafeAreaInsets();
-  const session = useMemo(() => getLessonSession(), []);
-  const analysis = useMemo(() => resolveSummaryAnalysis(session), [session]);
+  const session = payload.session;
+  const analysis = payload.analysis;
   const lessonType = session.lessonType;
   const writing = session.writingEvaluation;
   const speaking = session.speakingEvaluation;
   const summaryNotice = session.summaryNotice;
-  const scorePending = isOverallScorePending(session, analysis);
+  const scorePending = payload.scorePending;
+  const strongAreas =
+    analysis.strongAreas?.length > 0 ? analysis.strongAreas : ['Good effort today'];
+  const weakAreas = analysis.weakAreas?.length > 0 ? analysis.weakAreas : ['Keep practising'];
+  const focusAreas = analysis.focusAreas?.length > 0 ? analysis.focusAreas : ['Daily practice'];
   const didRecordRef = useRef(false);
   const pendingCelebrationsRef = useRef<MilestoneCelebration[]>([]);
   const milestoneGemPulse = useRef(new Animated.Value(1)).current;
   const { celebrate } = useMilestoneCelebration();
-  const [gemsEarned, setGemsEarned] = useState(0);
+  const [gemsEarned, setGemsEarned] = useState(payload.gemsEarnedEstimate ?? 2);
   const [gemsBefore, setGemsBefore] = useState(0);
   const [streakHydrated, setStreakHydrated] = useState(false);
 
@@ -114,65 +170,70 @@ export default function SummaryScreen() {
 
   const buildLessonHistoryEntry = useCallback(() => {
     if (!analysis || !lessonType) return null;
-    const today = formatLocalDate();
-    const baseBreakdown = analysis.breakdown ?? {
-      grammar: {
-        score: Math.round(writing?.grammarScore ?? 0),
-        topic: 'Grammar',
-        details: [],
-      },
-      vocabulary: {
-        score: Math.round(writing?.vocabularyScore ?? 0),
-        topic: 'Vocabulary',
-        details: [],
-      },
-      fluency: {
-        score: Math.round(writing?.fluencyScore ?? 0),
-        details: [],
-      },
-      writing: {
-        score: Math.round(
-          ((writing?.grammarScore ?? 0) +
-            (writing?.vocabularyScore ?? 0) +
-            (writing?.fluencyScore ?? 0)) /
-            3,
-        ),
-        details: [],
-      },
-    };
-    const breakdown = mergeWritingIntoBreakdown(
-      baseBreakdown,
-      writing ?? undefined,
-      session.writingTask?.prompt,
-    );
+    try {
+      const today = formatLocalDate();
+      const baseBreakdown = analysis.breakdown ?? {
+        grammar: {
+          score: Math.round(writing?.grammarScore ?? 0),
+          topic: 'Grammar',
+          details: [],
+        },
+        vocabulary: {
+          score: Math.round(writing?.vocabularyScore ?? 0),
+          topic: 'Vocabulary',
+          details: [],
+        },
+        fluency: {
+          score: Math.round(writing?.fluencyScore ?? 0),
+          details: [],
+        },
+        writing: {
+          score: Math.round(
+            ((writing?.grammarScore ?? 0) +
+              (writing?.vocabularyScore ?? 0) +
+              (writing?.fluencyScore ?? 0)) /
+              3,
+          ),
+          details: [],
+        },
+      };
+      const breakdown = mergeWritingIntoBreakdown(
+        baseBreakdown,
+        writing ?? undefined,
+        session.writingTask?.prompt,
+      );
 
-    return {
-      date: today,
-      overallScore: scorePending
-        ? null
-        : (analysis.overallScore ?? analysis.correctnessScore ?? 0),
-      breakdown,
-      weakAreas: analysis.weakAreas ?? [],
-      focusAreas: analysis.focusAreas ?? [],
-      lessonType: lessonTypeLabel(lessonType),
-      speaking: speaking
-        ? {
-            fluencyScore: speaking.pendingEvaluation ? null : speaking.fluencyScore,
-            confidenceScore: speaking.pendingEvaluation ? null : speaking.confidenceScore,
-            vocabularyRangeScore: speaking.pendingEvaluation
-              ? null
-              : speaking.vocabularyRangeScore,
-            naturalFlowScore: speaking.pendingEvaluation ? null : speaking.naturalFlowScore,
-            combinedScore: speaking.pendingEvaluation ? null : speaking.combinedScore,
-            javiFeedback: speaking.javiFeedback,
-            exchangeCount: speaking.exchangeCount,
-            pendingEvaluation: speaking.pendingEvaluation,
-            expired: speaking.expired,
-            audioPaths: speaking.audioPaths,
-          }
-        : undefined,
-    };
-  }, [analysis, lessonType, scorePending, session.writingTask?.prompt, speaking, writing]);
+      return {
+        date: today,
+        overallScore: scorePending
+          ? null
+          : (analysis.overallScore ?? analysis.correctnessScore ?? 0),
+        breakdown,
+        weakAreas: weakAreas,
+        focusAreas: focusAreas,
+        lessonType: lessonTypeLabel(lessonType),
+        speaking: speaking
+          ? {
+              fluencyScore: speaking.pendingEvaluation ? null : speaking.fluencyScore,
+              confidenceScore: speaking.pendingEvaluation ? null : speaking.confidenceScore,
+              vocabularyRangeScore: speaking.pendingEvaluation
+                ? null
+                : speaking.vocabularyRangeScore,
+              naturalFlowScore: speaking.pendingEvaluation ? null : speaking.naturalFlowScore,
+              combinedScore: speaking.pendingEvaluation ? null : speaking.combinedScore,
+              javiFeedback: speaking.javiFeedback,
+              exchangeCount: speaking.exchangeCount,
+              pendingEvaluation: speaking.pendingEvaluation,
+              expired: speaking.expired,
+              audioPaths: speaking.audioPaths,
+            }
+          : undefined,
+      };
+    } catch (err) {
+      console.error('[Habla] buildLessonHistoryEntry failed:', err);
+      return null;
+    }
+  }, [analysis, focusAreas, lessonType, scorePending, session.writingTask?.prompt, speaking, weakAreas, writing]);
 
   const saveLessonHistoryWithRetry = useCallback(
     (entry: NonNullable<ReturnType<typeof buildLessonHistoryEntry>>) => {
@@ -195,12 +256,13 @@ export default function SummaryScreen() {
 
     updateStreak()
       .then(async (res) => {
+        try {
         const currentStreak = res.state.currentStreak;
         const today = formatLocalDate();
 
         const overallScore = scorePending
           ? 0
-          : (analysis?.overallScore ?? analysis?.correctnessScore ?? 0);
+          : safeNumber(analysis?.overallScore ?? analysis?.correctnessScore ?? 0);
         const gems = scorePending ? 0 : calculateLessonGems(overallScore);
 
         const beforeGems = await getTotalGems();
@@ -208,7 +270,11 @@ export default function SummaryScreen() {
 
         let personalBestCelebration = null;
         if (analysis && lessonType) {
-          personalBestCelebration = await checkPersonalBestMilestone(overallScore, today);
+          try {
+            personalBestCelebration = await checkPersonalBestMilestone(overallScore, today);
+          } catch (err) {
+            console.error('[Habla] checkPersonalBestMilestone failed:', err);
+          }
         }
 
         if (gems > 0) {
@@ -218,6 +284,8 @@ export default function SummaryScreen() {
           } catch {
             // Non-blocking: summary should not fail if gems cannot be saved.
           }
+        } else {
+          setGemsEarned(payload.gemsEarnedEstimate ?? 2);
         }
 
         if (analysis && lessonType) {
@@ -249,9 +317,9 @@ export default function SummaryScreen() {
                     lessonType,
                     lessonFocus: focus,
                     grammarTopic,
-                    strongAreas: analysis.strongAreas ?? [],
-                    weakAreas: analysis.weakAreas ?? [],
-                    focusAreas: analysis.focusAreas ?? [],
+                    strongAreas,
+                    weakAreas,
+                    focusAreas,
                     encouragingMessage: analysis.encouragingMessage,
                     overallScore: analysis.overallScore,
                   },
@@ -305,6 +373,9 @@ export default function SummaryScreen() {
         void syncStreakReminder().catch(() => {
           // Non-blocking: reschedule tomorrow's reminder after today's lesson.
         });
+        } catch (err) {
+          console.error('[Habla] Summary side-effects failed:', err);
+        }
       })
       .catch(() => {
         // no-op: streak should not block summary UI
@@ -314,13 +385,7 @@ export default function SummaryScreen() {
       });
   }, []);
 
-  const goHome = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-    resetLessonSession();
-    router.replace('/(tabs)');
-  };
+  const goHome = onGoHome;
 
   const startDrills = async () => {
     if (!analysis || !lessonType || loadingDrills) return;
@@ -332,7 +397,7 @@ export default function SummaryScreen() {
     setLastFeedback(null);
     setAnswer('');
     try {
-      const exercises = await generateDrills(lessonType, analysis.weakAreas, analysis.focusAreas);
+      const exercises = await generateDrills(lessonType, weakAreas, focusAreas);
       if (!exercises.length) {
         Alert.alert('No drills generated', 'Try again in a moment.');
         return;
@@ -379,16 +444,16 @@ export default function SummaryScreen() {
   };
 
   const hasAnalysis = !!analysis;
-  const overallScore = scorePending ? 0 : Math.round(analysis?.overallScore ?? 0);
+  const overallScore = scorePending ? 0 : safeNumber(analysis?.overallScore ?? 0);
   const revealEnabled = hasAnalysis && mode === 'summary' && streakHydrated;
 
   const reveal = useSummaryReveal({
     enabled: revealEnabled,
     overallScore,
-    strongCount: analysis?.strongAreas.length ?? 0,
-    weakCount: analysis?.weakAreas.length ?? 0,
-    focusCount: analysis?.focusAreas.length ?? 0,
-    gemsEarned,
+    strongCount: strongAreas.length,
+    weakCount: weakAreas.length,
+    focusCount: focusAreas.length,
+    gemsEarned: gemsEarned ?? 2,
     gemsBefore,
   });
 
@@ -489,7 +554,7 @@ export default function SummaryScreen() {
                 ]}>
                 Strong Areas ✅
               </Animated.Text>
-              {analysis.strongAreas.map((t, idx) => (
+              {strongAreas.map((t, idx) => (
                 <Animated.View
                   key={`s-${idx}`}
                   style={[
@@ -514,7 +579,7 @@ export default function SummaryScreen() {
                 ]}>
                 Weak Areas ⚠️
               </Animated.Text>
-              {analysis.weakAreas.map((t, idx) => (
+              {weakAreas.map((t, idx) => (
                 <Animated.View
                   key={`w-${idx}`}
                   style={[
@@ -539,7 +604,7 @@ export default function SummaryScreen() {
                 ]}>
                 Focus Tomorrow 🎯
               </Animated.Text>
-              {analysis.focusAreas.map((t, idx) => (
+              {focusAreas.map((t, idx) => (
                 <Animated.View
                   key={`f-${idx}`}
                   style={[
@@ -633,18 +698,20 @@ export default function SummaryScreen() {
 
             {reveal.complete ? (
               <>
-                {lessonType === 'Read' && analysis.breakdown.reading ? (
+                {lessonType === 'Read' && analysis.breakdown?.reading ? (
                   <View style={[styles.writingCard, styles.supplementaryCard]}>
                     <Text style={styles.writingTitle}>Reading comprehension 📖</Text>
                     <View style={styles.writingRow}>
                       <Text style={styles.writingLabel}>Score</Text>
                       <Text style={styles.writingValue}>
-                        {Math.round(analysis.breakdown.reading.score)}%
+                        {safeNumber(analysis.breakdown.reading.score)}%
                       </Text>
                     </View>
                     <View style={styles.writingRow}>
                       <Text style={styles.writingLabel}>Text type</Text>
-                      <Text style={styles.writingValue}>{analysis.breakdown.reading.textType}</Text>
+                      <Text style={styles.writingValue}>
+                        {analysis.breakdown.reading.textType ?? '—'}
+                      </Text>
                     </View>
                   </View>
                 ) : null}
@@ -765,7 +832,7 @@ export default function SummaryScreen() {
                   <Text style={styles.scoreValue}>
                     {scorePending || writing?.pendingEvaluation
                       ? 'Pending ⏳'
-                      : `${Math.round(analysis.correctnessScore)}%`}
+                      : `${safeNumber(analysis.correctnessScore)}%`}
                   </Text>
                   <Text style={styles.scoreHint}>grammar + vocabulary</Text>
                 </View>

@@ -22,6 +22,7 @@ import { addGems, getTotalGems } from '@/lib/gems';
 import { DailyActivityRow } from '@/components/daily-activity-row';
 import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activity';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
+import { hasLastSummary } from '@/lib/last-summary-storage';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
@@ -54,6 +55,7 @@ export default function HomeScreen() {
   const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [greeting, setGreeting] = useState<string | null>(null);
   const [activityDays, setActivityDays] = useState<DailyActivityDay[]>([]);
+  const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
 
   useEffect(() => {
     void shouldShowOnboarding().then((show) => {
@@ -89,13 +91,15 @@ export default function HomeScreen() {
       void (async () => {
         try {
           await recoverUnregisteredSessions();
-          const [streak, gems, challenge, shopProgress, name, weekActivity] = await Promise.all([
+          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary] =
+            await Promise.all([
             getStreakState(),
             getTotalGems(),
             getTodaysChallengeForHome(),
             getGemShopProgress(),
             getUserName(),
             getLast7DaysActivity(),
+            hasLastSummary(),
           ]);
           if (cancelled) return;
 
@@ -105,6 +109,7 @@ export default function HomeScreen() {
           setUrgentUnlock(getUrgentPendingUnlock(shopProgress));
           setGreeting(name ? timeBasedGreeting(name) : null);
           setActivityDays(weekActivity);
+          setShowLastSummaryLink(lastSummary);
 
           await refreshShopBadge(gems);
         } finally {
@@ -241,6 +246,16 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
+          ) : null}
+
+          {showLastSummaryLink ? (
+            <Pressable
+              onPress={() => router.push('/last-summary' as Href)}
+              style={({ pressed }) => [styles.lastSummaryLink, pressed && styles.lastSummaryPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="View last summary">
+              <Text style={styles.lastSummaryText}>View last summary →</Text>
+            </Pressable>
           ) : null}
 
           <View style={styles.flexSpacer} />
@@ -464,6 +479,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.muted,
     textAlign: 'center',
+  },
+  lastSummaryLink: {
+    alignSelf: 'center',
+    paddingVertical: 4,
+  },
+  lastSummaryPressed: { opacity: 0.75 },
+  lastSummaryText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
   },
   urgentCard: {
     marginTop: 6,

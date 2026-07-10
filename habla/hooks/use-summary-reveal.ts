@@ -5,6 +5,18 @@ const ITEM_STAGGER_MS = 200;
 const SCORE_COUNT_MS = 800;
 const GEM_COUNT_MS = 500;
 
+function safeCount(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.floor(n);
+}
+
+function safeScore(value: unknown): number {
+  const n = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
 export type SummaryRevealControls = {
   skip: () => void;
   complete: boolean;
@@ -103,12 +115,17 @@ export function useSummaryReveal(options: {
   gemsEarned: number;
   gemsBefore: number;
 }): SummaryRevealControls {
-  const { enabled, overallScore, strongCount, weakCount, focusCount, gemsEarned, gemsBefore } =
-    options;
+  const safeOverallScore = safeScore(options.overallScore);
+  const safeStrongCount = safeCount(options.strongCount);
+  const safeWeakCount = safeCount(options.weakCount);
+  const safeFocusCount = safeCount(options.focusCount);
+  const safeGemsEarned = safeCount(options.gemsEarned);
+  const safeGemsBefore = safeCount(options.gemsBefore);
+  const enabled = !!options.enabled;
 
   const [complete, setComplete] = useState(!enabled);
-  const [displayScore, setDisplayScore] = useState(enabled ? 0 : overallScore);
-  const [gemCountDisplay, setGemCountDisplay] = useState(gemsBefore);
+  const [displayScore, setDisplayScore] = useState(enabled ? 0 : safeOverallScore);
+  const [gemCountDisplay, setGemCountDisplay] = useState(safeGemsBefore);
   const skippedRef = useRef(false);
   const animationRef = useRef<Animated.CompositeAnimation | null>(null);
   const gemsProgress = useRef(new Animated.Value(0)).current;
@@ -119,7 +136,7 @@ export function useSummaryReveal(options: {
   const subtitleTranslateY = useRef(new Animated.Value(enabled ? 18 : 0)).current;
   const scoreOpacity = useRef(new Animated.Value(enabled ? 0 : 1)).current;
   const scoreScale = useRef(new Animated.Value(enabled ? 0.85 : 1)).current;
-  const scoreProgress = useRef(new Animated.Value(enabled ? 0 : overallScore)).current;
+  const scoreProgress = useRef(new Animated.Value(enabled ? 0 : safeOverallScore)).current;
 
   const strongHeaderOpacity = useRef(new Animated.Value(enabled ? 0 : 1)).current;
   const strongHeaderTranslateX = useRef(new Animated.Value(enabled ? -36 : 0)).current;
@@ -128,9 +145,9 @@ export function useSummaryReveal(options: {
   const focusHeaderOpacity = useRef(new Animated.Value(enabled ? 0 : 1)).current;
   const focusHeaderTranslateX = useRef(new Animated.Value(enabled ? -36 : 0)).current;
 
-  const strongItemOpacities = useRef(makeItemOpacities(strongCount)).current;
-  const weakItemOpacities = useRef(makeItemOpacities(weakCount)).current;
-  const focusItemOpacities = useRef(makeItemOpacities(focusCount)).current;
+  const strongItemOpacities = useRef(makeItemOpacities(safeStrongCount)).current;
+  const weakItemOpacities = useRef(makeItemOpacities(safeWeakCount)).current;
+  const focusItemOpacities = useRef(makeItemOpacities(safeFocusCount)).current;
 
   const gemsOpacity = useRef(new Animated.Value(enabled ? 0 : 1)).current;
   const gemsScale = useRef(new Animated.Value(enabled ? 0.4 : 1)).current;
@@ -148,7 +165,7 @@ export function useSummaryReveal(options: {
     subtitleTranslateY.setValue(0);
     scoreOpacity.setValue(1);
     scoreScale.setValue(1);
-    scoreProgress.setValue(overallScore);
+    scoreProgress.setValue(safeOverallScore);
     strongHeaderOpacity.setValue(1);
     strongHeaderTranslateX.setValue(0);
     weakHeaderOpacity.setValue(1);
@@ -167,13 +184,13 @@ export function useSummaryReveal(options: {
     challengeHighlight.setValue(0.35);
     practiceOpacity.setValue(1);
     homeOpacity.setValue(1);
-    setDisplayScore(overallScore);
-    setGemCountDisplay(gemsBefore + gemsEarned);
+    setDisplayScore(safeOverallScore);
+    setGemCountDisplay(safeGemsBefore + safeGemsEarned);
     setComplete(true);
   }, [
-    overallScore,
-    gemsBefore,
-    gemsEarned,
+    safeOverallScore,
+    safeGemsBefore,
+    safeGemsEarned,
     titleOpacity,
     titleTranslateY,
     subtitleOpacity,
@@ -210,23 +227,23 @@ export function useSummaryReveal(options: {
 
   useEffect(() => {
     if (!enabled) {
-      setDisplayScore(overallScore);
-      setGemCountDisplay(gemsBefore + gemsEarned);
+      setDisplayScore(safeOverallScore);
+      setGemCountDisplay(safeGemsBefore + safeGemsEarned);
       return;
     }
 
     const scoreListener = scoreProgress.addListener(({ value }) => {
-      setDisplayScore(Math.round(value));
+      setDisplayScore(Math.round(Number.isFinite(value) ? value : 0));
     });
 
     const gemListener = gemsProgress.addListener(({ value }) => {
-      setGemCountDisplay(Math.round(gemsBefore + gemsEarned * value));
+      setGemCountDisplay(Math.round(safeGemsBefore + safeGemsEarned * (Number.isFinite(value) ? value : 0)));
     });
 
     skippedRef.current = false;
     setComplete(false);
     setDisplayScore(0);
-    setGemCountDisplay(gemsBefore);
+    setGemCountDisplay(safeGemsBefore);
     gemsProgress.setValue(0);
 
     const sequence = Animated.sequence([
@@ -273,21 +290,24 @@ export function useSummaryReveal(options: {
           useNativeDriver: true,
         }),
         Animated.timing(scoreProgress, {
-          toValue: overallScore,
+          toValue: safeOverallScore,
           duration: SCORE_COUNT_MS,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: false,
         }),
       ]),
       Animated.delay(100),
-      fadeSlideIn(strongHeaderOpacity, strongHeaderTranslateX),
-      staggerItems(strongItemOpacities, 120),
-      Animated.delay(weakCount ? 180 : 80),
-      fadeSlideIn(weakHeaderOpacity, weakHeaderTranslateX),
-      staggerItems(weakItemOpacities, 120),
-      Animated.delay(focusCount ? 180 : 80),
-      fadeSlideIn(focusHeaderOpacity, focusHeaderTranslateX),
-      staggerItems(focusItemOpacities, 120),
+      ...(safeStrongCount > 0
+        ? [fadeSlideIn(strongHeaderOpacity, strongHeaderTranslateX), staggerItems(strongItemOpacities, 120)]
+        : []),
+      Animated.delay(safeWeakCount > 0 ? 180 : 80),
+      ...(safeWeakCount > 0
+        ? [fadeSlideIn(weakHeaderOpacity, weakHeaderTranslateX), staggerItems(weakItemOpacities, 120)]
+        : []),
+      Animated.delay(safeFocusCount > 0 ? 180 : 80),
+      ...(safeFocusCount > 0
+        ? [fadeSlideIn(focusHeaderOpacity, focusHeaderTranslateX), staggerItems(focusItemOpacities, 120)]
+        : []),
       Animated.delay(200),
       Animated.parallel([
         fadeIn(gemsOpacity, 260),
@@ -353,7 +373,7 @@ export function useSummaryReveal(options: {
     animationRef.current = sequence;
     sequence.start(({ finished }) => {
       if (finished && !skippedRef.current) {
-        setGemCountDisplay(gemsBefore + gemsEarned);
+        setGemCountDisplay(safeGemsBefore + safeGemsEarned);
         setComplete(true);
       }
     });
@@ -365,12 +385,12 @@ export function useSummaryReveal(options: {
     };
   }, [
     enabled,
-    overallScore,
-    strongCount,
-    weakCount,
-    focusCount,
-    gemsEarned,
-    gemsBefore,
+    safeOverallScore,
+    safeStrongCount,
+    safeWeakCount,
+    safeFocusCount,
+    safeGemsEarned,
+    safeGemsBefore,
     titleOpacity,
     titleTranslateY,
     subtitleOpacity,

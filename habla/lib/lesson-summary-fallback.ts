@@ -9,6 +9,7 @@ import type {
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
+import { normalizeSummaryAnalysis } from '@/lib/summary-safe-data';
 
 export function buildPendingSpeakingEvaluation(
   exchangeCount: number,
@@ -94,17 +95,19 @@ export function buildFallbackLessonAnalysis(params: {
 
 /** Build a displayable analysis from whatever the session captured. */
 export function resolveSummaryAnalysis(session: LessonSessionState): LessonAnalysis | null {
-  if (session.analysis) return session.analysis;
+  if (session.analysis) return normalizeSummaryAnalysis(session.analysis);
   if (!session.lessonType || !session.lessonFocus || !session.writingEvaluation) {
     return null;
   }
-  return buildFallbackLessonAnalysis({
-    lessonType: session.lessonType,
-    lessonFocus: session.lessonFocus,
-    writing: session.writingEvaluation,
-    writingPrompt: session.writingTask?.prompt ?? '',
-    speaking: session.speakingEvaluation,
-  });
+  return normalizeSummaryAnalysis(
+    buildFallbackLessonAnalysis({
+      lessonType: session.lessonType,
+      lessonFocus: session.lessonFocus,
+      writing: session.writingEvaluation,
+      writingPrompt: session.writingTask?.prompt ?? '',
+      speaking: session.speakingEvaluation,
+    }),
+  );
 }
 
 export function isOverallScorePending(session: LessonSessionState, analysis: LessonAnalysis | null): boolean {
