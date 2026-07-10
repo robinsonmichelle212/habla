@@ -146,6 +146,71 @@ ${lines}
 Naturally watch for these specific mistakes during the lesson. If they occur, gently correct them and reference that this is a recurring pattern: "Recuerda — esto es algo en lo que seguimos trabajando juntos."`;
 }
 
+const CONJUGATION_MEMORY_TECHNIQUES = `
+MEMORY HOOKS FOR IRREGULAR CONJUGATIONS (Timothy Moser-style):
+When introducing any irregular verb conjugation always provide a memory hook using a sound-alike English word or phrase. Never introduce an irregular form without one.
+
+Use these hooks for the most common irregular preterites:
+fui/fue — "Phooey!" — "Phooey, I went the wrong way!"
+fuiste — "Fwisty" — "the twisty road you went down"
+fuimos — "Fwee-moose" — "the moose we went to see"
+fueron — "Fweh-ron" — "the wren that went flying off"
+tuve — "Too vague" — "it was too vague what I had"
+tuviste — "Too-vee-stay" — "too vee shaped to stay"
+tuvo — "Two-bo" — "two bows I had"
+pude — "Poodle" — "the poodle could do it"
+pudiste — "Poo-dees-tay" — "the poodle that could stay"
+vine — "Wine" — "I came bearing wine"
+viniste — "Vee-nees-tay" — "you came to stay"
+quise — "Keys" — "I wanted my keys"
+quisiste — "Keys-stay" — "you wanted the keys to stay"
+hice — "Easy" — "I did it easy"
+hiciste — "Easy-stay" — "you did it and stayed"
+dije — "Dee-hey" — "I said hey"
+dijiste — "Dee-hey-stay" — "you said hey and stayed"
+puse — "Pussy willow" — "I put pussy willows there"
+pusiste — "Poo-see-stay" — "you put it and stayed"
+supe — "Super" — "super, I knew it!"
+supiste — "Super-stay" — "you knew and stayed"
+
+When introducing a new conjugation:
+1. State the conjugation clearly.
+2. Give the memory hook immediately after.
+3. Use it in a sentence from the user's real life — reference their day, their partner, their routine.
+4. Ask them to create their own association if they find yours doesn't work.
+
+PERSONAL ASSOCIATION:
+Always try to connect conjugations to the user's actual life and experiences.
+Use their name, their partner, their job, their day.
+Personal emotional connections stick better than abstract examples.
+Example for Michelle learning fui:
+"Fui — phooey! Think of saying phooey when you went the wrong way to work this morning, Michelle."
+
+MEMORY PALACE INTRODUCTION:
+When teaching a full set of conjugations for one verb, walk the user through a simple location — their kitchen.
+Each conjugation is assigned to one item in the kitchen:
+yo form — the kettle
+tú form — the fridge
+él/ella form — the cooker
+nosotros form — the kitchen table
+vosotros form — the window
+ellos form — the kitchen door
+
+Each item performs an action using that conjugation.
+Describe the scene vividly — make it memorable, funny or surprising.
+Example for IR in preterite:
+"Your kettle WENT (fui) cold before you got to it — phooey!
+The fridge door — YOU WENT (fuiste) to it twice already.
+The cooker — it WENT (fue) cold too — typical.
+At the table — WE WENT (fuimos) through three cups of tea.
+By the window — YOU ALL WENT (fuisteis) to look outside.
+The door — THEY WENT (fueron) out without saying goodbye."
+
+After the memory palace walkthrough immediately drill the user on each item:
+"What happened to the kettle?" → fui
+"What did you do with the fridge?" → fuiste
+And so on for each kitchen item.`;
+
 function buildSystemPrompt(
   lessonType: LessonType,
   focus: LessonFocusContext,
@@ -188,7 +253,9 @@ Vocabulary teaching (all lesson types):
 
 INTERLEAVING: Always mix current grammar focus with vocabulary from a different theme than this week's vocabulary lesson. In conversation naturally reference vocabulary from previous weeks to force retrieval. In writing tasks use current grammar with non-current vocabulary themes.
 
-FEYNMAN TECHNIQUE: On the first lesson of each new grammar curriculum week, after your introduction, ask the user to explain the grammar rule back to you in Spanish in their own words with an example. Evaluate their explanation and address specific gaps only. Maximum 2 Feynman exchanges before moving to writing phase. Only use Feynman on Grammar and Structure lessons.${buildErrorDnaAppendix(topErrors)}`;
+FEYNMAN TECHNIQUE: On the first lesson of each new grammar curriculum week, after your introduction, ask the user to explain the grammar rule back to you in Spanish in their own words with an example. Evaluate their explanation and address specific gaps only. Maximum 2 Feynman exchanges before moving to writing phase. Only use Feynman on Grammar and Structure lessons.
+
+${CONJUGATION_MEMORY_TECHNIQUES}${buildErrorDnaAppendix(topErrors)}`;
 }
 
 function extractText(response: Anthropic.Messages.Message): string {
