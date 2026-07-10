@@ -6,7 +6,6 @@ import { LessonTimer } from '@/components/lesson-timer';
 import { Phase1VerbGuide } from '@/components/phase1-verb-guide';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { TextMessageBubble } from '@/components/text-message-bubble';
-import { VoiceConversationLog } from '@/components/voice-conversation-log';
 import {
   analyzeLessonPhases,
   askJaviSpeakingConversation,
@@ -74,10 +73,7 @@ import {
   buildFallbackLessonAnalysis,
   buildPendingSpeakingEvaluation,
 } from '@/lib/lesson-summary-fallback';
-import {
-  computeSpeakingCombinedScore,
-  speakingPhaseSummaryLabel,
-} from '@/lib/speaking-score';
+import { computeSpeakingCombinedScore } from '@/lib/speaking-score';
 import {
   LESSON_ANALYSIS_TIMEOUT_MS,
   SPEAKING_EVAL_TIMEOUT_MS,
@@ -136,7 +132,7 @@ const palette = {
 
 type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
 type LessonPhase = 'warmup' | 'feynman' | 'writing' | 'speaking';
-type SpeakingStep = 'intro' | 'conversation' | 'phase-summary';
+type SpeakingStep = 'intro' | 'conversation';
 
 type ChatMessage = {
   id: string;
@@ -153,9 +149,8 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'read', label: 'Read 📖' },
 ];
 
-const WARMUP_SKIP_AFTER_MESSAGES = 5;
-const HEARD_TRANSCRIPT_MS = 5000;
-const PHASE_SUMMARY_MS = 2000;
+const WARMUP_SKIP_AFTER_MESSAGES = 4;
+const WARMUP_MAX_JAVI_MESSAGES = 4;
 const SPEAKING_USER_TURNS = 3;
 const MAX_FEYNMAN_ATTEMPTS = 2;
 const SPEAKING_SKIP_LINK_MS = 30_000;
@@ -196,7 +191,6 @@ export default function LessonScreen() {
   const demoModeRef = useRef(demoMode);
   demoModeRef.current = demoMode;
   const scrollRef = useRef<ScrollView>(null);
-  const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
   const speakingStepRef = useRef<SpeakingStep>('intro');
 
@@ -224,18 +218,17 @@ export default function LessonScreen() {
   const [speakingStep, setSpeakingStep] = useState<SpeakingStep>('intro');
   const [speakingUserTurns, setSpeakingUserTurns] = useState(0);
   const [speakingTranscripts, setSpeakingTranscripts] = useState<string[]>([]);
-  const [phaseSummaryText, setPhaseSummaryText] = useState('');
   const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
   const [offlineSpeakingMode, setOfflineSpeakingMode] = useState(false);
   const [offlineIntroNote, setOfflineIntroNote] = useState(false);
   const [pendingAudioPaths, setPendingAudioPaths] = useState<string[]>([]);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
-  const [heardTranscript, setHeardTranscript] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
   const [finishing, setFinishing] = useState(false);
   const [showSkipToSummary, setShowSkipToSummary] = useState(false);
+  const [showJaviRevealPanel, setShowJaviRevealPanel] = useState(false);
   const [phaseTransitionNotice, setPhaseTransitionNotice] = useState<string | null>(null);
   const finishLessonRef = useRef<(speaking?: SpeakingEvaluation, notice?: string) => Promise<void>>(
     async () => {},
@@ -327,12 +320,24 @@ export default function LessonScreen() {
     return 0;
   }, [phase, speakingUserTurns]);
 
-  const latestSpeakingJaviId = useMemo(() => {
+  const latestJaviSpeaking = useMemo(() => {
     for (let i = speakingMessages.length - 1; i >= 0; i -= 1) {
-      if (speakingMessages[i]?.role === 'assistant') return speakingMessages[i].id;
+      if (speakingMessages[i]?.role === 'assistant') return speakingMessages[i];
     }
     return null;
   }, [speakingMessages]);
+
+  const allowJaviReveal = useMemo(() => {
+    if (!writingResult || writingResult.pendingEvaluation) return false;
+    const scores = [
+      writingResult.grammarScore,
+      writingResult.vocabularyScore,
+      writingResult.fluencyScore,
+    ];
+    if (writingResult.structureScore != null) scores.push(writingResult.structureScore);
+    const avg = scores.reduce((sum, s) => sum + s, 0) / scores.length;
+    return avg < 60;
+  }, [writingResult]);
 
   const latestWarmUpJaviId = useMemo(() => {
     for (let i = warmUpMessages.length - 1; i >= 0; i -= 1) {
@@ -362,13 +367,8 @@ export default function LessonScreen() {
     [setVoiceStateSafe],
   );
 
-  const showHeardTranscript = useCallback((text: string) => {
-    setHeardTranscript(text);
-    if (heardTimerRef.current) clearTimeout(heardTimerRef.current);
-    heardTimerRef.current = setTimeout(() => {
-      setHeardTranscript(null);
-      heardTimerRef.current = null;
-    }, HEARD_TRANSCRIPT_MS);
+  const showHeardTranscript = useCallback((_text: string) => {
+    // Transcripts are used for evaluation only — not shown during voice-only speaking.
   }, []);
 
   const resetLessonState = useCallback(() => {
@@ -387,11 +387,10 @@ export default function LessonScreen() {
     setSpeakingStep('intro');
     setSpeakingUserTurns(0);
     setSpeakingTranscripts([]);
-    setPhaseSummaryText('');
+    setShowJaviRevealPanel(false);
     setSpeakingIntroDone(false);
     setOfflineSpeakingMode(false);
     setPendingAudioPaths([]);
-    setHeardTranscript(null);
     setVoiceError(null);
   }, []);
 
@@ -510,7 +509,6 @@ export default function LessonScreen() {
     writingResult,
     speakingMessages,
     phase,
-    heardTranscript,
     writingPrompt,
     loadingWritingTask,
   ]);
@@ -525,7 +523,6 @@ export default function LessonScreen() {
 
   useEffect(() => {
     return () => {
-      if (heardTimerRef.current) clearTimeout(heardTimerRef.current);
       stopJaviSpeech();
       void stopVoiceRecording();
     };
@@ -658,7 +655,8 @@ export default function LessonScreen() {
       const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount, topErrorDna);
       const { text: replyClean, ready } = stripReadyForWritingMarker(reply);
       const parsed = parseJaviResponse(replyClean);
-      if (ready) setWarmUpReadyForWriting(true);
+      const javiReplies = javiCount + 1;
+      if (ready || javiReplies >= WARMUP_MAX_JAVI_MESSAGES) setWarmUpReadyForWriting(true);
       setWarmUpMessages((prev) => [
         ...prev,
         { id: newId(), role: 'assistant', spanish: parsed.spanish, translation: parsed.translation },
@@ -846,8 +844,8 @@ export default function LessonScreen() {
     setSpeakingStep('intro');
     setSpeakingUserTurns(0);
     setSpeakingTranscripts([]);
-    setPhaseSummaryText('');
     setSpeakingIntroDone(false);
+    setShowJaviRevealPanel(false);
     setVoiceError(null);
 
     if (demoModeRef.current) {
@@ -913,16 +911,6 @@ export default function LessonScreen() {
     pendingSpeakingEvalRef.current = speakingEvaluation;
     if (notice) setPhaseTransitionNotice(notice);
 
-    setPhaseSummaryText(
-      notice ??
-        speakingPhaseSummaryLabel(
-          speakingEvaluation.combinedScore,
-          speakingEvaluation.exchangeCount,
-          speakingEvaluation.pendingEvaluation,
-        ),
-    );
-    setSpeakingStep('phase-summary');
-
     if (lessonFocus && writingResult && writingPrompt) {
       void saveLessonCheckpoint({
         id: `checkpoint-${Date.now()}`,
@@ -939,9 +927,7 @@ export default function LessonScreen() {
       });
     }
 
-    setTimeout(() => {
-      void finishLessonRef.current(speakingEvaluation, notice);
-    }, PHASE_SUMMARY_MS);
+    void finishLessonRef.current(speakingEvaluation, notice);
   };
 
   const skipToSummary = () => {
@@ -1052,10 +1038,13 @@ export default function LessonScreen() {
         priorExchanges,
         lessonFocus,
         writingPrompt,
+        nextTurn,
+        SPEAKING_USER_TURNS,
         topErrorDna,
         interleavingContext ?? undefined,
       );
       const parsed = parseJaviResponse(replyText);
+      setShowJaviRevealPanel(false);
       setSpeakingMessages((prev) => [
         ...prev,
         {
@@ -1585,7 +1574,7 @@ export default function LessonScreen() {
 
   const voiceHint = (() => {
     if (!speakingIntroDone || speakingStep === 'intro') return 'Javi is speaking…';
-    if (speakingStep === 'phase-summary') return 'Wrapping up speaking…';
+    if (finishing) return 'Wrapping up…';
     if (voiceState === 'recording') return 'Release when finished';
     if (voiceState === 'processing') return 'Processing…';
     if (voiceState === 'javi-speaking') return 'Listen to Javi…';
@@ -1764,48 +1753,7 @@ export default function LessonScreen() {
             </View>
           ) : null}
 
-          {phase === 'speaking' ? (
-            <>
-              <VoiceConversationLog
-                messages={speakingMessages}
-                latestJaviId={latestSpeakingJaviId}
-                voiceSyncLatest={voiceState === 'javi-speaking'}
-              />
-              {speakingStep === 'phase-summary' && phaseSummaryText ? (
-                <View style={styles.phaseSummaryCard}>
-                  <Text style={styles.phaseSummaryTitle}>Speaking complete</Text>
-                  <Text style={styles.phaseSummaryText}>{phaseSummaryText}</Text>
-                  <Pressable
-                    onPress={() =>
-                      void (async () => {
-                        await recoverUnregisteredSessions();
-                        await finishLessonRef.current(
-                          pendingSpeakingEvalRef.current ?? undefined,
-                          phaseTransitionNotice ?? undefined,
-                        );
-                      })()
-                    }
-                    disabled={finishing}
-                    style={({ pressed }) => [
-                      styles.phaseSummaryButton,
-                      finishing && styles.phaseSummaryButtonDisabled,
-                      pressed && !finishing && styles.phaseSummaryButtonPressed,
-                    ]}
-                    accessibilityRole="button"
-                    accessibilityLabel="Continue to lesson summary">
-                    {finishing ? (
-                      <ActivityIndicator color="#0B0F14" size="small" />
-                    ) : (
-                      <Text style={styles.phaseSummaryButtonText}>Continue</Text>
-                    )}
-                  </Pressable>
-                  <Text style={styles.phaseSummaryHint}>
-                    If this screen hangs, tap Continue to refresh and finish.
-                  </Text>
-                </View>
-              ) : null}
-            </>
-          ) : null}
+          {phase === 'speaking' ? <View style={styles.speakingSpacer} /> : null}
         </ScrollView>
 
         {phase === 'warmup' || phase === 'feynman' ? (
@@ -1872,12 +1820,6 @@ export default function LessonScreen() {
 
         {phase === 'speaking' ? (
           <View style={[styles.voiceDock, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-            {heardTranscript ? (
-              <Text style={styles.heardText} numberOfLines={2}>
-                Javi heard: {heardTranscript}
-              </Text>
-            ) : null}
-            {voiceError ? <Text style={styles.errorText}>{voiceError}</Text> : null}
             <PushToTalkButton
               state={voiceState}
               disabled={micDisabled}
@@ -1885,7 +1827,28 @@ export default function LessonScreen() {
               onPressOut={() => void handlePressOut()}
             />
             <Text style={styles.voiceHint}>{voiceHint}</Text>
-            {showSkipToSummary && speakingStep !== 'phase-summary' && !finishing ? (
+            {allowJaviReveal && latestJaviSpeaking && speakingStep === 'conversation' ? (
+              <>
+                <Pressable
+                  onPress={() => setShowJaviRevealPanel((v) => !v)}
+                  style={({ pressed }) => [styles.javiRevealLink, pressed && styles.javiRevealPressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel="See what Javi said">
+                  <Text style={styles.javiRevealLinkText}>👁️ See what Javi said</Text>
+                </Pressable>
+                {showJaviRevealPanel ? (
+                  <View style={styles.javiRevealCard}>
+                    <Text style={styles.javiRevealSpanish}>
+                      {safeSpanish(latestJaviSpeaking.spanish)}
+                    </Text>
+                    {latestJaviSpeaking.translation ? (
+                      <Text style={styles.javiRevealEnglish}>{latestJaviSpeaking.translation}</Text>
+                    ) : null}
+                  </View>
+                ) : null}
+              </>
+            ) : null}
+            {showSkipToSummary && speakingStep === 'conversation' && !finishing ? (
               <Pressable
                 onPress={skipToSummary}
                 style={({ pressed }) => [styles.skipToSummaryLink, pressed && styles.skipToSummaryPressed]}
@@ -2103,6 +2066,22 @@ const styles = StyleSheet.create({
   heardText: { fontSize: 13, color: palette.muted, textAlign: 'center' },
   errorText: { fontSize: 13, color: palette.error, textAlign: 'center' },
   voiceHint: { fontSize: 13, fontWeight: '600', color: palette.muted, textAlign: 'center' },
+  speakingSpacer: { minHeight: 8 },
+  javiRevealLink: { marginTop: 4, paddingVertical: 6 },
+  javiRevealPressed: { opacity: 0.85 },
+  javiRevealLinkText: { fontSize: 13, fontWeight: '700', color: palette.muted, textAlign: 'center' },
+  javiRevealCard: {
+    marginTop: 8,
+    backgroundColor: palette.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 12,
+    gap: 6,
+    width: '100%',
+  },
+  javiRevealSpanish: { fontSize: 15, fontWeight: '700', color: palette.text, lineHeight: 21 },
+  javiRevealEnglish: { fontSize: 13, fontWeight: '600', color: palette.muted, lineHeight: 19 },
   skipToSummaryLink: { marginTop: 10, paddingVertical: 6, paddingHorizontal: 8 },
   skipToSummaryPressed: { opacity: 0.7 },
   skipToSummaryText: {

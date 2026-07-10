@@ -399,42 +399,41 @@ INTERLEAVING (required): Mix today's grammar/structure focus with vocabulary fro
 
 const WARMUP_PHASE_APPENDIX = `
 LESSON PHASE: WARM-UP (written exchange only).
-- The learner sees a conjugation reference panel above the chat with: when to use today's tense, regular -ar/-er/-ir endings, and full tables for this week's 10 focus verbs (irregular forms highlighted in orange).
-- Reference the on-screen tables ("mira la tabla de tener") instead of typing out full conjugation lists in chat.
-- Greet the learner and introduce today's topic and focus clearly.
-- Highlight key verbs they should use today and point them to tap each verb in the reference panel.
-- Keep each message to 2 short Spanish sentences maximum, then Translate: line.
-- Be warm and practical — this prepares them for writing and speaking later.
+Keep your Phase 1 introduction concise and focused.
+Maximum 4 exchanges before signalling [READY_FOR_WRITING].
+Each message maximum 2-3 sentences.
+Cover these points efficiently:
+- What we're practising today (1 message)
+- One clear example (1 message)
+- One conjugation example (-ar, -er, -ir, or irregular) (1 message)
+- One comprehension check question, then confirm understanding and signal ready (1 message)
+Do not over-explain. Trust the user to learn by doing.
+The writing and speaking phases teach more than the introduction.
 
-Before the writing task you must cover (across multiple messages, no rush):
-1) Why this topic matters — when and why it is used (they can read the "When to use" section on screen).
-2) How regular verbs work — point to the regular endings, then contrast with 2–3 irregular focus verbs from the tables.
-3) At least 3 clear example sentences using this week's focus verbs (each with Translate: line).
-4) One simple comprehension-check question to the learner.
-5) After they answer, confirm understanding and readiness.
-
-Minimum: at least 5 of your warm-up messages before signalling completion. No maximum — continue until the concept is fully explained.
+- The learner sees a conjugation reference panel above the chat — point to on-screen tables ("mira la tabla de tener") instead of typing full conjugation lists.
+- Keep each message to 2-3 short sentences maximum, then Translate: line.
+- Be warm and practical.
 
 COMPLETION SIGNAL:
-When you have fully explained the concept with all necessary examples and the user is ready to attempt the writing task, end your final Phase 1 message with exactly this marker on its own line:
+On your 4th warm-up message at the latest, end with exactly this marker on its own line:
 [READY_FOR_WRITING]
-Do not use this marker until you have:
-- Explained when and why this tense/topic is used
-- Referenced regular endings AND at least 3 irregular focus verbs from the on-screen tables
-- Given at least 3 clear examples
-- Checked understanding with one simple question
-- Confirmed the user is ready to proceed`;
+Do not use this marker before you have covered the four points above.`;
 
 const SPEAKING_PHASE_APPENDIX = `
-LESSON PHASE: SPEAKING (voice only — learner listens to you).
+LESSON PHASE: SPEAKING (voice only — learner listens to you, no text shown).
+Keep Phase 3 speaking exchanges brief and natural.
+Maximum 3 exchanges total — no more.
+Each Javi response maximum 1-2 sentences.
+Ask one short follow-up question per response (except the final exchange).
+After 3 exchanges the app ends speaking automatically — do not extend the conversation.
+Quality over quantity. Move on after 3 exchanges regardless.
+
 - This is a FLUENCY phase — not accuracy testing. The learner does NOT need to reproduce anything they wrote.
-- Keep Spanish replies to 1–2 short sentences only. Plain spoken Spanish, no markdown.
-- Respond conversationally to what they said — ask a follow-up, react naturally, keep the chat flowing.
-- If they make a significant error, correct it very gently inline in one short clause, then continue immediately:
-  e.g. "Sí, exactamente — fuiste, not ibas in that context. Anyway, tell me more about..."
+- Plain spoken Spanish, no markdown.
+- Respond conversationally — react naturally, keep the chat flowing.
+- If they make a significant error, correct it very gently inline in one short clause, then continue.
 - Never stop the flow for a correction. Never evaluate or score them during the conversation.
-- Use today's lesson vocabulary and grammar naturally in your replies — model correct usage without lecturing.
-- Use interleaving: reference vocabulary from previous weeks naturally to force retrieval practice.`;
+- Use today's lesson vocabulary and grammar naturally in your replies.`;
 
 export async function generateWarmUpOpening(
   lessonType: LessonType,
@@ -477,11 +476,11 @@ export async function askJaviWarmUp(
   const anthropic = getClient();
   const model = getModel();
   const nextMessage = javiMessageNumber + 1;
-  const minMessages = 5;
+  const maxMessages = 4;
   const progressHint =
-    javiMessageNumber < minMessages
-      ? `You have sent ${javiMessageNumber} warm-up message(s). You need at least ${minMessages} before [READY_FOR_WRITING]. Continue teaching with examples and questions — this is message ${nextMessage}.`
-      : `You have sent ${javiMessageNumber} warm-up message(s). If you have covered why the topic matters, given at least 3 examples, asked a comprehension question, and confirmed the learner is ready, you may end this message with [READY_FOR_WRITING]. Otherwise keep teaching — message ${nextMessage}.`;
+    javiMessageNumber < maxMessages - 1
+      ? `Phase 1 message ${nextMessage} of ${maxMessages}. Stay concise — max 2-3 sentences. Do not use [READY_FOR_WRITING] yet.`
+      : `Phase 1 message ${nextMessage} of ${maxMessages}. This is your final warm-up message — confirm understanding and end with [READY_FOR_WRITING].`;
 
   const response = await anthropic.messages.create({
     model,
@@ -514,17 +513,15 @@ export async function generateSpeakingIntro(
     messages: [
       {
         role: 'user',
-        content: `The learner just finished a WRITING task on a topic. Now start the independent SPEAKING phase.
+        content: `The learner just finished a WRITING task. Now start the independent SPEAKING phase (voice only).
 
-Writing task they completed (same topic — do NOT ask them to repeat or remember this):
+Writing task they completed (same topic — do NOT ask them to repeat it):
 ${writingTaskPrompt}
 
-Your spoken intro MUST follow this structure in Spanish (then Translate: line):
-1) "Ahora vamos a hablar." 
-2) Brief English encouragement on its own line: "Now let's talk. Forget what you wrote — just speak naturally."
-3) A FRESH related question — same theme, different angle. NOT the same question as the writing task.
-   Example: if writing was "Describe what you did last weekend", speaking could be "What was the best part of your weekend and why?"
-4) Keep the Spanish portion to 2–3 short sentences total. End with Translate: line.`,
+Your spoken intro in Spanish (then Translate: line):
+1) "Ahora vamos a hablar." + brief encouragement to speak naturally, not read what they wrote.
+2) One fresh related question — same theme, different angle from the writing task.
+Keep the entire Spanish portion to 1-2 short sentences total. End with Translate: line.`,
       },
     ],
   });
@@ -538,17 +535,25 @@ export async function askJaviSpeakingConversation(
   priorExchanges: JaviMessage[],
   focus: LessonFocusContext,
   speakingTopic: string,
+  exchangeNumber: number,
+  maxExchanges: number = 3,
   topErrors: ErrorDNAInput[] = [],
   interleaving?: InterleavingContext,
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
 
+  const exchangeHint =
+    exchangeNumber >= maxExchanges
+      ? `Speaking exchange ${exchangeNumber} of ${maxExchanges} — FINAL exchange. Reply in 1-2 sentences only. Wrap up warmly with no new question.`
+      : `Speaking exchange ${exchangeNumber} of ${maxExchanges}. Reply in 1-2 sentences with one short follow-up question.`;
+
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 280,
+    max_tokens: 180,
     system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}
-Today's speaking theme (keep conversation on this topic): ${speakingTopic}`,
+Today's speaking theme (keep conversation on this topic): ${speakingTopic}
+${exchangeHint}`,
     messages: [
       ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
       { role: 'user' as const, content: userMessage.trim() },
