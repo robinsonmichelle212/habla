@@ -22,6 +22,10 @@ import {
   type QuickFireQuestion,
 } from '@/lib/claude';
 import { getTopErrorDNA, getWordOrderErrorDNA } from '@/lib/error-dna';
+import {
+  getActiveFocusTipsForDrill,
+  markFocusTipsUsedInDrill,
+} from '@/lib/current-focus-tips';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import {
   DRILL_OVERRIDE_OPTIONS,
@@ -281,6 +285,7 @@ export default function PracticeScreen() {
         week: number | null,
         fallback?: () => QuickFireQuestion[],
       ): Promise<QuickFireQuestion[] | null> => {
+        if (focusTipsForDrill) return null;
         const cached = await getCachedPracticeQuestions(drillKind, week);
         if (cached?.length) return cached;
         if (!online && fallback) return fallback();
@@ -288,6 +293,7 @@ export default function PracticeScreen() {
       };
 
       const errorDnaTargets = await getTopErrorDNA(2);
+      const focusTipsForDrill = await getActiveFocusTipsForDrill();
       const lessonHistory = await getLessonHistory();
       const drillPlan = buildInterleavedDrillPlan(
         priorityWeakAreas,
@@ -309,9 +315,21 @@ export default function PracticeScreen() {
           }
           return [];
         }
-        const batch = await generateInterleavedPracticeQuestions(interleavedPlan, errorDnaTargets);
+        const batch = await generateInterleavedPracticeQuestions(
+          interleavedPlan,
+          errorDnaTargets,
+          focusTipsForDrill
+            ? {
+                tips: focusTipsForDrill.tips,
+                grammarFocus: focusTipsForDrill.grammarFocus,
+              }
+            : null,
+        );
         if (batch.length) {
           await cachePracticeQuestions(effectiveDrill, grammarWeek, batch);
+          if (focusTipsForDrill) {
+            await markFocusTipsUsedInDrill();
+          }
         }
         return batch;
       };
@@ -778,7 +796,9 @@ export default function PracticeScreen() {
               </Text>
 
               <View style={[styles.questionCard, flash === 'correct' && styles.flashGreenCard, flash === 'incorrect' && styles.flashRedCard]}>
-                {currentQuestion.kind === 'quick' && currentQuestion.question.focusLabel ? (
+                {currentQuestion.kind === 'quick' && currentQuestion.question.targetsFocusTip ? (
+                  <Text style={styles.focusTipLabel}>🎯 Javi&apos;s focus area</Text>
+                ) : currentQuestion.kind === 'quick' && currentQuestion.question.focusLabel ? (
                   <Text style={styles.focusLabel}>{currentQuestion.question.focusLabel}</Text>
                 ) : null}
                 {currentQuestion.kind === 'quick' && currentQuestion.question.targetsErrorDna ? (
@@ -1113,6 +1133,13 @@ const styles = StyleSheet.create({
     color: palette.blue,
     marginBottom: 6,
     letterSpacing: 0.3,
+  },
+  focusTipLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: palette.accent,
+    marginBottom: 6,
+    letterSpacing: 0.2,
   },
   questionType: {
     fontSize: 12,

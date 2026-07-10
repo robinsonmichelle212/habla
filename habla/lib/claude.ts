@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dna';
+import { formatFocusTipsForDrillPrompt } from '@/lib/current-focus-tips';
 
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import type { InterleavingContext } from '@/lib/interleaving';
@@ -1220,11 +1221,22 @@ export async function generateDailyThinkingChallenge(
   summary: DailyChallengeSummaryInput,
   challengeType: ChallengeType,
   recentChallenges: string[],
+  focusTips?: string[],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
   const typeDef = CHALLENGE_TYPE_TEMPLATES[challengeType];
   const grammarTopic = summary.grammarTopic ?? summary.lessonFocus ?? 'today\'s grammar';
+
+  const focusTipsBlock =
+    focusTips && focusTips.length > 0
+      ? `
+Generate a thinking challenge that relates to one of these focus tips:
+${focusTips.map((t) => `- ${t}`).join('\n')}
+The challenge should help the user practise this specific area in their daily life.
+Example: If a tip is "dropping subject pronouns" → "Today when you think in Spanish deliberately drop the subject pronoun every time. Instead of 'yo tengo' just think 'tengo'."
+`
+      : '';
 
   const system = `You are Javi, a Spanish tutor helping a B1 learner build the habit of thinking in Spanish outside the app.
 Return ONLY the challenge text — one sentence, plain English, no markdown, no quotes, no labels.`;
@@ -1239,6 +1251,7 @@ ${
     ? `Replace [current week topic] with: ${grammarTopic}`
     : ''
 }
+${focusTipsBlock}
 
 It must:
 - Take no more than 30 seconds of active effort
@@ -1516,6 +1529,7 @@ export type QuickFireQuestion = {
   expectedAnswer: string;
   acceptableAnswers?: string[];
   targetsErrorDna?: boolean;
+  targetsFocusTip?: boolean;
   focusLabel?: string;
   wordOrderSubtype?: WordOrderSubtype;
   constructionTag?: string;
@@ -1707,9 +1721,15 @@ export type InterleavedDrillPlan = {
   preview: string;
 };
 
+export type FocusTipsDrillInput = {
+  tips: string[];
+  grammarFocus: string;
+};
+
 export async function generateInterleavedPracticeQuestions(
   plan: InterleavedDrillPlan,
   errorDnaTargets: ErrorDNAInput[] = [],
+  focusTips?: FocusTipsDrillInput | null,
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
@@ -1721,6 +1741,17 @@ export async function generateInterleavedPracticeQuestions(
 Up to 2 questions may target these recurring user errors:
 ${formatErrorDnaForDrillPrompt(errorDnaTargets)}
 For those set "targetsErrorDna": true.`
+      : '';
+
+  const focusTipsBlock =
+    focusTips && focusTips.tips.length > 0
+      ? `
+The user's current focus tips from their last lesson are:
+${formatFocusTipsForDrillPrompt(focusTips.tips)}
+Grammar focus: ${focusTips.grammarFocus}
+
+Generate drill questions that specifically target these exact areas. At least 4 of the ${count} questions must directly address one of these tips.
+For those questions set "targetsFocusTip": true.`
       : '';
 
   const system = `You are Javi, a Spanish tutor creating interleaved B1 drill questions.
@@ -1737,6 +1768,7 @@ Distribution (each question MUST include a short focusLabel):
 - 1 PREVIEW question on next grammar topic: "${plan.preview}"
 
 ${errorDnaBlock}
+${focusTipsBlock}
 
 Question types — vary across: fill_blank, translate_word, correct_mistake, choose_word, quick_translate, conjugate, choose_tense, translate_tense, reorder_words, spot_structure_error, complete_structure, choose_construction.
 
@@ -1757,7 +1789,8 @@ Return JSON exactly:
       "expectedAnswer": "...",
       "acceptableAnswers": ["..."],
       "focusLabel": "Preterite",
-      "targetsErrorDna": false
+      "targetsErrorDna": false,
+      "targetsFocusTip": false
     }
   ]
 }
@@ -1789,6 +1822,7 @@ Valid type values: ${QUICK_FIRE_TYPES.join(', ')}`;
         ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
         : undefined,
       targetsErrorDna: Boolean(q.targetsErrorDna),
+      targetsFocusTip: Boolean(q.targetsFocusTip),
       focusLabel: typeof q.focusLabel === 'string' ? q.focusLabel.trim() : undefined,
     }));
 }

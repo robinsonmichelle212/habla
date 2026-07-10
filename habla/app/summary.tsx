@@ -4,6 +4,12 @@ import { SummaryScoreRing } from '@/components/summary-score-ring';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
 import { getRecentChallengeTexts, resolveChallengeTypeForLesson, saveDailyChallenge } from '@/lib/daily-challenge';
+import {
+  buildFocusTipsFromAnalysis,
+  getActiveFocusTipsForChallenge,
+  markFocusTipsUsedInChallenge,
+  saveFocusTipsFromSummaryIfExpired,
+} from '@/lib/current-focus-tips';
 import { useSummaryReveal } from '@/hooks/use-summary-reveal';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, calculateLessonGems, getTotalGems, OFFLINE_SPEAKING_ATTEMPT_GEMS } from '@/lib/gems';
@@ -318,15 +324,17 @@ function SummaryScreenInner({
             didGenerateChallengeRef.current = true;
             setChallengeLoading(true);
             void (async () => {
+              const focus = session.lessonFocus
+                ? lessonFocusLabel(session.lessonFocus)
+                : undefined;
+              const grammarTopic =
+                session.lessonFocus?.kind === 'grammar'
+                  ? session.lessonFocus.topic
+                  : undefined;
+
               try {
                 const recent = await getRecentChallengeTexts();
-                const focus = session.lessonFocus
-                  ? lessonFocusLabel(session.lessonFocus)
-                  : undefined;
-                const grammarTopic =
-                  session.lessonFocus?.kind === 'grammar'
-                    ? session.lessonFocus.topic
-                    : undefined;
+                const focusTipsForChallenge = await getActiveFocusTipsForChallenge();
                 const challengeType = await resolveChallengeTypeForLesson(lessonType);
                 const text = await generateDailyThinkingChallenge(
                   {
@@ -341,11 +349,26 @@ function SummaryScreenInner({
                   },
                   challengeType,
                   recent,
+                  focusTipsForChallenge?.tips,
                 );
                 await saveDailyChallenge(text, challengeType);
+                if (focusTipsForChallenge) {
+                  await markFocusTipsUsedInChallenge();
+                }
                 setDailyChallengeText(text);
               } catch {
                 setDailyChallengeText(null);
+              }
+
+              try {
+                await saveFocusTipsFromSummaryIfExpired(
+                  buildFocusTipsFromAnalysis(analysis, {
+                    grammarTopic,
+                    lessonFocus: focus,
+                  }),
+                );
+              } catch {
+                // Non-blocking: focus tips should not block summary.
               } finally {
                 setChallengeLoading(false);
               }
