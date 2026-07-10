@@ -1,5 +1,4 @@
 import { AppTextInput } from '@/components/app-text-input';
-import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { getUserName } from '@/lib/onboarding-storage';
 import {
   buildVerbSetsForUser,
@@ -18,10 +17,6 @@ import {
   walkthroughRetryMessage,
   walkthroughSuccessMessage,
 } from '@/lib/memory-palace';
-import { speakEnglish, stopJaviSpeech } from '@/lib/javi-speech';
-import { ensureMicPermission } from '@/lib/mic-permission';
-import { MIN_RECORDING_MS, startVoiceRecording, stopVoiceRecording } from '@/lib/voice-recording';
-import { transcribeSpanishAudio } from '@/lib/whisper';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -31,6 +26,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  type TextStyle,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -48,34 +44,77 @@ const palette = {
   greenBg: 'rgba(52, 211, 153, 0.12)',
 };
 
+const WALKTHROUGH_MS_PER_WORD = 130;
+const PROMPT_MS_PER_WORD = 70;
+
 type SessionPhase = 'walkthrough' | 'quiz' | 'free-recall' | 'complete';
 type StepMode = 'prompt' | 'feedback';
 
-function PalaceMic({ onTranscript }: { onTranscript: (text: string) => void }) {
-  const [state, setState] = useState<VoiceButtonState>('idle');
+function splitWords(text: string): string[] {
+  return text.trim().split(/\s+/).filter(Boolean);
+}
+
+function TypingText({
+  text,
+  animate,
+  msPerWord,
+  onComplete,
+  style,
+}: {
+  text: string;
+  animate: boolean;
+  msPerWord: number;
+  onComplete?: () => void;
+  style?: TextStyle;
+}) {
+  const words = useMemo(() => splitWords(text), [text]);
+  const [visibleCount, setVisibleCount] = useState(animate ? 0 : words.length);
+  const completedRef = useRef(false);
+
+  useEffect(() => {
+    completedRef.current = false;
+    if (!words.length) {
+      setVisibleCount(0);
+      onComplete?.();
+      return;
+    }
+
+    if (!animate) {
+      setVisibleCount(words.length);
+      if (!completedRef.current) {
+        completedRef.current = true;
+        onComplete?.();
+      }
+      return;
+    }
+
+    setVisibleCount(0);
+    let index = 0;
+    const id = setInterval(() => {
+      index += 1;
+      if (index >= words.length) {
+        setVisibleCount(words.length);
+        clearInterval(id);
+        if (!completedRef.current) {
+          completedRef.current = true;
+          onComplete?.();
+        }
+      } else {
+        setVisibleCount(index);
+      }
+    }, msPerWord);
+
+    return () => clearInterval(id);
+  }, [animate, msPerWord, onComplete, words]);
+
+  const display = words.slice(0, visibleCount).join(' ');
+  const stillTyping = animate && visibleCount < words.length;
 
   return (
-    <PushToTalkButton
-      state={state}
-      disabled={state === 'processing'}
-      onPressIn={async () => {
-        const permission = await ensureMicPermission();
-        if (!permission.granted) return;
-        await startVoiceRecording();
-        setState('recording');
-      }}
-      onPressOut={async () => {
-        setState('processing');
-        const { uri, durationMs } = await stopVoiceRecording();
-        if (!uri || durationMs < MIN_RECORDING_MS) {
-          setState('idle');
-          return;
-        }
-        const result = await transcribeSpanishAudio(uri);
-        setState('idle');
-        if (result.ok && result.text.trim()) onTranscript(result.text.trim());
-      }}
-    />
+    <Text style={style}>
+      {display}
+      {stillTyping ? <Text style={styles.typingCursor}> ▍</Text> : null}
+    </Text>
   );
 }
 
@@ -97,10 +136,10 @@ export default function MemoryPalaceScreen() {
   const [feedback, setFeedback] = useState('');
   const [answer, setAnswer] = useState('');
   const [javiLine, setJaviLine] = useState('');
-  const didSpeakRef = useRef(false);
+  const [promptReady, setPromptReady] = useState(false);
+  const [promptKey, setPromptKey] = useState(0);
 
   const leavePalace = useCallback(() => {
-    stopJaviSpeech();
     if (verbSetId) {
       router.replace('/memory-palace' as Href);
     } else {
@@ -120,8 +159,6 @@ export default function MemoryPalaceScreen() {
     })();
   }, []);
 
-  useEffect(() => () => stopJaviSpeech(), []);
-
   useEffect(() => {
     if (!verbSetId || loading) return;
     const all = buildVerbSetsForUser(userName);
@@ -132,7 +169,8 @@ export default function MemoryPalaceScreen() {
     setStepMode('prompt');
     setAnswer('');
     setFeedback('');
-    didSpeakRef.current = false;
+    setPromptReady(false);
+    setPromptKey((k) => k + 1);
   }, [verbSetId, loading, userName]);
 
   const currentSlot: PalaceSlot | null = verbSet?.slots[stepIndex] ?? null;
@@ -150,28 +188,38 @@ export default function MemoryPalaceScreen() {
     }
   }, [phase]);
 
+  const msPerWord = phase === 'walkthrough' ? WALKTHROUGH_MS_PER_WORD : PROMPT_MS_PER_WORD;
+
   useEffect(() => {
-    if (!verbSet || !currentSlot || stepMode !== 'prompt') return;
-    if (didSpeakRef.current) return;
+    if (!verbSet || stepMode !== 'prompt') return;
 
     let line = '';
-    if (phase === 'walkthrough') {
+    if (phase === 'complete') {
+      line = `Beautiful work, ${userName}. This palace is yours now. Come back whenever a verb won't stay.`;
+    } else if (!currentSlot) {
+      return;
+    } else if (phase === 'walkthrough') {
       line = currentSlot.walkthroughScene;
     } else if (phase === 'quiz') {
       line = currentSlot.quizPrompt;
     } else if (phase === 'free-recall') {
       line = stepIndex === 0 ? freeRecallIntro(userName) : freeRecallPrompt(currentSlot, stepIndex);
     }
+
     setJaviLine(line);
-    didSpeakRef.current = true;
-    void speakEnglish(line);
+    setPromptReady(false);
+    setPromptKey((k) => k + 1);
   }, [verbSet, currentSlot, phase, stepIndex, stepMode, userName]);
 
+  const handlePromptComplete = useCallback(() => {
+    setPromptReady(true);
+  }, []);
+
   const advanceStep = () => {
-    didSpeakRef.current = false;
     setAnswer('');
     setFeedback('');
     setStepMode('prompt');
+    setPromptReady(false);
 
     if (!verbSet) return;
     if (stepIndex < verbSet.slots.length - 1) {
@@ -182,8 +230,6 @@ export default function MemoryPalaceScreen() {
     setStepIndex(0);
     if (phase === 'walkthrough') {
       setPhase('quiz');
-      setJaviLine('Good. Take a breath. Now I will ask about each item — no rush.');
-      void speakEnglish('Good. Take a breath. Now I will ask about each item. There is no rush here.');
       return;
     }
     if (phase === 'quiz') {
@@ -195,17 +241,13 @@ export default function MemoryPalaceScreen() {
         setVisited((prev) => (prev.includes(verbSet.id) ? prev : [...prev, verbSet.id]));
       });
       setPhase('complete');
-      const doneLine = `Beautiful work, ${userName}. This palace is yours now. Come back whenever a verb won't stay.`;
-      setJaviLine(doneLine);
-      void speakEnglish(doneLine);
     }
   };
 
-  const submitAnswer = (spokenText?: string) => {
-    if (!currentSlot || stepMode === 'feedback') return;
-    const trimmed = (spokenText ?? answer).trim();
+  const submitAnswer = () => {
+    if (!currentSlot || stepMode === 'feedback' || !promptReady) return;
+    const trimmed = answer.trim();
     if (!trimmed) return;
-    if (spokenText) setAnswer(spokenText);
 
     const correct = checkPalaceAnswer(currentSlot, trimmed);
     if (phase === 'walkthrough') {
@@ -255,7 +297,7 @@ export default function MemoryPalaceScreen() {
           <Text style={styles.subtitle}>Walk through your kitchen and meet your verbs.</Text>
           <Text style={styles.explainer}>
             Each item in your kitchen holds a conjugation. Visit each one. Let the scene stick. Come back
-            whenever a verb won&apos;t stay in your head.
+            whenever a verb won&apos;t stay in your head. Read quietly — type your answers. No rush.
           </Text>
 
           {groups.length === 0 ? (
@@ -307,6 +349,9 @@ export default function MemoryPalaceScreen() {
     );
   }
 
+  const showInput =
+    phase !== 'complete' && currentSlot && stepMode === 'prompt' && promptReady;
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
@@ -323,13 +368,28 @@ export default function MemoryPalaceScreen() {
         <ScrollView contentContainerStyle={styles.sessionScroll} showsVerticalScrollIndicator={false}>
           <View style={styles.javiCard}>
             <Text style={styles.javiLabel}>Javi · calm guide</Text>
-            <Text style={styles.javiText}>{javiLine}</Text>
-            {phase !== 'complete' ? (
-              <Text style={styles.javiHint}>Take your time. Say it again — let it stick.</Text>
+            <TypingText
+              key={promptKey}
+              text={javiLine}
+              animate
+              msPerWord={msPerWord}
+              onComplete={handlePromptComplete}
+              style={styles.javiText}
+            />
+            {phase !== 'complete' && !promptReady ? (
+              <Text style={styles.javiHint}>Read slowly. Let the image form.</Text>
+            ) : phase !== 'complete' ? (
+              <Text style={styles.javiHint}>Take your time. Type the conjugation when you&apos;re ready.</Text>
             ) : null}
           </View>
 
-          {phase !== 'complete' && currentSlot && stepMode === 'prompt' ? (
+          {!promptReady && phase !== 'complete' && stepMode === 'prompt' ? (
+            <View style={styles.waitingCard}>
+              <Text style={styles.waitingText}>Reading the scene…</Text>
+            </View>
+          ) : null}
+
+          {showInput ? (
             <View style={styles.inputCard}>
               <Text style={styles.inputLabel}>
                 {phase === 'free-recall'
@@ -344,14 +404,13 @@ export default function MemoryPalaceScreen() {
                 placeholderTextColor={palette.muted}
                 autoCapitalize="none"
                 autoCorrect={false}
-                onSubmitEditing={() => submitAnswer()}
+                onSubmitEditing={submitAnswer}
               />
-              <PalaceMic onTranscript={(text) => submitAnswer(text)} />
               <Pressable
-                onPress={() => submitAnswer()}
+                onPress={submitAnswer}
                 disabled={!answer.trim()}
                 style={[styles.primaryBtn, !answer.trim() && styles.primaryBtnDisabled]}>
-                <Text style={styles.primaryBtnText}>Say it</Text>
+                <Text style={styles.primaryBtnText}>Check</Text>
               </Pressable>
             </View>
           ) : null}
@@ -366,8 +425,9 @@ export default function MemoryPalaceScreen() {
               {!feedback.startsWith('✅') ? (
                 <Pressable
                   onPress={() => {
-                    didSpeakRef.current = false;
                     setStepMode('prompt');
+                    setPromptReady(false);
+                    setPromptKey((k) => k + 1);
                   }}
                   style={styles.retryBtn}>
                   <Text style={styles.retryBtnText}>Try again</Text>
@@ -376,7 +436,7 @@ export default function MemoryPalaceScreen() {
             </View>
           ) : null}
 
-          {phase === 'complete' ? (
+          {phase === 'complete' && promptReady ? (
             <Pressable onPress={leavePalace} style={styles.primaryBtn}>
               <Text style={styles.primaryBtnText}>Return to palace hall</Text>
             </Pressable>
@@ -458,6 +518,16 @@ const styles = StyleSheet.create({
   },
   javiText: { fontSize: 16, fontWeight: '600', color: palette.text, lineHeight: 24 },
   javiHint: { fontSize: 13, fontWeight: '600', color: palette.muted, fontStyle: 'italic' },
+  typingCursor: { color: palette.accent, fontWeight: '400' },
+  waitingCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    padding: 14,
+    alignItems: 'center',
+  },
+  waitingText: { fontSize: 13, fontWeight: '600', color: palette.muted, fontStyle: 'italic' },
   inputCard: {
     backgroundColor: palette.surface,
     borderRadius: 14,
