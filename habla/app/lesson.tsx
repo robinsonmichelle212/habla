@@ -154,6 +154,7 @@ const WARMUP_MAX_JAVI_MESSAGES = 4;
 const SPEAKING_USER_TURNS = 3;
 const MAX_FEYNMAN_ATTEMPTS = 2;
 const SPEAKING_SKIP_LINK_MS = 30_000;
+const FINISH_ESCAPE_MS = 12_000;
 const FINISH_FALLBACK_NOTICE = 'Almost there — let\'s see your results 📊';
 const SPEAKING_TIMEOUT_NOTICE = 'Taking longer than expected — moving to summary';
 
@@ -228,12 +229,23 @@ export default function LessonScreen() {
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
   const [finishing, setFinishing] = useState(false);
   const [showSkipToSummary, setShowSkipToSummary] = useState(false);
+  const [showFinishingEscape, setShowFinishingEscape] = useState(false);
   const [showJaviRevealPanel, setShowJaviRevealPanel] = useState(false);
   const [phaseTransitionNotice, setPhaseTransitionNotice] = useState<string | null>(null);
-  const finishLessonRef = useRef<(speaking?: SpeakingEvaluation, notice?: string) => Promise<void>>(
-    async () => {},
-  );
+  const finishLessonRef = useRef<
+    (speaking?: SpeakingEvaluation, notice?: string, options?: { force?: boolean }) => Promise<void>
+  >(async () => {});
   const pendingSpeakingEvalRef = useRef<SpeakingEvaluation | null>(null);
+  const finishingRef = useRef(false);
+  const navigatedToSummaryRef = useRef(false);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (phase !== 'speaking') {
@@ -243,6 +255,15 @@ export default function LessonScreen() {
     const timer = setTimeout(() => setShowSkipToSummary(true), SPEAKING_SKIP_LINK_MS);
     return () => clearTimeout(timer);
   }, [phase]);
+
+  useEffect(() => {
+    if (!finishing) {
+      setShowFinishingEscape(false);
+      return;
+    }
+    const timer = setTimeout(() => setShowFinishingEscape(true), FINISH_ESCAPE_MS);
+    return () => clearTimeout(timer);
+  }, [finishing]);
 
   voiceStateRef.current = voiceState;
   speakingStepRef.current = speakingStep;
@@ -355,11 +376,12 @@ export default function LessonScreen() {
     async (text: string) => {
       const spanish = safeSpanish(text);
       if (!spanish) return;
+      if (!mountedRef.current) return;
       setVoiceStateSafe('javi-speaking');
       try {
         await speakJavi(spanish);
       } finally {
-        if (voiceStateRef.current === 'javi-speaking') {
+        if (mountedRef.current && voiceStateRef.current === 'javi-speaking') {
           setVoiceStateSafe('idle');
         }
       }
@@ -523,6 +545,7 @@ export default function LessonScreen() {
 
   useEffect(() => {
     return () => {
+      if (navigatedToSummaryRef.current) return;
       stopJaviSpeech();
       void stopVoiceRecording();
     };
@@ -931,13 +954,17 @@ export default function LessonScreen() {
   };
 
   const skipToSummary = () => {
-    if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
+    if (!lessonFocus || !writingResult || !writingPrompt) return;
     stopJaviSpeech();
-    const pendingSpeaking = buildPendingSpeakingEvaluation(
-      speakingUserTurns,
-      'Skipped to summary — speaking score pending.',
-    );
-    void finishLessonRef.current(pendingSpeaking, 'Skipping to summary…');
+    const pendingSpeaking =
+      pendingSpeakingEvalRef.current ??
+      buildPendingSpeakingEvaluation(
+        speakingUserTurns,
+        'Skipped to summary — speaking score pending.',
+      );
+    navigatedToSummaryRef.current = false;
+    finishingRef.current = false;
+    void finishLessonRef.current(pendingSpeaking, 'Skipping to summary…', { force: true });
   };
 
   const processOfflineSpeakingTurn = async (audioUri: string, nextTurn: number) => {
@@ -1133,6 +1160,9 @@ export default function LessonScreen() {
       analysis: ReturnType<typeof buildOfflineLessonAnalysis>;
       notice?: string;
     }) => {
+      if (navigatedToSummaryRef.current) return;
+      navigatedToSummaryRef.current = true;
+
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
 
@@ -1150,9 +1180,12 @@ export default function LessonScreen() {
         demoSession: demoModeRef.current || getLessonSession().demoSession,
       });
 
-      const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
+      router.push('/summary');
 
-      if (!isDemoSession) {
+      const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
+      if (isDemoSession) return;
+
+      void (async () => {
         try {
           const payload = buildSafeSummaryPayload(getLessonSession());
           await saveLastSummary(payload);
@@ -1182,9 +1215,7 @@ export default function LessonScreen() {
             speaking: params.speakingEvaluation,
           }).catch(() => {});
         }
-      }
-
-      router.push('/summary');
+      })();
     },
     [
       lessonFocus,
@@ -1198,8 +1229,16 @@ export default function LessonScreen() {
   );
 
   const finishLesson = useCallback(
-    async (speakingOverride?: SpeakingEvaluation, notice?: string) => {
-      if (finishing || !lessonFocus || !writingResult || !writingPrompt) return;
+    async (
+      speakingOverride?: SpeakingEvaluation,
+      notice?: string,
+      options?: { force?: boolean },
+    ) => {
+      if (!lessonFocus || !writingResult || !writingPrompt) return;
+      if (navigatedToSummaryRef.current) return;
+      if (finishingRef.current && !options?.force) return;
+
+      finishingRef.current = true;
       setFinishing(true);
       stopJaviSpeech();
 
@@ -1213,9 +1252,38 @@ export default function LessonScreen() {
         structureScore: writingResult.structureScore,
       };
 
+      const navigateWithFallback = async (params: {
+        speakingEvaluation: SpeakingEvaluation;
+        analysis: ReturnType<typeof buildOfflineLessonAnalysis>;
+        notice?: string;
+      }) => {
+        try {
+          await navigateToSummary(params);
+        } catch (navErr) {
+          console.error('[Habla] navigateToSummary failed:', navErr);
+          if (!navigatedToSummaryRef.current) {
+            setLessonSession({
+              lessonType,
+              lessonFocus,
+              warmUpConversation: warmUpTurns,
+              speakingConversation: speakingTurns,
+              conversation: [...warmUpTurns, ...speakingTurns],
+              writingTask: { prompt: writingPrompt },
+              writingEvaluation: writingResult,
+              speakingEvaluation: params.speakingEvaluation,
+              analysis: params.analysis,
+              summaryNotice: params.notice,
+              demoSession: demoModeRef.current || getLessonSession().demoSession,
+            });
+            navigatedToSummaryRef.current = true;
+            router.push('/summary');
+          }
+        }
+      };
+
       try {
         if (demoModeRef.current) {
-          await navigateToSummary({
+          await navigateWithFallback({
             speakingEvaluation: speakingOverride ?? demoSpeakingEvaluation(),
             analysis: demoLessonAnalysis(),
             notice: DEMO_SESSION_NOTICE,
@@ -1261,7 +1329,7 @@ export default function LessonScreen() {
             processed: false,
           });
 
-          await navigateToSummary({
+          await navigateWithFallback({
             speakingEvaluation,
             analysis,
             notice: transitionNotice,
@@ -1305,7 +1373,7 @@ export default function LessonScreen() {
             writingPrompt,
             speaking: speakingEvaluation,
           });
-          await navigateToSummary({
+          await navigateWithFallback({
             speakingEvaluation,
             analysis,
             notice: transitionNotice ?? FINISH_FALLBACK_NOTICE,
@@ -1416,7 +1484,7 @@ export default function LessonScreen() {
           });
         }
 
-        await navigateToSummary({
+        await navigateWithFallback({
           speakingEvaluation,
           analysis,
           notice: transitionNotice,
@@ -1433,21 +1501,24 @@ export default function LessonScreen() {
           writingPrompt,
           speaking: speakingEvaluation,
         });
-        await navigateToSummary({
+        await navigateWithFallback({
           speakingEvaluation,
           analysis,
           notice: transitionNotice ?? FINISH_FALLBACK_NOTICE,
         });
       } finally {
-        setFinishing(false);
+        if (!navigatedToSummaryRef.current) {
+          finishingRef.current = false;
+          setFinishing(false);
+        }
       }
     },
     [
-      finishing,
       lessonFocus,
       lessonType,
       navigateToSummary,
       phaseTransitionNotice,
+      router,
       speakingMessages,
       speakingUserTurns,
       warmUpMessages,
@@ -1855,6 +1926,15 @@ export default function LessonScreen() {
                 accessibilityRole="button"
                 accessibilityLabel="Skip to summary">
                 <Text style={styles.skipToSummaryText}>Skip to summary →</Text>
+              </Pressable>
+            ) : null}
+            {finishing && showFinishingEscape ? (
+              <Pressable
+                onPress={skipToSummary}
+                style={({ pressed }) => [styles.skipToSummaryLink, pressed && styles.skipToSummaryPressed]}
+                accessibilityRole="button"
+                accessibilityLabel="Continue to summary">
+                <Text style={styles.skipToSummaryText}>Continue to summary →</Text>
               </Pressable>
             ) : null}
           </View>

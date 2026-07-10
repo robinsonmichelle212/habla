@@ -34,7 +34,7 @@ import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { lessonTypeLabel, upsertLessonHistoryEntry, getLessonHistory } from '@/lib/practice-storage';
 import { getLevelBarometer } from '@/lib/level-progress';
-import { offerMilestoneCelebrationQuiz } from '@/lib/milestone-quiz-navigation';
+import { queueMilestoneQuizzesFromCelebrations } from '@/lib/milestone-celebration-quiz';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -142,7 +142,6 @@ function SummaryScreenInner({
   payload: SafeSummaryPayload;
   onGoHome: () => void;
 }) {
-  const router = useRouter();
   const insets = useSafeAreaInsets();
   const session = payload.session;
   const analysis = payload.analysis;
@@ -404,34 +403,41 @@ function SummaryScreenInner({
         ];
         if (allCelebrations.length > 0) {
           pendingCelebrationsRef.current = allCelebrations;
-          celebrate(allCelebrations, {
-            onAllDismissed: () => {
-              const milestoneGems = pendingCelebrationsRef.current.reduce(
-                (sum, c) => sum + c.gemsAwarded,
-                0,
-              );
-              if (milestoneGems > 0) {
-                setGemsEarned((prev) => prev + milestoneGems);
-                Animated.sequence([
-                  Animated.timing(milestoneGemPulse, {
-                    toValue: 1.22,
-                    duration: 180,
-                    useNativeDriver: true,
-                  }),
-                  Animated.timing(milestoneGemPulse, {
-                    toValue: 1,
-                    duration: 220,
-                    useNativeDriver: true,
-                  }),
-                ]).start();
-              }
-              const celebrationsSnapshot = [...pendingCelebrationsRef.current];
-              pendingCelebrationsRef.current = [];
-              void offerMilestoneCelebrationQuiz(router, celebrationsSnapshot, {
-                levelLabel: levelUpLabel,
-              });
-            },
-          });
+          try {
+            celebrate(allCelebrations, {
+              onAllDismissed: () => {
+                const milestoneGems = pendingCelebrationsRef.current.reduce(
+                  (sum, c) => sum + c.gemsAwarded,
+                  0,
+                );
+                if (milestoneGems > 0) {
+                  setGemsEarned((prev) => prev + milestoneGems);
+                  Animated.sequence([
+                    Animated.timing(milestoneGemPulse, {
+                      toValue: 1.22,
+                      duration: 180,
+                      useNativeDriver: true,
+                    }),
+                    Animated.timing(milestoneGemPulse, {
+                      toValue: 1,
+                      duration: 220,
+                      useNativeDriver: true,
+                    }),
+                  ]).start();
+                }
+                const celebrationsSnapshot = [...pendingCelebrationsRef.current];
+                pendingCelebrationsRef.current = [];
+                void queueMilestoneQuizzesFromCelebrations(celebrationsSnapshot, {
+                  levelLabel: levelUpLabel,
+                  achievedDate: today,
+                }).catch((quizErr) => {
+                  console.error('[Habla] milestone quiz queue failed:', quizErr);
+                });
+              },
+            });
+          } catch (celebrateErr) {
+            console.error('[Habla] milestone celebration failed:', celebrateErr);
+          }
         }
 
         void syncStreakReminder().catch(() => {
@@ -563,7 +569,7 @@ function SummaryScreenInner({
       <ScrollView
         contentContainerStyle={[
           styles.scrollContent,
-          { paddingBottom: 16 },
+          { paddingBottom: mode === 'summary' && hasAnalysis ? 88 : 16 },
         ]}
         showsVerticalScrollIndicator={false}>
         {!hasAnalysis ? (
@@ -1030,6 +1036,16 @@ function SummaryScreenInner({
             <Text style={styles.primaryButtonText}>Back to Home</Text>
           </Pressable>
         </View>
+      ) : hasAnalysis ? (
+        <View style={[styles.stickyHomeFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <Pressable
+            onPress={goHome}
+            style={({ pressed }) => [styles.stickyHomeButton, pressed && styles.stickyHomeButtonPressed]}
+            accessibilityRole="button"
+            accessibilityLabel="Back to home">
+            <Text style={styles.stickyHomeButtonText}>Back to Home</Text>
+          </Pressable>
+        </View>
       ) : null}
     </SafeAreaView>
   );
@@ -1074,6 +1090,30 @@ const styles = StyleSheet.create({
   skipOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 40,
+  },
+  stickyHomeFooter: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: 20,
+    paddingTop: 10,
+    backgroundColor: 'rgba(11, 15, 20, 0.94)',
+    borderTopWidth: 1,
+    borderTopColor: palette.surfaceBorder,
+    zIndex: 50,
+  },
+  stickyHomeButton: {
+    backgroundColor: palette.accent,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  stickyHomeButtonPressed: { backgroundColor: palette.accentPressed },
+  stickyHomeButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#0B0F14',
   },
   scoreSection: {
     alignItems: 'center',
