@@ -17,9 +17,11 @@ const DAILY_SESSIONS_KEY = 'dailySessions';
 export type MilestoneId =
   | 'three-sessions-day'
   | 'streak-7'
+  | 'streak-14'
   | 'streak-30'
   | 'streak-100'
   | 'personal-best'
+  | 'level-up'
   | 'grammar-complete';
 
 export type SessionType = 'lesson' | 'drill' | 'bonus';
@@ -77,6 +79,16 @@ export const MILESTONE_DEFINITIONS: MilestoneDef[] = [
     repeat: 'once',
   },
   {
+    id: 'streak-14',
+    name: '14 Day Streak',
+    emoji: '🔥',
+    description: 'Practice fourteen days in a row without missing a day.',
+    message: 'Two weeks straight. This is becoming real. 🔥 +1 🌟 +15 💎',
+    gems: 15,
+    stars: 1,
+    repeat: 'once',
+  },
+  {
     id: 'streak-30',
     name: '30 Day Streak',
     emoji: '🔥🔥',
@@ -105,6 +117,16 @@ export const MILESTONE_DEFINITIONS: MilestoneDef[] = [
     message: '', // filled dynamically
     gems: 5,
     stars: 0,
+    repeat: 'always',
+  },
+  {
+    id: 'level-up',
+    name: 'Level Up',
+    emoji: '📈',
+    description: 'Move up to a new B1→B2 level band.',
+    message: '',
+    gems: 25,
+    stars: 3,
     repeat: 'always',
   },
   {
@@ -246,6 +268,7 @@ export async function checkStreakMilestones(
   const celebrations: MilestoneCelebration[] = [];
   const map: Record<number, MilestoneId> = {
     7: 'streak-7',
+    14: 'streak-14',
     30: 'streak-30',
     100: 'streak-100',
   };
@@ -269,6 +292,14 @@ export async function checkPersonalBestMilestone(
   const def = defFor('personal-best');
   const message = `New personal best! ${Math.round(newScore)}% — your best ever. 🎯 +5 💎`;
   return grantMilestone('personal-best', today, { message });
+}
+
+export async function checkLevelUpMilestone(
+  newLevelLabel: string,
+  today: string = formatLocalDate(),
+): Promise<MilestoneCelebration | null> {
+  const message = `You levelled up to ${newLevelLabel}. Javi can see the progress. 📈 +25 💎`;
+  return grantMilestone('level-up', today, { message });
 }
 
 export function isGrammarCurriculumComplete(state: GrammarCurriculumState): boolean {
@@ -343,6 +374,12 @@ export async function getMilestoneProgress(): Promise<MilestoneProgressItem[]> {
           : `Currently on day ${streak.currentStreak}`;
         progressPercent = Math.min(100, Math.round((streak.currentStreak / 7) * 100));
         break;
+      case 'streak-14':
+        progressLabel = achieved
+          ? `Achieved ${latest?.achievedDate ?? ''}`
+          : `Currently on day ${streak.currentStreak}`;
+        progressPercent = Math.min(100, Math.round((streak.currentStreak / 14) * 100));
+        break;
       case 'streak-30':
         progressLabel = achieved
           ? `Achieved ${latest?.achievedDate ?? ''}`
@@ -365,6 +402,15 @@ export async function getMilestoneProgress(): Promise<MilestoneProgressItem[]> {
           progressLabel += ` · beaten ${pbCount} time${pbCount === 1 ? '' : 's'}`;
         }
         progressPercent = lessonBest != null ? 100 : 0;
+        break;
+      }
+      case 'level-up': {
+        const levelCount = records.length;
+        progressLabel =
+          levelCount > 0
+            ? `Levelled up ${levelCount} time${levelCount === 1 ? '' : 's'}`
+            : 'Keep practising to reach the next band';
+        progressPercent = levelCount > 0 ? 100 : 0;
         break;
       }
       case 'grammar-complete':

@@ -1,6 +1,7 @@
 import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
 import { ErrorDnaSection } from '@/components/error-dna-section';
 import { MilestonesSection } from '@/components/milestones-section';
+import { MilestoneQuizPendingSection } from '@/components/milestone-quiz-pending-section';
 import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
 import { useDemoMode } from '@/contexts/demo-mode-context';
 import {
@@ -16,7 +17,7 @@ import {
   TOTAL_CURRICULUM_WEEKS,
   type GrammarCurriculumState,
 } from '@/lib/grammar-curriculum';
-import { getMilestoneHistory } from '@/lib/milestones';
+import { getMilestoneHistory, MILESTONE_DEFINITIONS } from '@/lib/milestones';
 import {
   getCoveredVocabThemesFromStorage,
   getCoveredYourDayTopicsFromStorage,
@@ -211,7 +212,7 @@ export default function LevelScreen() {
   const grammarSummary = grammarCurriculum
     ? `Week ${grammarCurriculum.currentWeek} of ${TOTAL_CURRICULUM_WEEKS} — ${grammarCurriculum.currentTopic} · ${grammarDaysLeft} day${grammarDaysLeft === 1 ? '' : 's'} left`
     : '20-week grammar path';
-  const milestonesSummary = `${milestonesAchieved} of 6 achieved`;
+  const milestonesSummary = `${milestonesAchieved} of ${MILESTONE_DEFINITIONS.length} achieved`;
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -307,6 +308,14 @@ export default function LevelScreen() {
             expanded={!!expandedSections.milestones}
             onToggle={() => toggleSection('milestones')}>
             <MilestonesSection hideTitle />
+          </CollapsibleProfileSection>
+
+          <CollapsibleProfileSection
+            title="Celebration Quizzes 🎉"
+            summary="Personalised rewards after big milestones"
+            expanded={!!expandedSections.celebrationQuizzes}
+            onToggle={() => toggleSection('celebrationQuizzes')}>
+            <MilestoneQuizPendingSection />
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection

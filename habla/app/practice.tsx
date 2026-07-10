@@ -22,10 +22,12 @@ import {
   type QuickFireQuestion,
 } from '@/lib/claude';
 import { getTopErrorDNA, getWordOrderErrorDNA } from '@/lib/error-dna';
+import { offerMilestoneCelebrationQuiz } from '@/lib/milestone-quiz-navigation';
 import {
   getActiveFocusTipsForDrill,
   markFocusTipsUsedInDrill,
 } from '@/lib/current-focus-tips';
+import { getMilestoneQuizDrillQueue } from '@/lib/milestone-celebration-quiz';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import {
   DRILL_OVERRIDE_OPTIONS,
@@ -315,15 +317,21 @@ export default function PracticeScreen() {
           }
           return [];
         }
+        const drillQueue = await getMilestoneQuizDrillQueue();
         const batch = await generateInterleavedPracticeQuestions(
           interleavedPlan,
           errorDnaTargets,
           focusTipsForDrill
             ? {
-                tips: focusTipsForDrill.tips,
+                tips: [...focusTipsForDrill.tips, ...drillQueue],
                 grammarFocus: focusTipsForDrill.grammarFocus,
               }
-            : null,
+            : drillQueue.length
+              ? {
+                  tips: drillQueue,
+                  grammarFocus: 'Milestone quiz review',
+                }
+              : null,
         );
         if (batch.length) {
           await cachePracticeQuestions(effectiveDrill, grammarWeek, batch);
@@ -634,6 +642,7 @@ export default function PracticeScreen() {
                 setGemToastAmount(milestoneGems);
                 setShowGemToast(true);
               }
+              void offerMilestoneCelebrationQuiz(router, celebrations);
             },
           });
         }

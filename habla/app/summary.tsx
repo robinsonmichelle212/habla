@@ -20,11 +20,7 @@ import {
   DEMO_SESSION_NOTICE,
   scoreDemoDrillAnswer,
 } from '@/lib/demo-mode';
-import {
-  checkPersonalBestMilestone,
-  milestonesOnLessonComplete,
-  type MilestoneCelebration,
-} from '@/lib/milestones';
+import { checkPersonalBestMilestone, checkLevelUpMilestone, milestonesOnLessonComplete, type MilestoneCelebration } from '@/lib/milestones';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
 import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
@@ -36,7 +32,9 @@ import {
 } from '@/lib/summary-safe-data';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
-import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storage';
+import { lessonTypeLabel, upsertLessonHistoryEntry, getLessonHistory } from '@/lib/practice-storage';
+import { getLevelBarometer } from '@/lib/level-progress';
+import { offerMilestoneCelebrationQuiz } from '@/lib/milestone-quiz-navigation';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -376,9 +374,32 @@ function SummaryScreenInner({
           }
         }
 
+        let levelUpCelebration: MilestoneCelebration | null = null;
+        let levelUpLabel: string | undefined;
+        if (analysis && lessonType) {
+          const entry = buildLessonHistoryEntry();
+          if (entry) {
+            try {
+              const existing = await getLessonHistory();
+              const before = getLevelBarometer(existing);
+              const withoutDup = existing.filter(
+                (e) => !(e.date === entry.date && e.lessonType === entry.lessonType),
+              );
+              const after = getLevelBarometer([...withoutDup, entry]);
+              if (after && before && after.bandIndex > before.bandIndex) {
+                levelUpLabel = after.band.label;
+                levelUpCelebration = await checkLevelUpMilestone(levelUpLabel, today);
+              }
+            } catch (err) {
+              console.error('[Habla] level-up milestone check failed:', err);
+            }
+          }
+        }
+
         const sessionCelebrations = await milestonesOnLessonComplete(currentStreak, today);
         const allCelebrations = [
           ...(personalBestCelebration ? [personalBestCelebration] : []),
+          ...(levelUpCelebration ? [levelUpCelebration] : []),
           ...sessionCelebrations,
         ];
         if (allCelebrations.length > 0) {
@@ -404,7 +425,11 @@ function SummaryScreenInner({
                   }),
                 ]).start();
               }
+              const celebrationsSnapshot = [...pendingCelebrationsRef.current];
               pendingCelebrationsRef.current = [];
+              void offerMilestoneCelebrationQuiz(router, celebrationsSnapshot, {
+                levelLabel: levelUpLabel,
+              });
             },
           });
         }
