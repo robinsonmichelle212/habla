@@ -23,7 +23,7 @@ import { getUnreadWrappedMonth, getWrappedHistory } from '@/lib/wrapped-storage'
 import * as Haptics from 'expo-haptics';
 import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
@@ -58,12 +58,22 @@ export default function ProgressScreen() {
   const [weekChart, setWeekChart] = useState<WeekChartDay[]>([]);
   const [showTodayModal, setShowTodayModal] = useState(false);
   const [showWeekModal, setShowWeekModal] = useState(false);
+  const reopenWeekModalRef = useRef(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       setLevelExpanded(false);
+    }, []),
+  );
+
+  useFocusEffect(
+    useCallback(() => {
+      if (reopenWeekModalRef.current) {
+        reopenWeekModalRef.current = false;
+        setShowWeekModal(true);
+      }
     }, []),
   );
 
@@ -248,6 +258,12 @@ export default function ProgressScreen() {
         displayScore={topScoreWeek}
         onClose={() => setShowWeekModal(false)}
         weekChart={weekChart}
+        showHistoryLink
+        onOpenHistory={() => {
+          reopenWeekModalRef.current = true;
+          setShowWeekModal(false);
+          router.push('/score-history' as Href);
+        }}
       />
 
       {barometer ? (

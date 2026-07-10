@@ -47,6 +47,8 @@ type Props = {
   weekChart?: WeekChartDay[];
   showPracticeButton?: boolean;
   enableScoreDetails?: boolean;
+  showHistoryLink?: boolean;
+  onOpenHistory?: () => void;
 };
 
 export function LessonScoreBreakdownModal({
@@ -59,6 +61,8 @@ export function LessonScoreBreakdownModal({
   weekChart,
   showPracticeButton = false,
   enableScoreDetails = false,
+  showHistoryLink = false,
+  onOpenHistory,
 }: Props) {
   const router = useRouter();
   const [detailTab, setDetailTab] = useState<ScoreDetailTab | null>(null);
@@ -125,9 +129,20 @@ export function LessonScoreBreakdownModal({
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <View style={styles.header}>
           <Text style={styles.headerTitle}>{title}</Text>
-          <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close">
-            <Text style={styles.closeButton}>✕</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            {showHistoryLink ? (
+              <Pressable
+                onPress={onOpenHistory}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel="See score history">
+                <Text style={styles.historyLink}>See history 📈</Text>
+              </Pressable>
+            ) : null}
+            <Pressable onPress={onClose} hitSlop={12} accessibilityRole="button" accessibilityLabel="Close">
+              <Text style={styles.closeButton}>✕</Text>
+            </Pressable>
+          </View>
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -362,7 +377,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: palette.surfaceBorder,
   },
-  headerTitle: { fontSize: 18, fontWeight: '900', color: palette.text },
+  headerTitle: { fontSize: 18, fontWeight: '900', color: palette.text, flex: 1 },
+  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  historyLink: { fontSize: 13, fontWeight: '800', color: palette.accent },
   closeButton: { fontSize: 22, fontWeight: '700', color: palette.muted, padding: 4 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 28, paddingTop: 8 },
   emptyCard: {

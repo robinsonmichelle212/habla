@@ -112,6 +112,7 @@ export default function RootLayout() {
           <Stack.Screen name="level" options={{ headerShown: false }} />
           <Stack.Screen name="progress" options={{ headerShown: false }} />
           <Stack.Screen name="read-lesson" options={{ headerShown: false }} />
+          <Stack.Screen name="score-history" options={{ headerShown: false }} />
           <Stack.Screen name="memory-palace" options={{ headerShown: false }} />
           <Stack.Screen name="milestone-quiz" options={{ headerShown: false }} />
           <Stack.Screen name="summary" options={{ headerShown: false }} />
