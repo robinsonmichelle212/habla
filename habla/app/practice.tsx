@@ -1,3 +1,6 @@
+import { AppTextInput } from '@/components/app-text-input';
+import { useDemoMode } from '@/contexts/demo-mode-context';
+import { DEMO_DRILLS } from '@/lib/demo-mode';
 import {
   buildSavedVocabQuestions,
   checkSavedVocabAnswer,
@@ -53,7 +56,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -101,6 +103,7 @@ export default function PracticeScreen() {
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didAwardRef = useRef(false);
   const { celebrate } = useMilestoneCelebration();
+  const { enabled: demoMode } = useDemoMode();
   const didAutoStartRef = useRef(false);
   const activeDrillRef = useRef<PracticeDrillKind>('vocabulary');
 
@@ -217,7 +220,7 @@ export default function PracticeScreen() {
       cancelled = true;
       clearAdvanceTimer();
     };
-  }, [topic]);
+  }, [topic, demoMode]);
 
   const resetDrillState = () => {
     clearAdvanceTimer();
@@ -253,6 +256,21 @@ export default function PracticeScreen() {
     setStage('loading');
 
     try {
+      if (demoMode) {
+        const demoQuestions: PracticeQuestion[] = DEMO_DRILLS.map((d) => ({
+          kind: 'quick' as const,
+          question: {
+            id: d.id,
+            type: 'quick_translate' as const,
+            prompt: d.prompt,
+            expectedAnswer: d.expectedAnswer ?? '',
+          },
+        }));
+        setQuestions(demoQuestions);
+        setStage('drill');
+        return;
+      }
+
       const online = await checkIsOnline();
       const curriculum = await resolveGrammarCurriculum();
       const weekDef = getWeekDefinition(curriculum.currentWeek);
@@ -541,13 +559,18 @@ export default function PracticeScreen() {
     didAwardRef.current = true;
 
     const finalScore = results.filter((r) => r.correct).length;
-    const gems = gemsForPracticeDrill(finalScore, TOTAL_QUESTIONS);
+    const gems = demoMode ? 0 : gemsForPracticeDrill(finalScore, TOTAL_QUESTIONS);
     setGemsEarned(gems);
     if (gems > 0) {
       setGemToastAmount(gems);
       setShowGemToast(true);
     }
     setSavingRewards(true);
+
+    if (demoMode) {
+      setSavingRewards(false);
+      return;
+    }
 
     void (async () => {
       try {
@@ -782,7 +805,7 @@ export default function PracticeScreen() {
 
               {!locked ? (
                 <View style={styles.inputCard}>
-                  <TextInput
+                  <AppTextInput
                     style={styles.input}
                     value={answer}
                     onChangeText={setAnswer}

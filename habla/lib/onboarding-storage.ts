@@ -147,11 +147,9 @@ function envDemoModeEnabled(): boolean {
 }
 
 /**
- * Demo mode is intended for the app owner/creator to test features quickly.
- * In development builds this defaults to true.
+ * Demo mode for testing without AI lesson calls. Off by default; toggle in Profile settings.
  */
 export async function isDemoModeEnabled(): Promise<boolean> {
-  if (__DEV__) return true;
   if (envDemoModeEnabled()) return true;
   return (await AsyncStorage.getItem(DEMO_MODE_KEY)) === 'true';
 }

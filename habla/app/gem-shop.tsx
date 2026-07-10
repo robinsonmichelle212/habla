@@ -23,6 +23,7 @@ import {
 } from '@/lib/gem-shop-expiry';
 import { getShopRecommendation, type ShopRecommendation } from '@/lib/gem-shop-recommendations';
 import { getTotalGems } from '@/lib/gems';
+import { useDemoMode } from '@/contexts/demo-mode-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -64,6 +65,7 @@ type SuccessUnlock = PendingUnlock;
 export default function GemShopScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { enabled: demoMode } = useDemoMode();
   const [gems, setGems] = useState(0);
   const [progress, setProgress] = useState<GemShopProgress | null>(null);
   const [stats, setStats] = useState<Awaited<ReturnType<typeof getGemShopStats>> | null>(null);
@@ -183,8 +185,10 @@ export default function GemShopScreen() {
   const renderRoundAction = (roundId: BonusRoundId, shopState: RoundShopState) => {
     const busy =
       shopState.kind === 'unlock' && purchasing === `${roundId}-${shopState.level}`;
+    const unlockCost = shopState.kind === 'unlock' ? shopState.cost : 0;
     const canAfford =
-      shopState.kind === 'unlock' ? gems >= shopState.cost : false;
+      shopState.kind === 'unlock' ? demoMode || gems >= unlockCost : false;
+    const costLabel = demoMode ? 'FREE in demo 🎭' : `${unlockCost} 💎`;
     const showAffordBadge = canAffordRoundNextLevel(progress!, roundId, gems, tick);
 
     if (shopState.kind === 'mastered') {
@@ -227,11 +231,11 @@ export default function GemShopScreen() {
             <ActivityIndicator color="#0B0F14" size="small" />
           ) : (
             <Text style={styles.actionButtonText}>
-              Unlock Level {shopState.level} — {shopState.cost} 💎
+              Unlock Level {shopState.level} — {costLabel}
             </Text>
           )}
         </Pressable>
-        {!canAfford ? (
+        {!canAfford && !demoMode ? (
           <Text style={styles.needGemsText}>
             Need {shopState.cost - gems} more gem{shopState.cost - gems === 1 ? '' : 's'}
           </Text>
@@ -279,11 +283,17 @@ export default function GemShopScreen() {
                 {recommendation.roundEmoji} {recommendation.roundName} Level {recommendation.level} —{' '}
                 {recommendation.reason}
               </Text>
-              {recommendation.canAfford && recommendation.cost > 0 ? (
+              {recommendation.canAfford || demoMode ? (
                 <Pressable
                   onPress={() => requestUnlock(recommendation.roundId, recommendation.level)}
                   style={styles.recBtn}>
-                  <Text style={styles.recBtnText}>Unlock for {recommendation.cost} 💎</Text>
+                  <Text style={styles.recBtnText}>
+                    {demoMode
+                      ? `Unlock for FREE in demo 🎭`
+                      : recommendation.cost > 0
+                        ? `Unlock for ${recommendation.cost} 💎`
+                        : `Play Level ${recommendation.level} ▶`}
+                  </Text>
                 </Pressable>
               ) : recommendation.cost === 0 ? (
                 <Pressable

@@ -7,8 +7,10 @@ import { View } from 'react-native';
 import 'react-native-reanimated';
 
 import { MilestoneProvider } from '@/contexts/milestone-context';
+import { DemoModeProvider } from '@/contexts/demo-mode-context';
 import { NetworkProvider, useNetworkStatus } from '@/contexts/network-context';
 import { OfflineBanner } from '@/components/offline-banner';
+import { DemoModeBadge } from '@/components/demo-mode-badge';
 import { SyncIndicator } from '@/components/sync-indicator';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
@@ -83,9 +85,20 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <NetworkProvider>
+        <DemoModeProvider>
         <View style={{ flex: 1 }}>
           <GlobalOfflineBanner />
-          <View style={{ position: 'absolute', top: 6, right: 14, zIndex: 50 }}>
+          <View
+            style={{
+              position: 'absolute',
+              top: 6,
+              right: 14,
+              zIndex: 50,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 8,
+            }}>
+            <DemoModeBadge />
             <SyncIndicator />
           </View>
           <MilestoneProvider>
@@ -111,6 +124,7 @@ export default function RootLayout() {
         <StatusBar style="auto" />
           </MilestoneProvider>
         </View>
+        </DemoModeProvider>
       </NetworkProvider>
     </ThemeProvider>
   );

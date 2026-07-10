@@ -45,9 +45,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { AppTextInput } from '@/components/app-text-input';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const palette = {
@@ -524,7 +524,7 @@ export default function ReadLessonScreen() {
                     <Text style={styles.questionHint}>{q.promptEnglish}</Text>
                   ) : null}
                   {phase === 'comprehension' ? (
-                    <TextInput
+                    <AppTextInput
                       style={styles.input}
                       value={answers[q.id] ?? ''}
                       onChangeText={(t) => setAnswers((prev) => ({ ...prev, [q.id]: t }))}

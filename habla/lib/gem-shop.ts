@@ -14,6 +14,7 @@ import {
   scheduleUnlockExpiryWarning,
 } from '@/lib/gem-shop-notifications';
 import { deductGems, getTotalGems } from '@/lib/gems';
+import { isDemoModeEnabled } from '@/lib/onboarding-storage';
 import { getProfileBadges } from '@/lib/profile-badges';
 import { formatLocalDate } from '@/lib/streak';
 
@@ -176,6 +177,14 @@ export function getRoundDef(id: BonusRoundId): BonusRoundDef {
 
 export function getLevelCost(roundId: BonusRoundId, level: RoundLevel): number {
   return ROUND_LEVEL1_COSTS[roundId] * level;
+}
+
+export async function getDisplayLevelCost(
+  roundId: BonusRoundId,
+  level: RoundLevel,
+): Promise<number> {
+  if (await isDemoModeEnabled()) return 0;
+  return getLevelCost(roundId, level);
 }
 
 export function getRoundLevel1Cost(roundId: BonusRoundId): number {
@@ -563,10 +572,12 @@ export async function purchaseLevel(
     return { success: false, error: 'Unlock previous level first' };
   }
 
-  const cost = getLevelCost(roundId, level);
-  const result = await deductGems(cost);
-  if (!result.success) {
-    return { success: false, error: 'Not enough gems' };
+  const cost = (await isDemoModeEnabled()) ? 0 : getLevelCost(roundId, level);
+  if (cost > 0) {
+    const result = await deductGems(cost);
+    if (!result.success) {
+      return { success: false, error: 'Not enough gems' };
+    }
   }
 
   const now = Date.now();
@@ -587,9 +598,11 @@ export async function purchaseLevel(
   await scheduleUnlockExpiryWarning(roundId, level, record.expiresAt);
 
   const spent = await getTotalGemsSpent();
-  await AsyncStorage.setItem(TOTAL_SPENT_KEY, String(spent + cost));
+  if (cost > 0) {
+    await AsyncStorage.setItem(TOTAL_SPENT_KEY, String(spent + cost));
+  }
 
-  return { success: true, gemsRemaining: result.total };
+  return { success: true, gemsRemaining: await getTotalGems() };
 }
 
 /** @deprecated Use purchaseLevel */

@@ -1,4 +1,5 @@
 import { SummaryErrorBoundary } from '@/components/summary-error-boundary';
+import { AppTextInput } from '@/components/app-text-input';
 import { SummaryScoreRing } from '@/components/summary-score-ring';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { checkDrillAnswer, generateDailyThinkingChallenge, generateDrills } from '@/lib/claude';
@@ -7,6 +8,12 @@ import { useSummaryReveal } from '@/hooks/use-summary-reveal';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
 import { addGems, calculateLessonGems, getTotalGems, OFFLINE_SPEAKING_ATTEMPT_GEMS } from '@/lib/gems';
 import { saveLastSummary } from '@/lib/last-summary-storage';
+import {
+  DEMO_DAILY_CHALLENGE,
+  DEMO_DRILLS,
+  DEMO_SESSION_NOTICE,
+  scoreDemoDrillAnswer,
+} from '@/lib/demo-mode';
 import {
   checkPersonalBestMilestone,
   milestonesOnLessonComplete,
@@ -37,7 +44,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -103,6 +109,7 @@ export default function SummaryScreen() {
   }, []);
 
   useMemo(() => {
+    if (payload.session.demoSession) return null;
     void saveLastSummary(payload).catch((err) => {
       console.error('[Habla] saveLastSummary failed:', err);
     });
@@ -139,6 +146,7 @@ function SummaryScreenInner({
   const writing = session.writingEvaluation;
   const speaking = session.speakingEvaluation;
   const summaryNotice = session.summaryNotice;
+  const isDemoSession = session.demoSession === true;
   const scorePending = payload.scorePending;
   const strongAreas =
     analysis.strongAreas?.length > 0 ? analysis.strongAreas : ['Good effort today'];
@@ -253,6 +261,14 @@ function SummaryScreenInner({
   useEffect(() => {
     if (didRecordRef.current) return;
     didRecordRef.current = true;
+
+    if (isDemoSession) {
+      void getTotalGems().then(setGemsBefore);
+      setGemsEarned(2);
+      setDailyChallengeText(DEMO_DAILY_CHALLENGE);
+      setStreakHydrated(true);
+      return;
+    }
 
     updateStreak()
       .then(async (res) => {
@@ -397,6 +413,15 @@ function SummaryScreenInner({
     setLastFeedback(null);
     setAnswer('');
     try {
+      if (isDemoSession) {
+        setLessonSession({ drills: DEMO_DRILLS });
+        setDrills(DEMO_DRILLS);
+        setDrillIdx(0);
+        setStars(0);
+        setMode('drills');
+        return;
+      }
+
       const exercises = await generateDrills(lessonType, weakAreas, focusAreas);
       if (!exercises.length) {
         Alert.alert('No drills generated', 'Try again in a moment.');
@@ -424,6 +449,14 @@ function SummaryScreenInner({
 
     setChecking(true);
     try {
+      if (isDemoSession) {
+        const result = scoreDemoDrillAnswer(exercise.expectedAnswer, trimmed);
+        const score = Math.max(0, Math.min(100, Math.round(result.score ?? 0)));
+        setLastFeedback({ score, feedback: result.feedback, correctAnswer: result.correctAnswer });
+        if (score >= 75) setStars((s) => s + 1);
+        return;
+      }
+
       const result = await checkDrillAnswer(lessonType, exercise, trimmed);
       const score = Math.max(0, Math.min(100, Math.round(result.score ?? 0)));
       const feedback = `${result.feedbackSpanish}\n\n${result.feedbackEnglish}`;
@@ -497,9 +530,11 @@ function SummaryScreenInner({
           </>
         ) : mode === 'summary' ? (
           <>
-            {summaryNotice ? (
+            {(summaryNotice || isDemoSession) ? (
               <View style={styles.banner}>
-                <Text style={styles.bannerText}>{summaryNotice}</Text>
+                <Text style={styles.bannerText}>
+                  {isDemoSession ? DEMO_SESSION_NOTICE : summaryNotice}
+                </Text>
               </View>
             ) : null}
             <Animated.Text
@@ -876,7 +911,7 @@ function SummaryScreenInner({
             </View>
 
             <View style={styles.answerCard}>
-              <TextInput
+              <AppTextInput
                 style={styles.answerInput}
                 value={answer}
                 onChangeText={setAnswer}

@@ -2,6 +2,7 @@ import { CollapsibleProfileSection } from '@/components/collapsible-profile-sect
 import { ErrorDnaSection } from '@/components/error-dna-section';
 import { MilestonesSection } from '@/components/milestones-section';
 import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
+import { useDemoMode } from '@/contexts/demo-mode-context';
 import {
   getArchivedErrorDNA,
   getErrorDNA,
@@ -53,6 +54,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   Text,
   View,
 } from 'react-native';
@@ -86,6 +88,7 @@ function scoreColor(score: number | null): string {
 export default function LevelScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { enabled: demoMode, setEnabled: setDemoMode } = useDemoMode();
   const [loading, setLoading] = useState(true);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [milestonesAchieved, setMilestonesAchieved] = useState(0);
@@ -313,6 +316,8 @@ export default function LevelScreen() {
             onToggle={() => toggleSection('settings')}>
             <SettingsSection
               reminderTime={reminderTime}
+              demoMode={demoMode}
+              onDemoModeChange={(value) => void setDemoMode(value)}
               onReminderChange={async (hour, minute) => {
                 await setReminderTime(hour, minute);
                 setReminderTimeState({ hour, minute });
@@ -336,12 +341,16 @@ export default function LevelScreen() {
 
 function SettingsSection({
   reminderTime,
+  demoMode,
+  onDemoModeChange,
   onReminderChange,
   onResetCurriculum,
   onRetakeAssessment,
   embedded = false,
 }: {
   reminderTime: ReminderTime | null;
+  demoMode: boolean;
+  onDemoModeChange: (value: boolean) => void;
   onReminderChange: (hour: number, minute: number) => Promise<void>;
   onResetCurriculum: () => void;
   onRetakeAssessment: () => void;
@@ -358,7 +367,23 @@ function SettingsSection({
     <View style={embedded ? undefined : styles.section}>
       {!embedded ? <Text style={styles.sectionTitle}>Settings</Text> : null}
       <View style={styles.card}>
-        <Text style={styles.settingsLabel}>Streak reminder time</Text>
+        <View style={styles.demoToggleRow}>
+          <View style={styles.demoToggleCopy}>
+            <Text style={styles.settingsLabel}>Demo Mode 🎭</Text>
+            <Text style={styles.settingsHint}>
+              Skip AI calls for testing. Doesn&apos;t affect your scores or streak.
+            </Text>
+          </View>
+          <Switch
+            value={demoMode}
+            onValueChange={onDemoModeChange}
+            trackColor={{ false: palette.grey, true: 'rgba(251, 146, 60, 0.5)' }}
+            thumbColor={demoMode ? '#FB923C' : '#8B95A5'}
+            accessibilityLabel="Toggle demo mode"
+          />
+        </View>
+
+        <Text style={[styles.settingsLabel, styles.settingsLabelSpaced]}>Streak reminder time</Text>
         <Text style={styles.settingsHint}>
           Current: {reminderTime ? formatReminderTimeLabel(reminderTime) : '8:00 PM'}
         </Text>
@@ -667,6 +692,15 @@ const styles = StyleSheet.create({
   badgeLabel: { fontSize: 13, fontWeight: '800', color: palette.text, textAlign: 'center' },
   badgeDate: { fontSize: 11, fontWeight: '600', color: palette.muted, marginTop: 2 },
   settingsLabel: { fontSize: 14, fontWeight: '800', color: palette.text, marginBottom: 4 },
+  settingsLabelSpaced: { marginTop: 16 },
+  demoToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    marginBottom: 4,
+  },
+  demoToggleCopy: { flex: 1 },
   settingsHint: { fontSize: 13, fontWeight: '600', color: palette.muted, marginBottom: 12 },
   reminderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
   reminderChip: {

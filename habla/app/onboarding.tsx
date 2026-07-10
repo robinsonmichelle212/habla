@@ -1,3 +1,4 @@
+import { AppTextInput } from '@/components/app-text-input';
 import { TextMessageBubble } from '@/components/text-message-bubble';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import {
@@ -45,7 +46,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -140,7 +140,7 @@ export default function OnboardingScreen() {
   const [skippedResult, setSkippedResult] = useState<OnboardingProfile | null>(null);
   const [completing, setCompleting] = useState(false);
 
-  const nameInputRef = useRef<TextInput>(null);
+  const nameInputRef = useRef<import('react-native').TextInput>(null);
   const scrollRef = useRef<ScrollView>(null);
   const welcomeOpacity = useRef(new Animated.Value(0)).current;
 
@@ -426,7 +426,7 @@ export default function OnboardingScreen() {
     <View style={styles.formBlock}>
       <Text style={styles.screenTitle}>First, what&apos;s your name?</Text>
       <Text style={styles.screenHint}>Javi will use this name throughout all lessons.</Text>
-      <TextInput
+      <AppTextInput
         ref={nameInputRef}
         style={styles.nameInput}
         value={userName}
@@ -591,7 +591,7 @@ export default function OnboardingScreen() {
 
         {inputMode === 'text' ? (
           <View style={styles.composeRow}>
-            <TextInput
+            <AppTextInput
               style={styles.textInput}
               value={textInput}
               onChangeText={setTextInput}

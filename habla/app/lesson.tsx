@@ -1,7 +1,5 @@
-import {
-  ConversationInputDock,
-  useKeyboardScrollToEnd,
-} from '@/components/conversation-input-layout';
+import { ConversationInputDock, useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
+import { AppTextInput } from '@/components/app-text-input';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { LessonTimer } from '@/components/lesson-timer';
@@ -86,6 +84,16 @@ import {
   TimeoutError,
   withTimeout,
 } from '@/lib/with-timeout';
+import { useDemoMode } from '@/contexts/demo-mode-context';
+import {
+  DEMO_SESSION_NOTICE,
+  DEMO_WRITING_PROMPT,
+  demoLessonAnalysis,
+  demoSpeakingEvaluation,
+  demoTopicLabel,
+  demoWarmUpOpening,
+  demoWritingEvaluation,
+} from '@/lib/demo-mode';
 import { saveLastSummary } from '@/lib/last-summary-storage';
 import { buildSafeSummaryPayload } from '@/lib/summary-safe-data';
 import { formatLocalDate } from '@/lib/streak';
@@ -109,7 +117,6 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -185,6 +192,9 @@ function ProgressBar({ label, value }: { label: string; value: number }) {
 export default function LessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { enabled: demoMode } = useDemoMode();
+  const demoModeRef = useRef(demoMode);
+  demoModeRef.current = demoMode;
   const scrollRef = useRef<ScrollView>(null);
   const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
@@ -415,7 +425,24 @@ export default function LessonScreen() {
           writingTask: undefined,
           writingEvaluation: undefined,
           speakingEvaluation: undefined,
+          demoSession: demoMode,
         });
+
+        if (demoMode) {
+          const topic = demoTopicLabel(focus);
+          const opening = demoWarmUpOpening(topic);
+          setWarmUpReadyForWriting(true);
+          setOfflineIntroNote(false);
+          setWarmUpMessages([
+            {
+              id: newId(),
+              role: 'assistant',
+              spanish: opening.spanish,
+              translation: opening.translation,
+            },
+          ]);
+          return;
+        }
 
         const online = await checkIsOnline();
         const weekNumber = focus.kind === 'grammar' ? focus.weekNumber : null;
@@ -476,7 +503,7 @@ export default function LessonScreen() {
     return () => {
       cancelled = true;
     };
-  }, [lessonKind, resetLessonState]);
+  }, [lessonKind, resetLessonState, demoMode]);
 
   const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [
     warmUpMessages,
@@ -670,6 +697,17 @@ export default function LessonScreen() {
     setLoadingWritingTask(true);
 
     try {
+      if (demoModeRef.current) {
+        setWritingPrompt(DEMO_WRITING_PROMPT);
+        setLessonSession({
+          warmUpConversation: toTurns(warmUpMessages),
+          conversation: toTurns(warmUpMessages),
+          writingTask: { prompt: DEMO_WRITING_PROMPT },
+          demoSession: true,
+        });
+        return;
+      }
+
       const online = await checkIsOnline();
       const focusKey = focusCacheKey(lessonFocus);
 
@@ -717,6 +755,14 @@ export default function LessonScreen() {
 
     setWritingSubmitting(true);
     try {
+      if (demoModeRef.current) {
+        const evaluation = demoWritingEvaluation(trimmed);
+        setWritingResult(evaluation);
+        setLessonSession({ writingEvaluation: evaluation, demoSession: true });
+        void startSpeakingPhase(evaluation);
+        return;
+      }
+
       const online = await checkIsOnline();
 
       if (!online) {
@@ -803,6 +849,20 @@ export default function LessonScreen() {
     setPhaseSummaryText('');
     setSpeakingIntroDone(false);
     setVoiceError(null);
+
+    if (demoModeRef.current) {
+      const introMsg: ChatMessage = {
+        id: newId(),
+        role: 'assistant',
+        spanish: 'Demo mode: ¡Hablemos!',
+        translation: "Demo mode: Let's talk!",
+      };
+      setSpeakingMessages([introMsg]);
+      setSpeakingIntroDone(true);
+      setSpeakingStep('conversation');
+      setVoiceStateSafe('idle');
+      return;
+    }
 
     if (!online) {
       const introMsg: ChatMessage = {
@@ -1098,36 +1158,41 @@ export default function LessonScreen() {
         speakingEvaluation: params.speakingEvaluation,
         analysis: params.analysis,
         summaryNotice: params.notice,
+        demoSession: demoModeRef.current || getLessonSession().demoSession,
       });
 
-      try {
-        const payload = buildSafeSummaryPayload(getLessonSession());
-        await saveLastSummary(payload);
-      } catch (saveSummaryErr) {
-        console.error('[Habla] Pre-render lastSummary save failed:', saveSummaryErr);
-      }
+      const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
 
-      try {
-        await upsertLessonHistoryEntry(
-          buildHistoryEntryFromAnalysis({
+      if (!isDemoSession) {
+        try {
+          const payload = buildSafeSummaryPayload(getLessonSession());
+          await saveLastSummary(payload);
+        } catch (saveSummaryErr) {
+          console.error('[Habla] Pre-render lastSummary save failed:', saveSummaryErr);
+        }
+
+        try {
+          await upsertLessonHistoryEntry(
+            buildHistoryEntryFromAnalysis({
+              date: formatLocalDate(),
+              lessonType: lessonTypeLabel(lessonType),
+              analysis: params.analysis,
+              speaking: params.speakingEvaluation,
+              writingPending: writingResult!.pendingEvaluation,
+            }),
+          );
+          await clearLessonCheckpoint();
+        } catch (saveErr) {
+          console.error('[Habla] Summary save failed, persisting progress:', saveErr);
+          await persistLessonProgress({
             date: formatLocalDate(),
             lessonType: lessonTypeLabel(lessonType),
-            analysis: params.analysis,
+            focusLabel: lessonFocusLabel(lessonFocus!),
+            writing: writingResult!,
+            writingPrompt: writingPrompt!,
             speaking: params.speakingEvaluation,
-            writingPending: writingResult!.pendingEvaluation,
-          }),
-        );
-        await clearLessonCheckpoint();
-      } catch (saveErr) {
-        console.error('[Habla] Summary save failed, persisting progress:', saveErr);
-        await persistLessonProgress({
-          date: formatLocalDate(),
-          lessonType: lessonTypeLabel(lessonType),
-          focusLabel: lessonFocusLabel(lessonFocus!),
-          writing: writingResult!,
-          writingPrompt: writingPrompt!,
-          speaking: params.speakingEvaluation,
-        }).catch(() => {});
+          }).catch(() => {});
+        }
       }
 
       router.push('/summary');
@@ -1160,6 +1225,15 @@ export default function LessonScreen() {
       };
 
       try {
+        if (demoModeRef.current) {
+          await navigateToSummary({
+            speakingEvaluation: speakingOverride ?? demoSpeakingEvaluation(),
+            analysis: demoLessonAnalysis(),
+            notice: DEMO_SESSION_NOTICE,
+          });
+          return;
+        }
+
         if (speakingOverride?.pendingEvaluation || writingResult.pendingEvaluation) {
           const speakingEvaluation: SpeakingEvaluation = {
             fluencyScore: speakingOverride?.fluencyScore ?? null,
@@ -1431,6 +1505,17 @@ export default function LessonScreen() {
 
   const handlePressOut = async () => {
     if (voiceStateRef.current !== 'recording') return;
+
+    if (demoModeRef.current) {
+      setVoiceStateSafe('idle');
+      showHeardTranscript('Demo mode: Speaking registered.');
+      showPhaseSummaryAndFinish(
+        demoSpeakingEvaluation(),
+        'Demo mode: Speaking registered. Fluency: 80% · Confidence: 75%',
+      );
+      return;
+    }
+
     setVoiceStateSafe('processing');
 
     try {
@@ -1726,7 +1811,7 @@ export default function LessonScreen() {
         {phase === 'warmup' || phase === 'feynman' ? (
           <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
             <View style={styles.composeRow}>
-              <TextInput
+              <AppTextInput
                 style={styles.textInput}
                 value={warmUpInput}
                 onChangeText={setWarmUpInput}

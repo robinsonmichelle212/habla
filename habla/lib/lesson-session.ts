@@ -137,6 +137,8 @@ export type LessonSessionState = {
   wordsSavedFromReading?: { spanish: string; english: string }[];
   /** Shown once on the summary screen after a graceful phase transition. */
   summaryNotice?: string;
+  /** Demo lesson — does not affect streak, history, or gems. */
+  demoSession?: boolean;
 };
 
 let state: LessonSessionState = {

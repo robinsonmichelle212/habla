@@ -1,3 +1,4 @@
+import { AppTextInput } from '@/components/app-text-input';
 import { useCallback, useEffect, useRef, type ReactNode, type RefObject } from 'react';
 import {
   ActivityIndicator,
@@ -7,10 +8,8 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
   type ScrollViewProps,
-  type TextInputProps,
 } from 'react-native';
 
 const palette = {
@@ -51,7 +50,7 @@ type DockProps = {
   onChangeText: (text: string) => void;
   inputPlaceholder?: string;
   inputEditable?: boolean;
-  inputRef?: RefObject<TextInput | null>;
+  inputRef?: RefObject<import('react-native').TextInput | null>;
   onInputFocus?: () => void;
   footer?: ReactNode;
   trailingAction?: ReactNode;
@@ -76,7 +75,7 @@ export function ConversationInputDock({
   showPrompt = true,
   showResponseLabel,
 }: DockProps) {
-  const localInputRef = useRef<TextInput>(null);
+  const localInputRef = useRef<import('react-native').TextInput>(null);
   const resolvedInputRef = inputRef ?? localInputRef;
   const shouldShowResponseLabel = showResponseLabel ?? Boolean(showPrompt && prompt);
 
@@ -93,7 +92,7 @@ export function ConversationInputDock({
       ) : null}
       {shouldShowResponseLabel ? <Text style={styles.responseLabel}>{responseLabel}</Text> : null}
       <View style={styles.inputRow}>
-        <TextInput
+        <AppTextInput
           ref={resolvedInputRef}
           style={[styles.input, trailingAction ? styles.inputWithAction : null]}
           value={inputValue}

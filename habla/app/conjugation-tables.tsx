@@ -17,9 +17,9 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from 'react-native';
+import { AppTextInput } from '@/components/app-text-input';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const palette = {
@@ -110,7 +110,7 @@ export default function ConjugationTablesScreen() {
           <View style={styles.searchCard}>
             <Text style={styles.searchLabel}>Search any verb</Text>
             <View style={styles.searchRow}>
-              <TextInput
+              <AppTextInput
                 value={query}
                 onChangeText={setQuery}
                 placeholder="e.g. hablar, comer, vivir"
