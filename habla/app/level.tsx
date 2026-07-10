@@ -300,6 +300,13 @@ export default function LevelScreen() {
                 weeks, conjugation tables, and tense guides
               </Text>
             </Pressable>
+            <Pressable
+              onPress={() => router.push('/memory-palace' as Href)}
+              style={({ pressed }) => [styles.curriculumLink, pressed && styles.curriculumLinkPressed]}
+              accessibilityRole="button">
+              <Text style={styles.curriculumLinkTitle}>Memory Palace 🏛️</Text>
+              <Text style={styles.curriculumLinkHint}>Cement your conjugations. No pressure.</Text>
+            </Pressable>
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection
