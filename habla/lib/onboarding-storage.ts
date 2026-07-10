@@ -231,9 +231,9 @@ export async function isAssessmentSkipped(): Promise<boolean> {
 export function timeBasedGreeting(name: string, now = new Date()): string {
   const hour = now.getHours();
   const trimmed = name.trim();
-  if (hour < 12) return `Buenos días, ${trimmed} 👋`;
-  if (hour < 18) return `Buenas tardes, ${trimmed} 👋`;
-  return `Buenas noches, ${trimmed} 👋`;
+  if (hour < 12) return `Buenos días, ${trimmed}`;
+  if (hour < 18) return `Buenas tardes, ${trimmed}`;
+  return `Buenas noches, ${trimmed}`;
 }
 
 export type CompleteOnboardingOptions = {

@@ -201,6 +201,50 @@ export function estimateSessionsToReachScore(
   return Math.ceil(gap / avgImprovement);
 }
 
+export function getRecentLessonScores(history: LessonHistoryEntry[], count = 5): number[] {
+  return history
+    .filter((e) => !e.placeholder)
+    .slice(-count)
+    .map((e) => overallLessonScore(e));
+}
+
+export type ScoreTrendDirection = 'up' | 'down' | 'steady' | 'insufficient';
+
+export function getScoreTrend(scores: number[]): {
+  direction: ScoreTrendDirection;
+  message: string;
+} {
+  if (scores.length < 2) {
+    return {
+      direction: 'insufficient',
+      message: 'Complete more lessons to see your trend',
+    };
+  }
+  const mid = Math.floor(scores.length / 2);
+  const earlier = scores.slice(0, mid);
+  const later = scores.slice(mid);
+  const avgEarlier = earlier.reduce((sum, s) => sum + s, 0) / earlier.length;
+  const avgLater = later.reduce((sum, s) => sum + s, 0) / later.length;
+  const delta = avgLater - avgEarlier;
+
+  if (delta >= 3) {
+    return { direction: 'up', message: 'Trending up ↗ — keep going' };
+  }
+  if (delta <= -3) {
+    return { direction: 'down', message: 'Trending down ↘ — review weak areas in practice' };
+  }
+  return {
+    direction: 'steady',
+    message: 'Scores vary — consistency will move you forward',
+  };
+}
+
+export function shortBandLabel(label: string): { tier: string; name: string } {
+  if (label.startsWith('B1 ')) return { tier: 'B1', name: label.slice(3) };
+  if (label.startsWith('B2 ')) return { tier: 'B2', name: label.slice(3) };
+  return { tier: '', name: label };
+}
+
 export function averageScoreForTopic(
   history: LessonHistoryEntry[],
   topic: string,

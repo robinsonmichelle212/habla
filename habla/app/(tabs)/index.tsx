@@ -180,7 +180,7 @@ export default function HomeScreen() {
         <View style={[styles.page, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <View style={styles.topBar}>
             <Text style={styles.greeting} numberOfLines={1}>
-              {greeting ?? 'Habla 👋'}
+              {greeting ?? 'Habla'}
             </Text>
             <Pressable
               onPress={() => void openGemShop()}
@@ -417,24 +417,26 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   challengeText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
-    color: palette.text,
-    lineHeight: 18,
+    color: palette.muted,
+    lineHeight: 15,
   },
   challengePill: {
     flexShrink: 0,
+    backgroundColor: palette.surface,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    backgroundColor: palette.background,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  challengePillPressed: { opacity: 0.85 },
+  challengePillPressed: { opacity: 0.9 },
   challengePillDisabled: { opacity: 0.5 },
   challengePillText: {
-    fontSize: 12,
+    fontSize: 16,
     fontWeight: '800',
     color: palette.text,
   },

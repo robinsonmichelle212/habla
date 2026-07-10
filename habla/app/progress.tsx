@@ -219,8 +219,9 @@ export default function ProgressScreen() {
                 onToggle={() => setLevelExpanded((v) => !v)}>
                 <LevelBarometerSection
                   barometer={barometer}
+                  nextRequirements={nextReq}
+                  history={lessons}
                   onSelectBand={setSelectedBandId}
-                  hideTitle
                   embedded
                 />
               </CollapsibleProfileSection>
