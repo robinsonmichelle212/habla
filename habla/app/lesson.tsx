@@ -1180,7 +1180,7 @@ export default function LessonScreen() {
         demoSession: demoModeRef.current || getLessonSession().demoSession,
       });
 
-      router.push('/summary');
+      router.replace('/summary');
 
       const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
       if (isDemoSession) return;
@@ -1276,7 +1276,7 @@ export default function LessonScreen() {
               demoSession: demoModeRef.current || getLessonSession().demoSession,
             });
             navigatedToSummaryRef.current = true;
-            router.push('/summary');
+            router.replace('/summary');
           }
         }
       };

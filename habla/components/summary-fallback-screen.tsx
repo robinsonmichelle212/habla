@@ -78,7 +78,7 @@ export function SummaryFallbackScreen({
           style={({ pressed }) => [styles.homeButton, pressed && styles.homeButtonPressed]}
           accessibilityRole="button"
           accessibilityLabel="Back to home">
-          <Text style={styles.homeButtonText}>Back to Home</Text>
+          <Text style={styles.homeButtonText}>Back to Home 🏠</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>

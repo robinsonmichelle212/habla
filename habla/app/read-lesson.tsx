@@ -379,7 +379,7 @@ export default function ReadLessonScreen() {
         },
       });
 
-      router.push('/summary');
+      router.replace('/summary');
     } catch {
       Alert.alert('Could not finish', 'Check your internet and try again.');
       setFinishing(false);

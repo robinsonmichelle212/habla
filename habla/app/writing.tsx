@@ -236,7 +236,7 @@ export default function WritingScreen() {
           false,
         );
         setLessonSession({ analysis });
-        router.push('/summary');
+        router.replace('/summary');
         return;
       }
 
@@ -283,7 +283,7 @@ export default function WritingScreen() {
         await mergeErrorDnaFromLesson(analysisJson.errorDNA);
       }
       setLessonSession({ analysis });
-      router.push('/summary');
+      router.replace('/summary');
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
       Alert.alert('Could not build summary', message);

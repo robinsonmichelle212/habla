@@ -35,14 +35,16 @@ import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { lessonTypeLabel, upsertLessonHistoryEntry, getLessonHistory } from '@/lib/practice-storage';
 import { getLevelBarometer } from '@/lib/level-progress';
 import { queueMilestoneQuizzesFromCelebrations } from '@/lib/milestone-celebration-quiz';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigation } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Alert,
   Animated,
+  BackHandler,
   Platform,
   Pressable,
   ScrollView,
@@ -94,8 +96,16 @@ function formatSpeakingMetric(
   return `${Math.round(value)}%`;
 }
 
+async function withOneRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    console.error(`[Habla] ${label} failed, retrying once:`, err);
+    return await fn();
+  }
+}
+
 export default function SummaryScreen() {
-  const router = useRouter();
   const payload = useMemo(() => {
     try {
       const session = getLessonSession();
@@ -112,36 +122,16 @@ export default function SummaryScreen() {
     }
   }, []);
 
-  useMemo(() => {
-    if (payload.session.demoSession) return null;
-    void saveLastSummary(payload).catch((err) => {
-      console.error('[Habla] saveLastSummary failed:', err);
-    });
-    return null;
-  }, [payload]);
-
-  const goHome = () => {
-    if (Platform.OS !== 'web') {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-    resetLessonSession();
-    router.replace('/(tabs)');
-  };
-
-  return (
-    <SummaryErrorBoundary payload={payload} onGoHome={goHome}>
-      <SummaryScreenInner payload={payload} onGoHome={goHome} />
-    </SummaryErrorBoundary>
-  );
+  return <SummaryScreenInner payload={payload} />;
 }
 
 function SummaryScreenInner({
   payload,
-  onGoHome,
 }: {
   payload: SafeSummaryPayload;
-  onGoHome: () => void;
 }) {
+  const router = useRouter();
+  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const session = payload.session;
   const analysis = payload.analysis;
@@ -178,6 +168,10 @@ function SummaryScreenInner({
   const [dailyChallengeText, setDailyChallengeText] = useState<string | null>(null);
   const [challengeLoading, setChallengeLoading] = useState(false);
   const didGenerateChallengeRef = useRef(false);
+  const persistencePromiseRef = useRef<Promise<void> | null>(null);
+  const leavingHomeRef = useRef(false);
+  const [leavingHome, setLeavingHome] = useState(false);
+  const [saveIndicator, setSaveIndicator] = useState<string | null>(null);
 
   const buildLessonHistoryEntry = useCallback(() => {
     if (!analysis || !lessonType) return null;
@@ -246,216 +240,254 @@ function SummaryScreenInner({
     }
   }, [analysis, focusAreas, lessonType, scorePending, session.writingTask?.prompt, speaking, weakAreas, writing]);
 
-  const saveLessonHistoryWithRetry = useCallback(
-    (entry: NonNullable<ReturnType<typeof buildLessonHistoryEntry>>) => {
-      const attemptSave = (attempt: number) => {
-        void upsertLessonHistoryEntry(entry).catch((err) => {
-          console.error(`[Habla] lessonHistory save failed (attempt ${attempt}):`, err);
-          if (attempt < 3) {
-            setTimeout(() => attemptSave(attempt + 1), 3000 * attempt);
+  const runSummaryPersistence = useCallback(async () => {
+    if (isDemoSession) {
+      const beforeGems = await getTotalGems();
+      setGemsBefore(beforeGems);
+      setGemsEarned(2);
+      setDailyChallengeText(DEMO_DAILY_CHALLENGE);
+      return;
+    }
+
+    const streakRes = await withOneRetry('updateStreak', updateStreak);
+    const today = formatLocalDate();
+    const overallScore = scorePending
+      ? 0
+      : safeNumber(analysis?.overallScore ?? analysis?.correctnessScore ?? 0);
+    const gems = scorePending ? 0 : calculateLessonGems(overallScore);
+    const beforeGems = await getTotalGems();
+    setGemsBefore(beforeGems);
+
+    let personalBestCelebration = null;
+    if (analysis && lessonType) {
+      try {
+        personalBestCelebration = await checkPersonalBestMilestone(overallScore, today);
+      } catch (err) {
+        console.error('[Habla] checkPersonalBestMilestone failed:', err);
+      }
+    }
+
+    if (gems > 0) {
+      await withOneRetry('addGems', () => addGems(gems));
+      setGemsEarned(gems);
+    } else {
+      setGemsEarned(payload.gemsEarnedEstimate ?? 2);
+    }
+
+    if (analysis && lessonType) {
+      const lessonHistoryEntry = buildLessonHistoryEntry();
+      if (lessonHistoryEntry) {
+        console.log(
+          '[Habla] Saving to lessonHistory:',
+          JSON.stringify(lessonHistoryEntry, null, 2),
+        );
+        await withOneRetry('lessonHistory', () => upsertLessonHistoryEntry(lessonHistoryEntry));
+      }
+
+      const focus = session.lessonFocus ? lessonFocusLabel(session.lessonFocus) : undefined;
+      const grammarTopic =
+        session.lessonFocus?.kind === 'grammar' ? session.lessonFocus.topic : undefined;
+
+      await withOneRetry('focusTips', () =>
+        saveFocusTipsFromSummaryIfExpired(
+          buildFocusTipsFromAnalysis(analysis, {
+            grammarTopic,
+            lessonFocus: focus,
+          }),
+        ),
+      );
+
+      if (!didGenerateChallengeRef.current) {
+        didGenerateChallengeRef.current = true;
+        setChallengeLoading(true);
+        void (async () => {
+          try {
+            const recent = await getRecentChallengeTexts();
+            const focusTipsForChallenge = await getActiveFocusTipsForChallenge();
+            const challengeType = await resolveChallengeTypeForLesson(lessonType);
+            const text = await generateDailyThinkingChallenge(
+              {
+                lessonType,
+                lessonFocus: focus,
+                grammarTopic,
+                strongAreas,
+                weakAreas,
+                focusAreas,
+                encouragingMessage: analysis.encouragingMessage,
+                overallScore: analysis.overallScore,
+              },
+              challengeType,
+              recent,
+              focusTipsForChallenge?.tips,
+            );
+            await saveDailyChallenge(text, challengeType);
+            if (focusTipsForChallenge) {
+              await markFocusTipsUsedInChallenge();
+            }
+            setDailyChallengeText(text);
+          } catch {
+            setDailyChallengeText(null);
+          } finally {
+            setChallengeLoading(false);
           }
+        })();
+      }
+    }
+
+    let levelUpCelebration: MilestoneCelebration | null = null;
+    let levelUpLabel: string | undefined;
+    if (analysis && lessonType) {
+      const entry = buildLessonHistoryEntry();
+      if (entry) {
+        try {
+          const existing = await getLessonHistory();
+          const before = getLevelBarometer(existing);
+          const withoutDup = existing.filter(
+            (e) => !(e.date === entry.date && e.lessonType === entry.lessonType),
+          );
+          const after = getLevelBarometer([...withoutDup, entry]);
+          if (after && before && after.bandIndex > before.bandIndex) {
+            levelUpLabel = after.band.label;
+            levelUpCelebration = await checkLevelUpMilestone(levelUpLabel, today);
+          }
+        } catch (err) {
+          console.error('[Habla] level-up milestone check failed:', err);
+        }
+      }
+    }
+
+    const sessionCelebrations = await milestonesOnLessonComplete(
+      streakRes.state.currentStreak,
+      today,
+    );
+    const allCelebrations = [
+      ...(personalBestCelebration ? [personalBestCelebration] : []),
+      ...(levelUpCelebration ? [levelUpCelebration] : []),
+      ...sessionCelebrations,
+    ];
+    if (allCelebrations.length > 0) {
+      pendingCelebrationsRef.current = allCelebrations;
+      try {
+        celebrate(allCelebrations, {
+          onAllDismissed: () => {
+            const milestoneGems = pendingCelebrationsRef.current.reduce(
+              (sum, c) => sum + c.gemsAwarded,
+              0,
+            );
+            if (milestoneGems > 0) {
+              setGemsEarned((prev) => prev + milestoneGems);
+              Animated.sequence([
+                Animated.timing(milestoneGemPulse, {
+                  toValue: 1.22,
+                  duration: 180,
+                  useNativeDriver: true,
+                }),
+                Animated.timing(milestoneGemPulse, {
+                  toValue: 1,
+                  duration: 220,
+                  useNativeDriver: true,
+                }),
+              ]).start();
+            }
+            const celebrationsSnapshot = [...pendingCelebrationsRef.current];
+            pendingCelebrationsRef.current = [];
+            void queueMilestoneQuizzesFromCelebrations(celebrationsSnapshot, {
+              levelLabel: levelUpLabel,
+              achievedDate: today,
+            }).catch((quizErr) => {
+              console.error('[Habla] milestone quiz queue failed:', quizErr);
+            });
+          },
         });
-      };
-      attemptSave(1);
-    },
-    [],
-  );
+      } catch (celebrateErr) {
+        console.error('[Habla] milestone celebration failed:', celebrateErr);
+      }
+    }
+
+    await withOneRetry('saveLastSummary', () => saveLastSummary(payload));
+
+    void syncStreakReminder().catch(() => {
+      // Non-blocking: reschedule tomorrow's reminder after today's lesson.
+    });
+  }, [
+    analysis,
+    buildLessonHistoryEntry,
+    celebrate,
+    focusAreas,
+    isDemoSession,
+    lessonType,
+    milestoneGemPulse,
+    payload,
+    scorePending,
+    session.lessonFocus,
+    strongAreas,
+    weakAreas,
+  ]);
 
   useEffect(() => {
     if (didRecordRef.current) return;
     didRecordRef.current = true;
 
-    if (isDemoSession) {
-      void getTotalGems().then(setGemsBefore);
-      setGemsEarned(2);
-      setDailyChallengeText(DEMO_DAILY_CHALLENGE);
-      setStreakHydrated(true);
-      return;
-    }
-
-    updateStreak()
-      .then(async (res) => {
-        try {
-        const currentStreak = res.state.currentStreak;
-        const today = formatLocalDate();
-
-        const overallScore = scorePending
-          ? 0
-          : safeNumber(analysis?.overallScore ?? analysis?.correctnessScore ?? 0);
-        const gems = scorePending ? 0 : calculateLessonGems(overallScore);
-
-        const beforeGems = await getTotalGems();
-        setGemsBefore(beforeGems);
-
-        let personalBestCelebration = null;
-        if (analysis && lessonType) {
-          try {
-            personalBestCelebration = await checkPersonalBestMilestone(overallScore, today);
-          } catch (err) {
-            console.error('[Habla] checkPersonalBestMilestone failed:', err);
-          }
-        }
-
-        if (gems > 0) {
-          try {
-            await addGems(gems);
-            setGemsEarned(gems);
-          } catch {
-            // Non-blocking: summary should not fail if gems cannot be saved.
-          }
-        } else {
-          setGemsEarned(payload.gemsEarnedEstimate ?? 2);
-        }
-
-        if (analysis && lessonType) {
-          const lessonHistoryEntry = buildLessonHistoryEntry();
-          if (lessonHistoryEntry) {
-            console.log(
-              '[Habla] Saving to lessonHistory:',
-              JSON.stringify(lessonHistoryEntry, null, 2),
-            );
-            saveLessonHistoryWithRetry(lessonHistoryEntry);
-          }
-
-          if (!didGenerateChallengeRef.current) {
-            didGenerateChallengeRef.current = true;
-            setChallengeLoading(true);
-            void (async () => {
-              const focus = session.lessonFocus
-                ? lessonFocusLabel(session.lessonFocus)
-                : undefined;
-              const grammarTopic =
-                session.lessonFocus?.kind === 'grammar'
-                  ? session.lessonFocus.topic
-                  : undefined;
-
-              try {
-                const recent = await getRecentChallengeTexts();
-                const focusTipsForChallenge = await getActiveFocusTipsForChallenge();
-                const challengeType = await resolveChallengeTypeForLesson(lessonType);
-                const text = await generateDailyThinkingChallenge(
-                  {
-                    lessonType,
-                    lessonFocus: focus,
-                    grammarTopic,
-                    strongAreas,
-                    weakAreas,
-                    focusAreas,
-                    encouragingMessage: analysis.encouragingMessage,
-                    overallScore: analysis.overallScore,
-                  },
-                  challengeType,
-                  recent,
-                  focusTipsForChallenge?.tips,
-                );
-                await saveDailyChallenge(text, challengeType);
-                if (focusTipsForChallenge) {
-                  await markFocusTipsUsedInChallenge();
-                }
-                setDailyChallengeText(text);
-              } catch {
-                setDailyChallengeText(null);
-              }
-
-              try {
-                await saveFocusTipsFromSummaryIfExpired(
-                  buildFocusTipsFromAnalysis(analysis, {
-                    grammarTopic,
-                    lessonFocus: focus,
-                  }),
-                );
-              } catch {
-                // Non-blocking: focus tips should not block summary.
-              } finally {
-                setChallengeLoading(false);
-              }
-            })();
-          }
-        }
-
-        let levelUpCelebration: MilestoneCelebration | null = null;
-        let levelUpLabel: string | undefined;
-        if (analysis && lessonType) {
-          const entry = buildLessonHistoryEntry();
-          if (entry) {
-            try {
-              const existing = await getLessonHistory();
-              const before = getLevelBarometer(existing);
-              const withoutDup = existing.filter(
-                (e) => !(e.date === entry.date && e.lessonType === entry.lessonType),
-              );
-              const after = getLevelBarometer([...withoutDup, entry]);
-              if (after && before && after.bandIndex > before.bandIndex) {
-                levelUpLabel = after.band.label;
-                levelUpCelebration = await checkLevelUpMilestone(levelUpLabel, today);
-              }
-            } catch (err) {
-              console.error('[Habla] level-up milestone check failed:', err);
-            }
-          }
-        }
-
-        const sessionCelebrations = await milestonesOnLessonComplete(currentStreak, today);
-        const allCelebrations = [
-          ...(personalBestCelebration ? [personalBestCelebration] : []),
-          ...(levelUpCelebration ? [levelUpCelebration] : []),
-          ...sessionCelebrations,
-        ];
-        if (allCelebrations.length > 0) {
-          pendingCelebrationsRef.current = allCelebrations;
-          try {
-            celebrate(allCelebrations, {
-              onAllDismissed: () => {
-                const milestoneGems = pendingCelebrationsRef.current.reduce(
-                  (sum, c) => sum + c.gemsAwarded,
-                  0,
-                );
-                if (milestoneGems > 0) {
-                  setGemsEarned((prev) => prev + milestoneGems);
-                  Animated.sequence([
-                    Animated.timing(milestoneGemPulse, {
-                      toValue: 1.22,
-                      duration: 180,
-                      useNativeDriver: true,
-                    }),
-                    Animated.timing(milestoneGemPulse, {
-                      toValue: 1,
-                      duration: 220,
-                      useNativeDriver: true,
-                    }),
-                  ]).start();
-                }
-                const celebrationsSnapshot = [...pendingCelebrationsRef.current];
-                pendingCelebrationsRef.current = [];
-                void queueMilestoneQuizzesFromCelebrations(celebrationsSnapshot, {
-                  levelLabel: levelUpLabel,
-                  achievedDate: today,
-                }).catch((quizErr) => {
-                  console.error('[Habla] milestone quiz queue failed:', quizErr);
-                });
-              },
-            });
-          } catch (celebrateErr) {
-            console.error('[Habla] milestone celebration failed:', celebrateErr);
-          }
-        }
-
-        void syncStreakReminder().catch(() => {
-          // Non-blocking: reschedule tomorrow's reminder after today's lesson.
-        });
-        } catch (err) {
-          console.error('[Habla] Summary side-effects failed:', err);
-        }
-      })
-      .catch(() => {
-        // no-op: streak should not block summary UI
+    persistencePromiseRef.current = runSummaryPersistence()
+      .catch((err) => {
+        console.error('[Habla] Summary persistence failed:', err);
       })
       .finally(() => {
         setStreakHydrated(true);
       });
-  }, []);
+  }, [runSummaryPersistence]);
 
-  const goHome = onGoHome;
+  const confirmAndGoHome = useCallback(async () => {
+    if (leavingHomeRef.current) return;
+    leavingHomeRef.current = true;
+    setLeavingHome(true);
+
+    if (Platform.OS !== 'web') {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    let indicatorShown = false;
+    const indicatorTimer = setTimeout(() => {
+      indicatorShown = true;
+      setSaveIndicator('Saving...');
+    }, 1000);
+
+    try {
+      await (persistencePromiseRef.current ?? runSummaryPersistence());
+      await withOneRetry('finalLastSummary', () => saveLastSummary(payload));
+      if (indicatorShown) {
+        setSaveIndicator('Saving... ✅');
+        await new Promise((resolve) => setTimeout(resolve, 450));
+      }
+    } catch (err) {
+      console.error('[Habla] confirmAndGoHome save failed:', err);
+    } finally {
+      clearTimeout(indicatorTimer);
+      resetLessonSession();
+      router.replace('/(tabs)' as Href);
+    }
+  }, [payload, router, runSummaryPersistence]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      void confirmAndGoHome();
+      return true;
+    });
+    return () => sub.remove();
+  }, [confirmAndGoHome]);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
+      if (leavingHomeRef.current) return;
+      event.preventDefault();
+      void confirmAndGoHome();
+    });
+    return unsubscribe;
+  }, [navigation, confirmAndGoHome]);
+
+  const goHome = () => {
+    void confirmAndGoHome();
+  };
 
   const startDrills = async () => {
     if (!analysis || !lessonType || loadingDrills) return;
@@ -550,6 +582,7 @@ function SummaryScreenInner({
   });
 
   return (
+    <SummaryErrorBoundary payload={payload} onGoHome={() => void confirmAndGoHome()}>
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
       {hasAnalysis && mode === 'summary' ? (
@@ -759,7 +792,7 @@ function SummaryScreenInner({
             <Animated.View style={{ opacity: reveal.practiceOpacity }}>
               <Pressable
                 onPress={startDrills}
-                disabled={loadingDrills}
+                disabled={loadingDrills || leavingHome}
                 style={({ pressed }) => [
                   styles.practiceButton,
                   loadingDrills && styles.practiceButtonDisabled,
@@ -772,16 +805,6 @@ function SummaryScreenInner({
                 ) : (
                   <Text style={styles.practiceButtonText}>Practice Weak Areas</Text>
                 )}
-              </Pressable>
-            </Animated.View>
-
-            <Animated.View style={{ opacity: reveal.homeOpacity, marginTop: 10 }}>
-              <Pressable
-                onPress={goHome}
-                style={({ pressed }) => [styles.secondaryHomeButton, pressed && styles.secondaryHomePressed]}
-                accessibilityRole="button"
-                accessibilityLabel="Back to home">
-                <Text style={styles.secondaryHomeText}>Back to Home</Text>
               </Pressable>
             </Animated.View>
 
@@ -1030,24 +1053,47 @@ function SummaryScreenInner({
         <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <Pressable
             onPress={goHome}
-            style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}
+            disabled={leavingHome}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              leavingHome && styles.primaryButtonDisabled,
+              pressed && !leavingHome && styles.primaryButtonPressed,
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Back to home">
-            <Text style={styles.primaryButtonText}>Back to Home</Text>
+            {leavingHome && saveIndicator ? (
+              <Text style={styles.primaryButtonText}>{saveIndicator}</Text>
+            ) : leavingHome ? (
+              <ActivityIndicator color="#0B0F14" size="small" />
+            ) : (
+              <Text style={styles.primaryButtonText}>Back to Home 🏠</Text>
+            )}
           </Pressable>
         </View>
-      ) : hasAnalysis ? (
+      ) : (
         <View style={[styles.stickyHomeFooter, { paddingBottom: Math.max(insets.bottom, 12) }]}>
           <Pressable
             onPress={goHome}
-            style={({ pressed }) => [styles.stickyHomeButton, pressed && styles.stickyHomeButtonPressed]}
+            disabled={leavingHome}
+            style={({ pressed }) => [
+              styles.stickyHomeButton,
+              leavingHome && styles.stickyHomeButtonDisabled,
+              pressed && !leavingHome && styles.stickyHomeButtonPressed,
+            ]}
             accessibilityRole="button"
             accessibilityLabel="Back to home">
-            <Text style={styles.stickyHomeButtonText}>Back to Home</Text>
+            {leavingHome && saveIndicator ? (
+              <Text style={styles.stickyHomeButtonText}>{saveIndicator}</Text>
+            ) : leavingHome ? (
+              <ActivityIndicator color="#0B0F14" size="small" />
+            ) : (
+              <Text style={styles.stickyHomeButtonText}>Back to Home 🏠</Text>
+            )}
           </Pressable>
         </View>
-      ) : null}
+      )}
     </SafeAreaView>
+    </SummaryErrorBoundary>
   );
 }
 
@@ -1105,15 +1151,29 @@ const styles = StyleSheet.create({
   },
   stickyHomeButton: {
     backgroundColor: palette.accent,
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 16,
+    paddingVertical: 18,
     alignItems: 'center',
+    ...Platform.select({
+      ios: {
+        shadowColor: palette.accent,
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.35,
+        shadowRadius: 16,
+      },
+      android: {
+        elevation: 6,
+      },
+      default: {},
+    }),
   },
-  stickyHomeButtonPressed: { backgroundColor: palette.accentPressed },
+  stickyHomeButtonPressed: { backgroundColor: palette.accentPressed, transform: [{ scale: 0.98 }] },
+  stickyHomeButtonDisabled: { opacity: 0.85 },
   stickyHomeButtonText: {
-    fontSize: 16,
+    fontSize: 18,
     fontWeight: '800',
     color: '#0B0F14',
+    letterSpacing: 0.2,
   },
   scoreSection: {
     alignItems: 'center',
@@ -1643,6 +1703,9 @@ const styles = StyleSheet.create({
   primaryButtonPressed: {
     backgroundColor: palette.accentPressed,
     transform: [{ scale: 0.98 }],
+  },
+  primaryButtonDisabled: {
+    opacity: 0.85,
   },
   primaryButtonText: {
     fontSize: 18,
