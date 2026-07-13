@@ -1182,6 +1182,7 @@ export default function LessonScreen() {
 
       router.replace('/summary');
 
+      stopJaviSpeech();
       const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
       if (isDemoSession) return;
 

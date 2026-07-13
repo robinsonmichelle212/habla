@@ -19,6 +19,7 @@ function safeScore(value: unknown): number {
 
 export type SummaryRevealControls = {
   skip: () => void;
+  stop: () => void;
   complete: boolean;
   displayScore: number;
   titleOpacity: Animated.Value;
@@ -225,6 +226,11 @@ export function useSummaryReveal(options: {
     applySkip();
   }, [enabled, applySkip]);
 
+  const stop = useCallback(() => {
+    skippedRef.current = true;
+    animationRef.current?.stop();
+  }, []);
+
   useEffect(() => {
     if (!enabled) {
       setDisplayScore(safeOverallScore);
@@ -420,6 +426,7 @@ export function useSummaryReveal(options: {
 
   return {
     skip,
+    stop,
     complete,
     displayScore,
     titleOpacity,

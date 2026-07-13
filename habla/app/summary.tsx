@@ -1,4 +1,5 @@
 import { SummaryErrorBoundary } from '@/components/summary-error-boundary';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import { AppTextInput } from '@/components/app-text-input';
 import { SummaryScoreRing } from '@/components/summary-score-ring';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
@@ -22,7 +23,8 @@ import {
 } from '@/lib/demo-mode';
 import { checkPersonalBestMilestone, checkLevelUpMilestone, milestonesOnLessonComplete, type MilestoneCelebration } from '@/lib/milestones';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
-import { getLessonSession, resetLessonSession, setLessonSession } from '@/lib/lesson-session';
+import { getLessonSession, clearLessonSessionMemory, setLessonSession } from '@/lib/lesson-session';
+import { stopJaviSpeech } from '@/lib/javi-speech';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import {
   buildSafeSummaryPayload,
@@ -39,7 +41,6 @@ import { useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigation } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Alert,
@@ -106,6 +107,7 @@ async function withOneRetry<T>(label: string, fn: () => Promise<T>): Promise<T> 
 }
 
 export default function SummaryScreen() {
+  const router = useRouter();
   const payload = useMemo(() => {
     try {
       const session = getLessonSession();
@@ -122,7 +124,19 @@ export default function SummaryScreen() {
     }
   }, []);
 
-  return <SummaryScreenInner payload={payload} />;
+  const onErrorGoHome = useCallback(() => {
+    stopJaviSpeech();
+    clearLessonSessionMemory();
+    router.replace('/' as Href);
+  }, [router]);
+
+  return (
+    <ErrorBoundary onGoHome={onErrorGoHome}>
+      <SummaryErrorBoundary payload={payload} onGoHome={onErrorGoHome}>
+        <SummaryScreenInner payload={payload} />
+      </SummaryErrorBoundary>
+    </ErrorBoundary>
+  );
 }
 
 function SummaryScreenInner({
@@ -131,7 +145,6 @@ function SummaryScreenInner({
   payload: SafeSummaryPayload;
 }) {
   const router = useRouter();
-  const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const session = payload.session;
   const analysis = payload.analysis;
@@ -170,8 +183,20 @@ function SummaryScreenInner({
   const didGenerateChallengeRef = useRef(false);
   const persistencePromiseRef = useRef<Promise<void> | null>(null);
   const leavingHomeRef = useRef(false);
+  const isMountedRef = useRef(true);
+  const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const revealRef = useRef<ReturnType<typeof useSummaryReveal> | null>(null);
   const [leavingHome, setLeavingHome] = useState(false);
   const [saveIndicator, setSaveIndicator] = useState<string | null>(null);
+
+  const scheduleTimeout = useCallback((fn: () => void, ms: number) => {
+    const id = setTimeout(() => {
+      timeoutsRef.current = timeoutsRef.current.filter((t) => t !== id);
+      if (isMountedRef.current) fn();
+    }, ms);
+    timeoutsRef.current.push(id);
+    return id;
+  }, []);
 
   const buildLessonHistoryEntry = useCallback(() => {
     if (!analysis || !lessonType) return null;
@@ -243,9 +268,11 @@ function SummaryScreenInner({
   const runSummaryPersistence = useCallback(async () => {
     if (isDemoSession) {
       const beforeGems = await getTotalGems();
-      setGemsBefore(beforeGems);
-      setGemsEarned(2);
-      setDailyChallengeText(DEMO_DAILY_CHALLENGE);
+      if (isMountedRef.current) {
+        setGemsBefore(beforeGems);
+        setGemsEarned(2);
+        setDailyChallengeText(DEMO_DAILY_CHALLENGE);
+      }
       return;
     }
 
@@ -256,7 +283,7 @@ function SummaryScreenInner({
       : safeNumber(analysis?.overallScore ?? analysis?.correctnessScore ?? 0);
     const gems = scorePending ? 0 : calculateLessonGems(overallScore);
     const beforeGems = await getTotalGems();
-    setGemsBefore(beforeGems);
+    if (isMountedRef.current) setGemsBefore(beforeGems);
 
     let personalBestCelebration = null;
     if (analysis && lessonType) {
@@ -269,8 +296,8 @@ function SummaryScreenInner({
 
     if (gems > 0) {
       await withOneRetry('addGems', () => addGems(gems));
-      setGemsEarned(gems);
-    } else {
+      if (isMountedRef.current) setGemsEarned(gems);
+    } else if (isMountedRef.current) {
       setGemsEarned(payload.gemsEarnedEstimate ?? 2);
     }
 
@@ -299,7 +326,7 @@ function SummaryScreenInner({
 
       if (!didGenerateChallengeRef.current) {
         didGenerateChallengeRef.current = true;
-        setChallengeLoading(true);
+        if (isMountedRef.current) setChallengeLoading(true);
         void (async () => {
           try {
             const recent = await getRecentChallengeTexts();
@@ -324,11 +351,11 @@ function SummaryScreenInner({
             if (focusTipsForChallenge) {
               await markFocusTipsUsedInChallenge();
             }
-            setDailyChallengeText(text);
+            if (isMountedRef.current) setDailyChallengeText(text);
           } catch {
-            setDailyChallengeText(null);
+            if (isMountedRef.current) setDailyChallengeText(null);
           } finally {
-            setChallengeLoading(false);
+            if (isMountedRef.current) setChallengeLoading(false);
           }
         })();
       }
@@ -374,7 +401,7 @@ function SummaryScreenInner({
               (sum, c) => sum + c.gemsAwarded,
               0,
             );
-            if (milestoneGems > 0) {
+            if (milestoneGems > 0 && isMountedRef.current) {
               setGemsEarned((prev) => prev + milestoneGems);
               Animated.sequence([
                 Animated.timing(milestoneGemPulse, {
@@ -433,61 +460,23 @@ function SummaryScreenInner({
         console.error('[Habla] Summary persistence failed:', err);
       })
       .finally(() => {
-        setStreakHydrated(true);
+        if (isMountedRef.current) setStreakHydrated(true);
       });
   }, [runSummaryPersistence]);
 
-  const confirmAndGoHome = useCallback(async () => {
-    if (leavingHomeRef.current) return;
-    leavingHomeRef.current = true;
-    setLeavingHome(true);
-
-    if (Platform.OS !== 'web') {
-      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    }
-
-    let indicatorShown = false;
-    const indicatorTimer = setTimeout(() => {
-      indicatorShown = true;
-      setSaveIndicator('Saving...');
-    }, 1000);
-
-    try {
-      await (persistencePromiseRef.current ?? runSummaryPersistence());
-      await withOneRetry('finalLastSummary', () => saveLastSummary(payload));
-      if (indicatorShown) {
-        setSaveIndicator('Saving... ✅');
-        await new Promise((resolve) => setTimeout(resolve, 450));
-      }
-    } catch (err) {
-      console.error('[Habla] confirmAndGoHome save failed:', err);
-    } finally {
-      clearTimeout(indicatorTimer);
-      resetLessonSession();
-      router.replace('/(tabs)' as Href);
-    }
-  }, [payload, router, runSummaryPersistence]);
-
   useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      void confirmAndGoHome();
-      return true;
-    });
-    return () => sub.remove();
-  }, [confirmAndGoHome]);
+    isMountedRef.current = true;
+    stopJaviSpeech();
 
-  useEffect(() => {
-    const unsubscribe = navigation.addListener('beforeRemove', (event) => {
-      if (leavingHomeRef.current) return;
-      event.preventDefault();
-      void confirmAndGoHome();
-    });
-    return unsubscribe;
-  }, [navigation, confirmAndGoHome]);
-
-  const goHome = () => {
-    void confirmAndGoHome();
-  };
+    return () => {
+      isMountedRef.current = false;
+      stopJaviSpeech();
+      revealRef.current?.stop();
+      milestoneGemPulse.stopAnimation();
+      timeoutsRef.current.forEach(clearTimeout);
+      timeoutsRef.current = [];
+    };
+  }, [milestoneGemPulse]);
 
   const startDrills = async () => {
     if (!analysis || !lessonType || loadingDrills) return;
@@ -575,6 +564,59 @@ function SummaryScreenInner({
     gemsEarned: gemsEarned ?? 2,
     gemsBefore,
   });
+  revealRef.current = reveal;
+
+  const confirmAndGoHome = useCallback(async () => {
+    if (leavingHomeRef.current) return;
+    leavingHomeRef.current = true;
+    if (isMountedRef.current) setLeavingHome(true);
+
+    stopJaviSpeech();
+    revealRef.current?.stop();
+    milestoneGemPulse.stopAnimation();
+
+    if (Platform.OS !== 'web') {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    }
+
+    let indicatorShown = false;
+    const indicatorTimer = scheduleTimeout(() => {
+      indicatorShown = true;
+      setSaveIndicator('Saving...');
+    }, 1000);
+
+    try {
+      await (persistencePromiseRef.current ?? runSummaryPersistence());
+      await withOneRetry('finalLastSummary', () => saveLastSummary(payload));
+      if (indicatorShown && isMountedRef.current) {
+        setSaveIndicator('Saving... ✅');
+        await new Promise<void>((resolve) => {
+          scheduleTimeout(() => resolve(), 450);
+        });
+      }
+    } catch (err) {
+      console.error('[Habla] confirmAndGoHome save failed:', err);
+    } finally {
+      clearTimeout(indicatorTimer);
+      timeoutsRef.current = timeoutsRef.current.filter((t) => t !== indicatorTimer);
+      stopJaviSpeech();
+      clearLessonSessionMemory();
+      isMountedRef.current = false;
+      router.replace('/' as Href);
+    }
+  }, [milestoneGemPulse, payload, router, runSummaryPersistence, scheduleTimeout]);
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      void confirmAndGoHome();
+      return true;
+    });
+    return () => sub.remove();
+  }, [confirmAndGoHome]);
+
+  const goHome = () => {
+    void confirmAndGoHome();
+  };
 
   const challengeBorderColor = reveal.challengeHighlight.interpolate({
     inputRange: [0, 1],
@@ -582,7 +624,6 @@ function SummaryScreenInner({
   });
 
   return (
-    <SummaryErrorBoundary payload={payload} onGoHome={() => void confirmAndGoHome()}>
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
       {hasAnalysis && mode === 'summary' ? (
@@ -1093,7 +1134,6 @@ function SummaryScreenInner({
         </View>
       )}
     </SafeAreaView>
-    </SummaryErrorBoundary>
   );
 }
 

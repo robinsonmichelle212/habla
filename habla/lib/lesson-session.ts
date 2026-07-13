@@ -165,6 +165,28 @@ export function resetLessonSession() {
   state = { warmUpConversation: [], speakingConversation: [], conversation: [] };
 }
 
+/** Drop large in-memory lesson payloads after summary (transcripts, audio refs, analysis). */
+export function clearLessonSessionMemory() {
+  state = {
+    warmUpConversation: [],
+    speakingConversation: [],
+    conversation: [],
+    analysis: undefined,
+    drills: undefined,
+    writingTask: undefined,
+    writingEvaluation: undefined,
+    speakingEvaluation: undefined,
+    readingSession: undefined,
+    comprehensionEvaluation: undefined,
+    culturalNoteSaved: undefined,
+    wordsSavedFromReading: undefined,
+    summaryNotice: undefined,
+    demoSession: undefined,
+    lessonType: undefined,
+    lessonFocus: undefined,
+  };
+}
+
 export function conversationToJaviMessages(conversation: LessonConversationTurn[]): JaviMessage[] {
   return conversation
     .map((t) => ({ role: t.role, content: t.spanish?.trim() || '' }))

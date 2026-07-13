@@ -6,6 +6,7 @@ import { useEffect } from 'react';
 import { View } from 'react-native';
 import 'react-native-reanimated';
 
+import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { MilestoneProvider } from '@/contexts/milestone-context';
 import { DemoModeProvider } from '@/contexts/demo-mode-context';
 import { NetworkProvider, useNetworkStatus } from '@/contexts/network-context';
@@ -17,8 +18,11 @@ import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
 import { runOneTimeGemRestoration } from '@/lib/gem-restoration';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
+import { setupGlobalErrorHandlers } from '@/lib/setup-global-error-handlers';
 import { ensurePreviousMonthWrapped } from '@/lib/wrapped-storage';
 import { notifyWrappedReadyNow, scheduleWrappedMonthlyNotification } from '@/lib/wrapped-notifications';
+
+setupGlobalErrorHandlers();
 
 export const unstable_settings = {
   anchor: '(tabs)',
@@ -84,6 +88,7 @@ export default function RootLayout() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+      <AppErrorBoundary>
       <NetworkProvider>
         <DemoModeProvider>
         <View style={{ flex: 1 }}>
@@ -132,6 +137,7 @@ export default function RootLayout() {
         </View>
         </DemoModeProvider>
       </NetworkProvider>
+      </AppErrorBoundary>
     </ThemeProvider>
   );
 }
