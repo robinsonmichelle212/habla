@@ -502,6 +502,219 @@ function buildVenirPreterite(name: string): MemoryPalaceVerbSet {
   };
 }
 
+function buildEstarPreterite(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'estar_preterite',
+    verbLabel: 'ESTAR',
+    englishMeaning: 'to be (location/state)',
+    previewForms: 'estuve, estuviste, estuvo…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'estuve',
+        'S-TWO-veh — picture S and TWO at the kettle',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, the kettle WAS cold — it had been sitting there. Estuve — "I was" — S-TWO-veh — imagine S and TWO at the kettle. Say it: estuve.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'estuviste',
+        'You were at the fridge all morning',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge — you WERE (estuviste) at the fridge all morning. Say it: estuviste.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'estuvo',
+        'The cooker was on all night',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — it WAS (estuvo) on all night. Say it: estuvo.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'estuvimos',
+        'We were at the table for hours',
+        personalize(
+          `${TABLE.itemEmoji} At the table — we WERE (estuvimos) at the table for hours. Say it: estuvimos.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'estuvisteis',
+        'You all were by the window',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — you all WERE (estuvisteis) by the window. Say it: estuvisteis.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'estuvieron',
+        'They were at the door waiting',
+        personalize(
+          `${DOOR.itemEmoji} The door — they WERE (estuvieron) at the door waiting. Say it: estuvieron.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
+function buildSaberPreterite(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'saber_preterite',
+    verbLabel: 'SABER',
+    englishMeaning: 'to know',
+    previewForms: 'supe, supiste, supo…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'supe',
+        'SUPER — super, I knew it!',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, the kettle KNEW it was going to boil — SUPE sounds like SUPER — super, I knew it! Say it: supe.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'supiste',
+        'You knew the fridge was empty',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge — you KNEW (supiste) the fridge was empty. Say it: supiste.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'supo',
+        'The cooker knew when to stop',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — it KNEW (supo) when to stop. Say it: supo.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'supimos',
+        'We knew at the table',
+        personalize(
+          `${TABLE.itemEmoji} At the table — we KNEW (supimos) at the table. Say it: supimos.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'supisteis',
+        'You all knew by the window',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — you all KNEW (supisteis) by the window. Say it: supisteis.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'supieron',
+        'They knew at the door',
+        personalize(
+          `${DOOR.itemEmoji} The door — they KNEW (supieron) at the door. Say it: supieron.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
+function buildDarPreterite(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'dar_preterite',
+    verbLabel: 'DAR',
+    englishMeaning: 'to give',
+    previewForms: 'di, diste, dio…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'di',
+        'DJ — the DJ gave everyone a great night',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, the kettle GAVE out steam — DI sounds like "dee" — imagine a DJ at the kettle. Say it: di.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'diste',
+        'You gave the fridge a good clean',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge — you GAVE (diste) the fridge a good clean. Say it: diste.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'dio',
+        'The cooker gave off heat',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — it GAVE (dio) off heat. Say it: dio.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'dimos',
+        'We gave thanks at the table',
+        personalize(
+          `${TABLE.itemEmoji} At the table — we GAVE (dimos) thanks at the table. Say it: dimos.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'disteis',
+        'You all gave by the window',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — you all GAVE (disteis) by the window. Say it: disteis.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'dieron',
+        'They gave at the door',
+        personalize(
+          `${DOOR.itemEmoji} The door — they GAVE (dieron) at the door. Say it: dieron.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
 export const MEMORY_PALACE_GROUPS: MemoryPalaceWeekGroup[] = [
   {
     id: 'week-3-4-preterite',
@@ -522,10 +735,13 @@ export function buildVerbSetsForUser(name: string): MemoryPalaceWeekGroup[] {
       maxWeek: 4,
       verbSets: [
         buildIrPreterite(learnerName),
+        buildEstarPreterite(learnerName),
         buildTenerPreterite(learnerName),
         buildHacerPreterite(learnerName),
         buildPoderPreterite(learnerName),
         buildQuererPreterite(learnerName),
+        buildSaberPreterite(learnerName),
+        buildDarPreterite(learnerName),
         buildVenirPreterite(learnerName),
       ],
     },
@@ -541,22 +757,136 @@ export function isWeekGroupUnlocked(
   return completedWeeks.some((w) => w >= group.minWeek);
 }
 
-export async function getMemoryPalaceHistory(): Promise<string[]> {
-  const raw = await AsyncStorage.getItem(HISTORY_KEY);
+export const MEMORY_PALACE_VERB_IDS = [
+  'ir_preterite',
+  'estar_preterite',
+  'tener_preterite',
+  'hacer_preterite',
+  'poder_preterite',
+  'querer_preterite',
+  'saber_preterite',
+  'dar_preterite',
+  'venir_preterite',
+] as const;
+
+export type MemoryPalaceHistoryEntry = {
+  verbId: string;
+  visited: boolean;
+  lastVisited: string | null;
+  timesCompleted: number;
+};
+
+function defaultHistoryEntry(verbId: string): MemoryPalaceHistoryEntry {
+  return {
+    verbId,
+    visited: false,
+    lastVisited: null,
+    timesCompleted: 0,
+  };
+}
+
+function parseHistoryEntries(raw: string | null): MemoryPalaceHistoryEntry[] {
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((id): id is string => typeof id === 'string');
+
+    const map = new Map<string, MemoryPalaceHistoryEntry>();
+    for (const item of parsed) {
+      if (typeof item === 'string') {
+        map.set(item, {
+          verbId: item,
+          visited: true,
+          lastVisited: null,
+          timesCompleted: 1,
+        });
+        continue;
+      }
+      if (!item || typeof item !== 'object') continue;
+      const entry = item as Partial<MemoryPalaceHistoryEntry>;
+      if (typeof entry.verbId !== 'string' || !entry.verbId.trim()) continue;
+      const existing = map.get(entry.verbId);
+      map.set(entry.verbId, {
+        verbId: entry.verbId,
+        visited: entry.visited === true || existing?.visited === true,
+        lastVisited:
+          typeof entry.lastVisited === 'string'
+            ? entry.lastVisited
+            : existing?.lastVisited ?? null,
+        timesCompleted:
+          typeof entry.timesCompleted === 'number' && Number.isFinite(entry.timesCompleted)
+            ? Math.max(0, Math.floor(entry.timesCompleted))
+            : existing?.timesCompleted ?? (entry.visited ? 1 : 0),
+      });
+    }
+    return Array.from(map.values());
   } catch {
     return [];
   }
 }
 
+/** Merge new verb catalog entries without overwriting existing progress. */
+export async function ensureMemoryPalaceHistoryMerged(): Promise<void> {
+  const raw = await AsyncStorage.getItem(HISTORY_KEY);
+  const history = parseHistoryEntries(raw);
+  const byId = new Map(history.map((entry) => [entry.verbId, entry]));
+
+  let changed = false;
+  for (const verbId of MEMORY_PALACE_VERB_IDS) {
+    if (!byId.has(verbId)) {
+      byId.set(verbId, defaultHistoryEntry(verbId));
+      changed = true;
+    }
+  }
+
+  if (!raw) {
+    changed = true;
+  } else if (!changed) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((item) => typeof item === 'string')) {
+        changed = true;
+      }
+    } catch {
+      changed = true;
+    }
+  }
+
+  if (!changed) return;
+
+  const merged = MEMORY_PALACE_VERB_IDS.map((verbId) => byId.get(verbId) ?? defaultHistoryEntry(verbId));
+  await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
+}
+
+export async function getMemoryPalaceHistory(): Promise<string[]> {
+  await ensureMemoryPalaceHistoryMerged();
+  const raw = await AsyncStorage.getItem(HISTORY_KEY);
+  const entries = parseHistoryEntries(raw);
+  return entries.filter((entry) => entry.visited).map((entry) => entry.verbId);
+}
+
 export async function markMemoryPalaceVisited(verbSetId: string): Promise<void> {
-  const history = await getMemoryPalaceHistory();
-  if (history.includes(verbSetId)) return;
-  await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify([...history, verbSetId]));
+  await ensureMemoryPalaceHistoryMerged();
+  const raw = await AsyncStorage.getItem(HISTORY_KEY);
+  const entries = parseHistoryEntries(raw);
+  const byId = new Map(entries.map((entry) => [entry.verbId, entry]));
+  const existing = byId.get(verbSetId);
+  const now = new Date().toISOString();
+
+  byId.set(verbSetId, {
+    verbId: verbSetId,
+    visited: true,
+    lastVisited: now,
+    timesCompleted: (existing?.timesCompleted ?? 0) + 1,
+  });
+
+  const merged = [
+    ...MEMORY_PALACE_VERB_IDS.map((verbId) => byId.get(verbId) ?? defaultHistoryEntry(verbId)),
+    ...Array.from(byId.values()).filter(
+      (entry) => !MEMORY_PALACE_VERB_IDS.includes(entry.verbId as (typeof MEMORY_PALACE_VERB_IDS)[number]),
+    ),
+  ];
+  await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
 }
 
 export function findVerbSet(
@@ -617,6 +947,7 @@ export function freeRecallConfirm(slot: PalaceSlot): string {
 export async function getUnlockedPalaceGroups(
   name: string,
 ): Promise<{ groups: MemoryPalaceWeekGroup[]; currentWeek: number }> {
+  await ensureMemoryPalaceHistoryMerged();
   const curriculum = await resolveGrammarCurriculum();
   const allGroups = buildVerbSetsForUser(name);
   const groups = allGroups.filter((g) =>
