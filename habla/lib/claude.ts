@@ -14,6 +14,8 @@ import {
   type ReadTextType,
   type ReadingSessionContent,
 } from '@/lib/read-with-javi';
+import { materializeBreakdownSkillTabs } from '@/lib/skill-tab-insights';
+import type { LessonBreakdown } from '@/lib/practice-storage';
 
 /** Matches the lesson chips on the lesson screen. */
 export type LessonType = 'Grammar' | 'Vocab' | 'Your Day' | 'Structure' | 'Read';
@@ -1002,45 +1004,53 @@ export async function analyzeLessonPhases(
 
   const fluencyDetail = `Speaking fluency ${speakingScore}% — flow ${speakingEvaluation.naturalFlowScore ?? speakingScore}%`;
 
+  const nextBreakdown = {
+    ...analysis.breakdown,
+    ...(isStructure
+      ? {
+          structure: {
+            ...(analysis.breakdown.structure ?? {
+              score: structureScore,
+              topic: lessonFocusLabel ?? 'Sentence structure',
+              details: [],
+              lessonDescription: '',
+              wordOrderMistakes: [],
+            }),
+            score: Math.round(
+              (structureScore + (analysis.breakdown.structure?.score ?? structureScore)) / 2,
+            ),
+            details: [
+              ...(analysis.breakdown.structure?.details ?? []).slice(0, 1),
+              'Natural word order in free conversation',
+            ].filter(Boolean),
+          },
+        }
+      : {}),
+    fluency: {
+      ...analysis.breakdown.fluency,
+      score: Math.round((analysis.breakdown.fluency.score + speakingScore) / 2),
+      details: [
+        ...(analysis.breakdown.fluency.details ?? []).slice(0, 1),
+        fluencyDetail,
+      ].filter(Boolean),
+      description:
+        analysis.breakdown.fluency.description ??
+        `Writing fluency ${writingScores.fluencyScore}% · speaking fluency ${speakingScore}%`,
+    },
+  };
+
+  const materialized = materializeBreakdownSkillTabs(nextBreakdown as LessonBreakdown, {
+    strongAreas: analysis.strongAreas,
+    weakAreas: analysis.weakAreas,
+    focusAreas: analysis.focusAreas,
+  });
+
   return {
     ...analysis,
     overallScore,
     correctnessScore: analysis.correctnessScore,
     weakAreas: (analysis.weakAreas ?? []).slice(0, 3),
-    breakdown: {
-      ...analysis.breakdown,
-      ...(isStructure
-        ? {
-            structure: {
-              ...(analysis.breakdown.structure ?? {
-                score: structureScore,
-                topic: lessonFocusLabel ?? 'Sentence structure',
-                details: [],
-                lessonDescription: '',
-                wordOrderMistakes: [],
-              }),
-              score: Math.round(
-                (structureScore + (analysis.breakdown.structure?.score ?? structureScore)) / 2,
-              ),
-              details: [
-                ...(analysis.breakdown.structure?.details ?? []).slice(0, 1),
-                'Natural word order in free conversation',
-              ].filter(Boolean),
-            },
-          }
-        : {}),
-      fluency: {
-        ...analysis.breakdown.fluency,
-        score: Math.round((analysis.breakdown.fluency.score + speakingScore) / 2),
-        details: [
-          ...(analysis.breakdown.fluency.details ?? []).slice(0, 1),
-          fluencyDetail,
-        ].filter(Boolean),
-        description:
-          analysis.breakdown.fluency.description ??
-          `Writing fluency ${writingScores.fluencyScore}% · speaking fluency ${speakingScore}%`,
-      },
-    },
+    breakdown: materialized as LessonBreakdownJson,
   };
 }
 
@@ -1084,33 +1094,41 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
   { error: string (concise pattern description), category: "grammar"|"writing"|"vocabulary"|"speaking"|"structure"|"word-order", occurrences: 1, example: string (real mistake from this lesson), correction: string (how to fix + brief explanation) }
   Only include precise, repeatable mistakes — not vague weak areas. Set occurrences to 1 for each new pattern found today.
   ${isStructure ? 'Tag word-order and construction mistakes as category "word-order" (or "structure" for broader lesson patterns).' : 'Tag word-order mistakes as category "word-order".'}
-- breakdown: object with:
-  - grammar: {
+- breakdown: object that MUST include ALL four skill tabs with this exact shape:
+  {
+    grammar: {
       score: 0-100 integer,
       topic: string (short label, e.g. "Past tense (preterite)"),
-      didWell: array of 2-3 specific positive observations from TODAY's lesson only,
-      workOn: array of 2-3 specific areas needing attention from TODAY's lesson only,
-      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
-    }
-  - vocabulary: {
+      didWell: string[] (2-3 items),
+      workOn: string[] (2-3 items),
+      focusThisWeek: string[] (1-2 items),
+      details: string[] (0-2 short notes, optional)
+    },
+    vocabulary: {
       score: 0-100 integer,
       topic: string (e.g. "Food and cooking"),
-      didWell: array of 2-3 specific positive observations from TODAY's lesson only,
-      workOn: array of 2-3 specific areas needing attention from TODAY's lesson only,
-      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
-    }
-  - fluency: {
+      didWell: string[] (2-3 items),
+      workOn: string[] (2-3 items),
+      focusThisWeek: string[] (1-2 items),
+      details: string[] (optional)
+    },
+    fluency: {
       score: 0-100 integer,
-      didWell: array of 2-3 specific positive observations from TODAY's speaking only,
-      workOn: array of 2-3 specific fluency issues from TODAY's speaking only,
-      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
-    }
-  - writing: {
+      didWell: string[] (2-3 items from TODAY's speaking),
+      workOn: string[] (2-3 items from TODAY's speaking),
+      focusThisWeek: string[] (1-2 items),
+      details: string[] (optional)
+    },
+    writing: {
       score: 0-100 integer,
-      didWell: array of 2-3 specific positive observations from TODAY's writing only,
-      workOn: array of 2-3 specific writing issues from TODAY only,
-      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
-    }${structureBlock}
+      didWell: string[] (2-3 items from TODAY's writing),
+      workOn: string[] (2-3 items from TODAY's writing),
+      focusThisWeek: string[] (1-2 items),
+      details: string[] (optional)
+    }
+  }${structureBlock}
+
+CRITICAL: Never omit grammar, vocabulary, fluency, or writing. Never omit didWell, workOn, or focusThisWeek on any of those four tabs — use [] only if truly nothing applies (prefer real observations).
 
 Skill tab observation rules (apply to every didWell, workOn, and focusThisWeek item):
 - Must be specific to today's actual lesson content — real successes or errors from the session
@@ -1141,14 +1159,74 @@ ${JSON.stringify(conversation, null, 2)}`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 2200,
+    max_tokens: 3600,
     system,
     messages: [{ role: 'user', content: user }],
   });
 
   const text = extractText(response);
   const parsed = extractFirstJsonObject(text) as LessonAnalysisJson;
-  return parsed;
+  return normalizeLessonAnalysisSkillTabs(parsed);
+}
+
+function emptySkillSection(score: number, topic?: string) {
+  return {
+    score,
+    ...(topic != null ? { topic } : {}),
+    didWell: [] as string[],
+    workOn: [] as string[],
+    focusThisWeek: [] as string[],
+    details: [] as string[],
+  };
+}
+
+/** Guarantee all four tab structures exist, then materialize insight arrays. */
+function normalizeLessonAnalysisSkillTabs(analysis: LessonAnalysisJson): LessonAnalysisJson {
+  const breakdown = (analysis.breakdown ?? {}) as Partial<LessonBreakdownJson>;
+  const grammar = {
+    ...emptySkillSection(0, 'Grammar'),
+    ...breakdown.grammar,
+    topic: breakdown.grammar?.topic ?? 'Grammar',
+  };
+  const vocabulary = {
+    ...emptySkillSection(0, 'Vocabulary'),
+    ...breakdown.vocabulary,
+    topic: breakdown.vocabulary?.topic ?? 'Vocabulary',
+  };
+  const fluency = {
+    ...emptySkillSection(0),
+    ...breakdown.fluency,
+  };
+  const writing = {
+    ...emptySkillSection(0),
+    ...breakdown.writing,
+  };
+
+  const mergedBreakdown = materializeBreakdownSkillTabs(
+    {
+      grammar,
+      vocabulary,
+      fluency,
+      writing,
+      structure: breakdown.structure,
+      reading: breakdown.reading,
+    } as LessonBreakdown,
+    {
+      strongAreas: analysis.strongAreas,
+      weakAreas: analysis.weakAreas,
+      focusAreas: analysis.focusAreas,
+    },
+  ) as LessonBreakdownJson;
+
+  console.log('Grammar data:', mergedBreakdown.grammar);
+  console.log('Vocabulary data:', mergedBreakdown.vocabulary);
+  console.log('Fluency data:', mergedBreakdown.fluency);
+  console.log('Writing data:', mergedBreakdown.writing);
+
+  return {
+    ...analysis,
+    breakdown: mergedBreakdown,
+  };
 }
 
 function writingTaskFocusLine(focus: LessonFocusContext): string {

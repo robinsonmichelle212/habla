@@ -1,5 +1,5 @@
 import { calculateLessonGems } from '@/lib/gems';
-import { normalizeSkillTabInsights } from '@/lib/skill-tab-insights';
+import { materializeBreakdownSkillTabs, normalizeSkillTabInsights } from '@/lib/skill-tab-insights';
 import type { LessonAnalysis, LessonBreakdown, LessonSessionState } from '@/lib/lesson-session';
 import {
   isOverallScorePending,
@@ -140,7 +140,11 @@ export function normalizeSummaryAnalysis(analysis: LessonAnalysis | null | undef
       typeof analysis.encouragingMessage === 'string'
         ? analysis.encouragingMessage
         : '¡Buen trabajo! / Great work completing your lesson.',
-    breakdown: normalizeBreakdown(analysis.breakdown),
+    breakdown: materializeBreakdownSkillTabs(normalizeBreakdown(analysis.breakdown), {
+      strongAreas: analysis.strongAreas,
+      weakAreas: analysis.weakAreas,
+      focusAreas: analysis.focusAreas,
+    }),
   };
 }
 
@@ -187,8 +191,15 @@ export function logSummaryData(payload: SafeSummaryPayload): void {
     gemsEarned: payload.gemsEarnedEstimate,
     speaking: payload.session.speakingEvaluation,
     writing: payload.session.writingEvaluation,
+    grammar: payload.analysis.breakdown.grammar,
+    vocabulary: payload.analysis.breakdown.vocabulary,
+    fluency: payload.analysis.breakdown.fluency,
   };
   console.log('Summary data received:', summaryData);
+  console.log('Grammar data:', summaryData?.grammar);
+  console.log('Vocabulary data:', summaryData?.vocabulary);
+  console.log('Fluency data:', summaryData?.fluency);
+  console.log('Writing data:', summaryData?.writing);
   console.log('Strong areas:', summaryData?.strongAreas);
   console.log('Weak areas:', summaryData?.weakAreas);
   console.log('XP earned:', summaryData?.xpEarned);

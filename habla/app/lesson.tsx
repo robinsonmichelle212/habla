@@ -53,6 +53,7 @@ import {
   type WritingEvaluation,
 } from '@/lib/lesson-session';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
+import { materializeBreakdownSkillTabs } from '@/lib/skill-tab-insights';
 import {
   buildFeynmanQuestion,
   markFeynmanCompletedForWeek,
@@ -1464,10 +1465,17 @@ export default function LessonScreen() {
                 correctnessScore: analysisJson.correctnessScore ?? 0,
                 overallScore: analysisJson.overallScore ?? 0,
                 encouragingMessage: analysisJson.encouragingMessage ?? '',
-                breakdown: mergeWritingIntoBreakdown(
-                  baseBreakdown,
-                  writingResult,
-                  writingPrompt,
+                breakdown: materializeBreakdownSkillTabs(
+                  mergeWritingIntoBreakdown(
+                    baseBreakdown,
+                    writingResult,
+                    writingPrompt,
+                  ),
+                  {
+                    strongAreas: analysisJson.strongAreas,
+                    weakAreas: analysisJson.weakAreas,
+                    focusAreas: analysisJson.focusAreas,
+                  },
                 ),
               };
             })()

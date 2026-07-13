@@ -6,6 +6,7 @@ import { addGems, OFFLINE_WRITING_GEMS } from '@/lib/gems';
 import { buildOfflineLessonAnalysis, buildPendingWritingEvaluation } from '@/lib/offline-lesson';
 import { focusCacheKey, getOfflineWritingPrompt } from '@/lib/offline-lesson-content';
 import { mergeWritingIntoBreakdown } from '@/lib/merge-writing-breakdown';
+import { materializeBreakdownSkillTabs } from '@/lib/skill-tab-insights';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
 import {
   conversationToJaviMessages,
@@ -278,7 +279,14 @@ export default function WritingScreen() {
         correctnessScore: analysisJson.correctnessScore ?? 0,
         overallScore: analysisJson.overallScore ?? analysisJson.correctnessScore ?? 0,
         encouragingMessage: analysisJson.encouragingMessage ?? '',
-        breakdown: mergeWritingIntoBreakdown(baseBreakdown, result, taskPrompt),
+        breakdown: materializeBreakdownSkillTabs(
+          mergeWritingIntoBreakdown(baseBreakdown, result, taskPrompt),
+          {
+            strongAreas: analysisJson.strongAreas,
+            weakAreas: analysisJson.weakAreas,
+            focusAreas: analysisJson.focusAreas,
+          },
+        ),
       };
       if (analysisJson.errorDNA?.length) {
         await mergeErrorDnaFromLesson(analysisJson.errorDNA);

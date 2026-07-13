@@ -68,7 +68,12 @@ export function LessonScoreBreakdownModal({
   const isOfflineSession = entry?.placeholder === true;
 
   useEffect(() => {
-    if (!visible) return;
+    if (!visible || !entry) return;
+    const summaryData = entry.breakdown;
+    console.log('Grammar data:', summaryData?.grammar);
+    console.log('Vocabulary data:', summaryData?.vocabulary);
+    console.log('Fluency data:', summaryData?.fluency);
+    console.log('Writing data:', summaryData?.writing);
     console.log(`[Habla] Breakdown modal opened — "${title}":`, JSON.stringify(entry, null, 2));
   }, [visible, title, entry]);
 

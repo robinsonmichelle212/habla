@@ -1,7 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { LessonType } from '@/lib/claude';
-import { normalizeSkillTabInsights } from '@/lib/skill-tab-insights';
+import {
+  countBreakdownInsightItems,
+  materializeBreakdownSkillTabs,
+  normalizeSkillTabInsights,
+} from '@/lib/skill-tab-insights';
 import type { SpeakingEvaluation } from '@/lib/lesson-session';
 import { formatLocalDate, getStreakState } from '@/lib/streak';
 
@@ -430,7 +434,13 @@ function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
         }
       : undefined;
 
-    const breakdown = normalizeBreakdown(obj.breakdown, legacyScores);
+    const breakdown = materializeBreakdownSkillTabs(
+      normalizeBreakdown(obj.breakdown, legacyScores),
+      {
+        weakAreas: toStringList(obj?.weakAreas),
+        focusAreas: toStringList(obj?.focusAreas),
+      },
+    );
     const overallScore =
       obj.overallScore != null
         ? toScore(obj.overallScore)
@@ -576,6 +586,9 @@ function isRicherLessonEntry(candidate: LessonHistoryEntry, existing: LessonHist
   if (candidate.speaking && !candidate.speaking.pendingEvaluation && existing.speaking?.pendingEvaluation) {
     return true;
   }
+  if (countBreakdownInsightItems(candidate.breakdown) > countBreakdownInsightItems(existing.breakdown)) {
+    return true;
+  }
   return false;
 }
 
@@ -586,22 +599,83 @@ export async function upsertLessonHistoryEntry(
   const history = await getLessonHistory();
   const idx = findLessonHistoryIndex(history, entry.date, entry.lessonType);
 
+  const richerBreakdown = materializeBreakdownSkillTabs(
+    normalizeBreakdown(entry.breakdown),
+    {
+      weakAreas: entry.weakAreas,
+      focusAreas: entry.focusAreas,
+    },
+  );
+  const normalizedEntry: LessonHistoryEntry = {
+    ...entry,
+    breakdown: richerBreakdown,
+  };
+
+  console.log('Grammar data:', richerBreakdown.grammar);
+  console.log('Vocabulary data:', richerBreakdown.vocabulary);
+  console.log('Fluency data:', richerBreakdown.fluency);
+  console.log('Writing data:', richerBreakdown.writing);
+
   if (idx < 0) {
-    const next = [...history, entry].slice(-MAX_LESSON_HISTORY);
+    const next = [...history, normalizedEntry].slice(-MAX_LESSON_HISTORY);
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     return 'created';
   }
 
   const existing = history[idx];
-  if (!isRicherLessonEntry(entry, existing)) {
+  if (!isRicherLessonEntry(normalizedEntry, existing)) {
+    // Still merge skill-tab insights if the existing row is missing them.
+    const mergedInsights = materializeBreakdownSkillTabs(
+      {
+        ...existing.breakdown,
+        grammar: {
+          ...existing.breakdown.grammar,
+          ...normalizeSkillTabInsights(existing.breakdown.grammar),
+          ...normalizeSkillTabInsights(richerBreakdown.grammar),
+        },
+        vocabulary: {
+          ...existing.breakdown.vocabulary,
+          ...normalizeSkillTabInsights(existing.breakdown.vocabulary),
+          ...normalizeSkillTabInsights(richerBreakdown.vocabulary),
+        },
+        fluency: {
+          ...existing.breakdown.fluency,
+          ...normalizeSkillTabInsights(existing.breakdown.fluency),
+          ...normalizeSkillTabInsights(richerBreakdown.fluency),
+        },
+        writing: {
+          ...existing.breakdown.writing,
+          ...normalizeSkillTabInsights(existing.breakdown.writing),
+          ...normalizeSkillTabInsights(richerBreakdown.writing),
+        },
+      },
+      {
+        weakAreas: normalizedEntry.weakAreas.length ? normalizedEntry.weakAreas : existing.weakAreas,
+        focusAreas: normalizedEntry.focusAreas.length
+          ? normalizedEntry.focusAreas
+          : existing.focusAreas,
+      },
+    );
+
+    if (countBreakdownInsightItems(mergedInsights) > countBreakdownInsightItems(existing.breakdown)) {
+      history[idx] = {
+        ...existing,
+        breakdown: mergedInsights,
+        weakAreas: existing.weakAreas.length ? existing.weakAreas : normalizedEntry.weakAreas,
+        focusAreas: existing.focusAreas.length ? existing.focusAreas : normalizedEntry.focusAreas,
+      };
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
+      return 'updated';
+    }
+
     return 'unchanged';
   }
 
   history[idx] = {
     ...existing,
-    ...entry,
-    breakdown: entry.breakdown ?? existing.breakdown,
-    speaking: entry.speaking ?? existing.speaking,
+    ...normalizedEntry,
+    breakdown: richerBreakdown,
+    speaking: normalizedEntry.speaking ?? existing.speaking,
   };
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
   return 'updated';
@@ -658,14 +732,20 @@ export async function updateLessonHistoryWriting(
   history[idx] = {
     ...entry,
     overallScore: patch.overallScore ?? entry.overallScore,
-    breakdown: {
-      ...entry.breakdown,
-      ...patch.breakdown,
-      grammar: patch.breakdown.grammar ?? entry.breakdown.grammar,
-      vocabulary: patch.breakdown.vocabulary ?? entry.breakdown.vocabulary,
-      writing: patch.breakdown.writing ?? entry.breakdown.writing,
-      fluency: entry.breakdown.fluency,
-    },
+    breakdown: materializeBreakdownSkillTabs(
+      {
+        ...entry.breakdown,
+        ...patch.breakdown,
+        grammar: patch.breakdown.grammar ?? entry.breakdown.grammar,
+        vocabulary: patch.breakdown.vocabulary ?? entry.breakdown.vocabulary,
+        fluency: patch.breakdown.fluency ?? entry.breakdown.fluency,
+        writing: patch.breakdown.writing ?? entry.breakdown.writing,
+      },
+      {
+        weakAreas: entry.weakAreas,
+        focusAreas: entry.focusAreas,
+      },
+    ),
   };
   await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(history));
   return true;
