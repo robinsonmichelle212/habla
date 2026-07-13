@@ -8,11 +8,20 @@ export type LessonConversationTurn = {
   translation?: string;
 };
 
+export type SkillTabInsightsFields = {
+  didWell?: string[];
+  workOn?: string[];
+  focusThisWeek?: string[];
+};
+
 export type LessonBreakdown = {
   grammar: {
     score: number;
     topic: string;
     details: string[];
+    didWell?: string[];
+    workOn?: string[];
+    focusThisWeek?: string[];
     lessonDescription?: string;
     mistakes?: { mistake: string; correction: string; explanation: string }[];
   };
@@ -20,12 +29,18 @@ export type LessonBreakdown = {
     score: number;
     topic: string;
     details: string[];
+    didWell?: string[];
+    workOn?: string[];
+    focusThisWeek?: string[];
     wordsCorrect?: { spanish: string; english: string }[];
     wordsToRevisit?: { spanish: string; english: string }[];
   };
   fluency: {
     score: number;
     details: string[];
+    didWell?: string[];
+    workOn?: string[];
+    focusThisWeek?: string[];
     description?: string;
     positivePatterns?: string[];
     negativePatterns?: string[];
@@ -35,6 +50,9 @@ export type LessonBreakdown = {
   writing: {
     score: number;
     details: string[];
+    didWell?: string[];
+    workOn?: string[];
+    focusThisWeek?: string[];
     originalText?: string;
     correctedText?: string;
     corrections?: WritingCorrection[];

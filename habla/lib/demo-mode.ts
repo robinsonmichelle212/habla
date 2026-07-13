@@ -77,10 +77,38 @@ export function demoLessonAnalysis(): LessonAnalysis {
     overallScore: 78,
     encouragingMessage: '¡Buen trabajo! / Great work completing your demo lesson.',
     breakdown: {
-      grammar: { score: 85, topic: 'Grammar', details: [], mistakes: [] },
-      vocabulary: { score: 80, topic: 'Vocabulary', details: [] },
-      fluency: { score: 80, details: [], description: 'Demo speaking' },
-      writing: { score: 78, details: [] },
+      grammar: {
+        score: 85,
+        topic: 'Grammar',
+        details: [],
+        didWell: ['Used target grammar in most sentences', 'Kept verb endings consistent'],
+        workOn: ['Double-check ser vs estar in descriptions'],
+        focusThisWeek: ['Write three sentences using today\'s grammar point'],
+        mistakes: [],
+      },
+      vocabulary: {
+        score: 80,
+        topic: 'Vocabulary',
+        details: [],
+        didWell: ['Used varied words from the lesson', 'Avoided repeating the same noun'],
+        workOn: ['One word needed a more precise choice'],
+        focusThisWeek: ['Review today\'s new words before bed'],
+      },
+      fluency: {
+        score: 80,
+        details: [],
+        description: 'Demo speaking',
+        didWell: ['Kept speaking without long silences', 'Finished most answers in Spanish'],
+        workOn: ['Pause less before conjugating verbs'],
+        focusThisWeek: ['Say answers aloud once without stopping'],
+      },
+      writing: {
+        score: 78,
+        details: [],
+        didWell: ['Completed the writing task', 'Used full sentences not fragments'],
+        workOn: ['Check accent marks on past tense verbs'],
+        focusThisWeek: ['Rewrite one sentence with correct accents'],
+      },
     },
   };
 }

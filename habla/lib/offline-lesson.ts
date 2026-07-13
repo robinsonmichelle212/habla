@@ -62,16 +62,25 @@ export function buildOfflineLessonAnalysis(
       score: writingPending ? 0 : writingResult.grammarScore,
       topic,
       details: writingPending ? ['Writing evaluation pending'] : [],
+      didWell: writingPending ? [] : ['Completed the grammar writing task'],
+      workOn: writingPending ? ['Writing will be scored when back online'] : [],
+      focusThisWeek: [`Practise ${topic} in three short sentences`],
       mistakes: [],
     },
     vocabulary: {
       score: writingPending ? 0 : writingResult.vocabularyScore,
       topic: 'Vocabulary',
       details: [],
+      didWell: writingPending ? [] : ['Used lesson vocabulary in writing'],
+      workOn: writingPending ? ['Vocabulary feedback pending'] : [],
+      focusThisWeek: ['Review new words from today before your next lesson'],
     },
     fluency: {
       score: speakingPending ? 0 : writingResult.fluencyScore,
       details: speakingPending ? ['Speaking evaluation pending'] : [],
+      didWell: speakingPending ? [] : ['Finished the speaking phase'],
+      workOn: speakingPending ? ['Speaking will be scored when back online'] : [],
+      focusThisWeek: ['Say one full answer aloud without stopping'],
       description: speakingPending
         ? 'Speaking will be scored once your recordings are processed.'
         : undefined,
@@ -79,6 +88,9 @@ export function buildOfflineLessonAnalysis(
     writing: {
       score: writingAvg,
       details: writingPending ? ['Evaluation pending when back online'] : [],
+      didWell: writingPending ? [] : ['Submitted your writing responses'],
+      workOn: writingPending ? ['Writing feedback pending'] : [],
+      focusThisWeek: ['Rewrite one sentence from today without notes'],
     },
   };
 

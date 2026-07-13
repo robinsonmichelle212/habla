@@ -306,28 +306,40 @@ export type LessonBreakdownJson = {
   grammar: {
     score: number;
     topic: string;
+    didWell: string[];
+    workOn: string[];
+    focusThisWeek: string[];
     details: string[];
-    lessonDescription: string;
-    mistakes: { mistake: string; correction: string; explanation: string }[];
+    lessonDescription?: string;
+    mistakes?: { mistake: string; correction: string; explanation: string }[];
   };
   vocabulary: {
     score: number;
     topic: string;
+    didWell: string[];
+    workOn: string[];
+    focusThisWeek: string[];
     details: string[];
-    wordsCorrect: { spanish: string; english: string }[];
-    wordsToRevisit: { spanish: string; english: string }[];
+    wordsCorrect?: { spanish: string; english: string }[];
+    wordsToRevisit?: { spanish: string; english: string }[];
   };
   fluency: {
     score: number;
+    didWell: string[];
+    workOn: string[];
+    focusThisWeek: string[];
     details: string[];
-    description: string;
-    positivePatterns: string[];
-    negativePatterns: string[];
-    sentenceNotes: string[];
-    weeklyTips: string[];
+    description?: string;
+    positivePatterns?: string[];
+    negativePatterns?: string[];
+    sentenceNotes?: string[];
+    weeklyTips?: string[];
   };
   writing: {
     score: number;
+    didWell: string[];
+    workOn: string[];
+    focusThisWeek: string[];
     details: string[];
   };
   structure?: {
@@ -1057,31 +1069,38 @@ Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
 - breakdown: object with:
   - grammar: {
       score: 0-100 integer,
-      topic: string (e.g. "Past tense (preterite)"),
-      details: array of exactly 2 short notes (one positive, one to improve),
-      lessonDescription: 2-3 sentences describing what grammar was covered and practised today,
-      mistakes: array of up to 4 specific mistakes from the conversation, each { mistake, correction, explanation }
+      topic: string (short label, e.g. "Past tense (preterite)"),
+      didWell: array of 2-3 specific positive observations from TODAY's lesson only,
+      workOn: array of 2-3 specific areas needing attention from TODAY's lesson only,
+      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
     }
   - vocabulary: {
       score: 0-100 integer,
       topic: string (e.g. "Food and cooking"),
-      details: array of exactly 2 short notes,
-      wordsCorrect: array of up to 6 words used well, each { spanish, english },
-      wordsToRevisit: array of up to 4 words the learner was uncertain about or used wrong, each { spanish, english }
+      didWell: array of 2-3 specific positive observations from TODAY's lesson only,
+      workOn: array of 2-3 specific areas needing attention from TODAY's lesson only,
+      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
     }
   - fluency: {
       score: 0-100 integer,
-      details: array of exactly 2 short notes,
-      description: one sentence explaining what the fluency score reflects,
-      positivePatterns: array of 2 things the learner did well with flow/structure,
-      negativePatterns: array of 2 patterns that held fluency back,
-      sentenceNotes: array of 2 notes on sentence construction,
-      weeklyTips: array of 2 practical tips from Javi for improving fluency this week
+      didWell: array of 2-3 specific positive observations from TODAY's speaking only,
+      workOn: array of 2-3 specific fluency issues from TODAY's speaking only,
+      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
     }
   - writing: {
       score: 0-100 integer,
-      details: array of exactly 2 short notes about writing (use writing scores if provided)
+      didWell: array of 2-3 specific positive observations from TODAY's writing only,
+      workOn: array of 2-3 specific writing issues from TODAY only,
+      focusThisWeek: array of 1-2 specific, doable practice actions linked to workOn
     }${structureBlock}
+
+Skill tab observation rules (apply to every didWell, workOn, and focusThisWeek item):
+- Must be specific to today's actual lesson content — real successes or errors from the session
+- Plain English only — no jargon
+- Actionable — something the learner can actually do
+- Maximum 15 words per observation
+- Never generic praise like "good effort" or "keep practising"
+- focusThisWeek must directly follow from workOn items
 
 Lesson type: ${lessonType}
 Lesson focus / topic context: ${lessonFocusLabel ?? 'General B1 practice'}
@@ -1093,11 +1112,11 @@ Rules:
 - Use writing scores to set breakdown.grammar.score, breakdown.vocabulary.score, breakdown.fluency.score where appropriate.
 - breakdown.writing.score should reflect writing quality (use writing scores as a guide).
 ${isStructure ? '- breakdown.structure.score must use structureScore from writing scores when provided.\n- breakdown.structure.topic must match the lesson focus.\n- Tag word-order patterns in errorDNA as category "word-order".' : ''}
-- breakdown.grammar.topic and breakdown.vocabulary.topic must reflect what was practised in this lesson.
+- breakdown.grammar.topic and breakdown.vocabulary.topic must reflect what was practised in this lesson (short label only).
 - overallScore must be the rounded average of the ${isStructure ? 'five' : 'four'} breakdown scores${isStructure ? ' (grammar, vocabulary, fluency, writing, structure)' : ''}.
-- weakAreas and focusAreas must align with breakdown details.
-- Populate ALL nested breakdown fields with real observations from the conversation — never leave arrays empty; use best-effort inference if needed.
-- wordsCorrect / wordsToRevisit must use real Spanish words from the conversation where possible.
+- weakAreas and focusAreas must align with workOn and focusThisWeek across breakdown sections.
+- Every breakdown section MUST include non-empty didWell (2-3 items), workOn (2-3 items), and focusThisWeek (1-2 items).
+- Do NOT mention curriculum weeks, grammar curriculum, or "this week's focus" anywhere.
 
 Conversation turns (role + content):
 ${JSON.stringify(conversation, null, 2)}`;

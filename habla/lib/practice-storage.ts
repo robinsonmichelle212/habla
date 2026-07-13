@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import type { LessonType } from '@/lib/claude';
+import { normalizeSkillTabInsights } from '@/lib/skill-tab-insights';
 import type { SpeakingEvaluation } from '@/lib/lesson-session';
 import { formatLocalDate, getStreakState } from '@/lib/streak';
 
@@ -27,19 +28,28 @@ export type WritingCorrection = {
   explanation: string;
 };
 
-export type GrammarBreakdown = ScoreBreakdownSection & {
+export type SkillTabInsightsFields = {
+  didWell?: string[];
+  workOn?: string[];
+  focusThisWeek?: string[];
+};
+
+export type GrammarBreakdown = ScoreBreakdownSection &
+  SkillTabInsightsFields & {
   topic: string;
   lessonDescription?: string;
   mistakes?: GrammarMistake[];
 };
 
-export type VocabularyBreakdown = ScoreBreakdownSection & {
+export type VocabularyBreakdown = ScoreBreakdownSection &
+  SkillTabInsightsFields & {
   topic: string;
   wordsCorrect?: VocabWord[];
   wordsToRevisit?: VocabWord[];
 };
 
-export type FluencyBreakdown = ScoreBreakdownSection & {
+export type FluencyBreakdown = ScoreBreakdownSection &
+  SkillTabInsightsFields & {
   description?: string;
   positivePatterns?: string[];
   negativePatterns?: string[];
@@ -47,7 +57,8 @@ export type FluencyBreakdown = ScoreBreakdownSection & {
   weeklyTips?: string[];
 };
 
-export type WritingBreakdown = ScoreBreakdownSection & {
+export type WritingBreakdown = ScoreBreakdownSection &
+  SkillTabInsightsFields & {
   originalText?: string;
   correctedText?: string;
   corrections?: WritingCorrection[];
@@ -230,10 +241,16 @@ function normalizeBreakdown(
   const writingBase = normalizeSection(writingRaw, w);
   const structureBase = normalizeSection(structureRaw, w, 'Structure');
 
+  const grammarInsights = normalizeSkillTabInsights(grammarRaw);
+  const vocabularyInsights = normalizeSkillTabInsights(vocabularyRaw);
+  const fluencyInsights = normalizeSkillTabInsights(fluencyRaw);
+  const writingInsights = normalizeSkillTabInsights(writingRaw);
+
   const breakdown: LessonBreakdown = {
     grammar: {
       ...grammarBase,
       topic: grammarBase.topic ?? 'Grammar',
+      ...grammarInsights,
       lessonDescription:
         typeof grammarRaw.lessonDescription === 'string' ? grammarRaw.lessonDescription : undefined,
       mistakes: normalizeMistakes(grammarRaw.mistakes),
@@ -241,12 +258,14 @@ function normalizeBreakdown(
     vocabulary: {
       ...vocabularyBase,
       topic: vocabularyBase.topic ?? 'Vocabulary',
+      ...vocabularyInsights,
       wordsCorrect: normalizeVocabWords(vocabularyRaw.wordsCorrect),
       wordsToRevisit: normalizeVocabWords(vocabularyRaw.wordsToRevisit),
     },
     fluency: {
       score: fluencyBase.score,
       details: fluencyBase.details,
+      ...fluencyInsights,
       description: typeof fluencyRaw.description === 'string' ? fluencyRaw.description : undefined,
       positivePatterns: toStringList(fluencyRaw.positivePatterns),
       negativePatterns: toStringList(fluencyRaw.negativePatterns),
@@ -256,6 +275,7 @@ function normalizeBreakdown(
     writing: {
       score: writingBase.score,
       details: writingBase.details,
+      ...writingInsights,
       originalText: typeof writingRaw.originalText === 'string' ? writingRaw.originalText : undefined,
       correctedText:
         typeof writingRaw.correctedText === 'string' ? writingRaw.correctedText : undefined,

@@ -1,4 +1,5 @@
 import { calculateLessonGems } from '@/lib/gems';
+import { normalizeSkillTabInsights } from '@/lib/skill-tab-insights';
 import type { LessonAnalysis, LessonBreakdown, LessonSessionState } from '@/lib/lesson-session';
 import {
   isOverallScorePending,
@@ -21,10 +22,37 @@ function safeStringArray(value: unknown, fallback: string[]): string[] {
 
 function defaultBreakdown(): LessonBreakdown {
   return {
-    grammar: { score: 0, topic: 'Grammar', details: [], mistakes: [] },
-    vocabulary: { score: 0, topic: 'Vocabulary', details: [] },
-    fluency: { score: 0, details: [] },
-    writing: { score: 0, details: [] },
+    grammar: {
+      score: 0,
+      topic: 'Grammar',
+      details: [],
+      didWell: [],
+      workOn: [],
+      focusThisWeek: [],
+      mistakes: [],
+    },
+    vocabulary: {
+      score: 0,
+      topic: 'Vocabulary',
+      details: [],
+      didWell: [],
+      workOn: [],
+      focusThisWeek: [],
+    },
+    fluency: {
+      score: 0,
+      details: [],
+      didWell: [],
+      workOn: [],
+      focusThisWeek: [],
+    },
+    writing: {
+      score: 0,
+      details: [],
+      didWell: [],
+      workOn: [],
+      focusThisWeek: [],
+    },
   };
 }
 
@@ -41,6 +69,7 @@ export function normalizeBreakdown(raw?: Partial<LessonBreakdown> | null): Lesso
       topic: raw.grammar?.topic ?? base.grammar.topic,
       details: Array.isArray(raw.grammar?.details) ? raw.grammar.details : [],
       mistakes: Array.isArray(raw.grammar?.mistakes) ? raw.grammar.mistakes : [],
+      ...normalizeSkillTabInsights(raw.grammar ?? {}),
     },
     vocabulary: {
       ...base.vocabulary,
@@ -48,18 +77,21 @@ export function normalizeBreakdown(raw?: Partial<LessonBreakdown> | null): Lesso
       score: safeNumber(raw.vocabulary?.score, 0),
       topic: raw.vocabulary?.topic ?? base.vocabulary.topic,
       details: Array.isArray(raw.vocabulary?.details) ? raw.vocabulary.details : [],
+      ...normalizeSkillTabInsights(raw.vocabulary ?? {}),
     },
     fluency: {
       ...base.fluency,
       ...raw.fluency,
       score: safeNumber(raw.fluency?.score, 0),
       details: Array.isArray(raw.fluency?.details) ? raw.fluency.details : [],
+      ...normalizeSkillTabInsights(raw.fluency ?? {}),
     },
     writing: {
       ...base.writing,
       ...raw.writing,
       score: safeNumber(raw.writing?.score, 0),
       details: Array.isArray(raw.writing?.details) ? raw.writing.details : [],
+      ...normalizeSkillTabInsights(raw.writing ?? {}),
     },
     structure: raw.structure
       ? {

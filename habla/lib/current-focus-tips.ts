@@ -95,7 +95,7 @@ export function buildFocusTipsFromAnalysis(
 ): CurrentFocusTips {
   const tips: string[] = [];
 
-  for (const tip of analysis.breakdown?.fluency?.weeklyTips ?? []) {
+  for (const tip of analysis.breakdown?.fluency?.focusThisWeek ?? analysis.breakdown?.fluency?.weeklyTips ?? []) {
     const t = tip.trim();
     if (t && !tips.includes(t)) tips.push(t);
   }

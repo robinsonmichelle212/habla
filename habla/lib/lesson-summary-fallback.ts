@@ -64,21 +64,33 @@ export function buildFallbackLessonAnalysis(params: {
       score: params.writing.pendingEvaluation ? 0 : params.writing.grammarScore,
       topic,
       details: [],
+      didWell: ['Completed grammar practice in the lesson'],
+      workOn: ['Review grammar points that felt uncertain'],
+      focusThisWeek: [`Practise ${topic} in three new sentences`],
       mistakes: [],
     },
     vocabulary: {
       score: params.writing.pendingEvaluation ? 0 : params.writing.vocabularyScore,
       topic: 'Vocabulary',
       details: [],
+      didWell: ['Used lesson vocabulary during practice'],
+      workOn: ['Strengthen words that needed hesitation'],
+      focusThisWeek: ['Review today\'s vocabulary before your next lesson'],
     },
     fluency: {
       score: speakingScore,
       details: [],
+      didWell: ['Completed the speaking exchanges'],
+      workOn: ['Keep answers flowing with fewer pauses'],
+      focusThisWeek: ['Say one answer aloud without stopping mid-sentence'],
       description: speaking.javiFeedback,
     },
     writing: {
       score: writingAvg,
       details: [],
+      didWell: ['Finished the writing section'],
+      workOn: ['Check accents and verb endings in writing'],
+      focusThisWeek: ['Rewrite one sentence from today more accurately'],
     },
   };
 

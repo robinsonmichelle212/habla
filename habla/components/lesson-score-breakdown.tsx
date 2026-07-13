@@ -1,13 +1,5 @@
 import type { DrillHistoryEntry, LessonHistoryEntry, WeekChartDay } from '@/lib/practice-storage';
-import {
-  getCoveredGrammarTopics,
-  getCoveredVocabThemes,
-  getLessonHistory,
-  getPreviousLessonEntry,
-  scoreBarColor,
-} from '@/lib/practice-storage';
-import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
-import { getCurrentGrammarTopic, type GrammarTopic } from '@/lib/lesson-focus';
+import { scoreBarColor } from '@/lib/practice-storage';
 import { ScoreDetailModal, type ScoreDetailTab } from '@/components/score-detail-modals';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
@@ -66,11 +58,6 @@ export function LessonScoreBreakdownModal({
 }: Props) {
   const router = useRouter();
   const [detailTab, setDetailTab] = useState<ScoreDetailTab | null>(null);
-  const [currentGrammarTopic, setCurrentGrammarTopic] = useState<GrammarTopic | null>(null);
-  const [curriculumWeek, setCurriculumWeek] = useState<number | null>(null);
-  const [coveredGrammarTopics, setCoveredGrammarTopics] = useState<string[]>([]);
-  const [coveredVocabThemes, setCoveredVocabThemes] = useState<string[]>([]);
-  const [previousFluencyScore, setPreviousFluencyScore] = useState<number | null>(null);
   const overall =
     displayScore ??
     entry?.overallScore ??
@@ -84,30 +71,6 @@ export function LessonScoreBreakdownModal({
     if (!visible) return;
     console.log(`[Habla] Breakdown modal opened — "${title}":`, JSON.stringify(entry, null, 2));
   }, [visible, title, entry]);
-
-  useEffect(() => {
-    if (!visible || !enableScoreDetails || !entry) return;
-    let cancelled = false;
-
-    void (async () => {
-      const [grammarTopic, curriculum, history] = await Promise.all([
-        getCurrentGrammarTopic(),
-        resolveGrammarCurriculum(),
-        getLessonHistory(),
-      ]);
-      if (cancelled) return;
-      setCurrentGrammarTopic(grammarTopic);
-      setCurriculumWeek(curriculum.currentWeek);
-      setCoveredGrammarTopics(getCoveredGrammarTopics(history));
-      setCoveredVocabThemes(getCoveredVocabThemes(history));
-      const prev = getPreviousLessonEntry(history, entry.date);
-      setPreviousFluencyScore(prev ? prev.breakdown.fluency.score : null);
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [visible, enableScoreDetails, entry]);
 
   useEffect(() => {
     if (!visible) setDetailTab(null);
@@ -304,11 +267,6 @@ export function LessonScoreBreakdownModal({
           visible={detailTab != null}
           tab={detailTab}
           entry={entry}
-          currentGrammarTopic={currentGrammarTopic}
-          curriculumWeek={curriculumWeek}
-          coveredGrammarTopics={coveredGrammarTopics}
-          coveredVocabThemes={coveredVocabThemes}
-          previousFluencyScore={previousFluencyScore}
           onClose={() => setDetailTab(null)}
         />
       ) : null}

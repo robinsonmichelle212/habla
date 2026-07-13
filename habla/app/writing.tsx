@@ -18,7 +18,8 @@ import { addPendingWritingTask } from '@/lib/pending-writing-storage';
 import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
 import { buildInterleavingContext } from '@/lib/interleaving';
 import { formatLocalDate } from '@/lib/streak';
-import { WRITING_PRACTICE_KEY } from '@/components/score-detail-modals';
+
+const WRITING_PRACTICE_KEY = 'writingPracticePrompt';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
