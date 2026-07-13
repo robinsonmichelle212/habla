@@ -19,10 +19,12 @@ import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
 import { runOneTimeGemRestoration } from '@/lib/gem-restoration';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { setupGlobalErrorHandlers } from '@/lib/setup-global-error-handlers';
+import { preloadJaviVoice } from '@/lib/javi-speech';
 import { ensurePreviousMonthWrapped } from '@/lib/wrapped-storage';
 import { notifyWrappedReadyNow, scheduleWrappedMonthlyNotification } from '@/lib/wrapped-notifications';
 
 setupGlobalErrorHandlers();
+preloadJaviVoice();
 
 export const unstable_settings = {
   anchor: '(tabs)',
