@@ -1700,7 +1700,12 @@ export type QuickFireQuestionType =
   | 'reorder_words'
   | 'spot_structure_error'
   | 'complete_structure'
-  | 'choose_construction';
+  | 'choose_construction'
+  | 'say_more_naturally'
+  | 'choose_natural'
+  | 'complete_conversation'
+  | 'rewrite_less_translated'
+  | 'native_instead';
 
 export type GrammarDrillContext = {
   topic: string;
@@ -2238,31 +2243,59 @@ ${formatErrorDnaForDrillPrompt(errorDnaTargets)}
 For those 2 questions set "targetsErrorDna": true.`
       : '';
 
+  const fluencyTypes: QuickFireQuestionType[] = [
+    'say_more_naturally',
+    'choose_natural',
+    'complete_conversation',
+    'rewrite_less_translated',
+    'native_instead',
+  ];
+
   const system = `You are Javi, a Spanish tutor creating fluency quick-fire drills for a B1 learner.
 Return ONLY valid JSON. No markdown. No extra keys.`;
 
   const user = `Generate exactly ${count} fluency-focused quick-fire questions for a B1 learner.
 
-Focus on natural spoken flow, connectors, fillers, and quick production — not tense tables.
+Focus on natural spoken Spanish — not grammar tables or tense drills.
 Target weak areas: ${JSON.stringify(prioritizedWeakAreas)}
 ${errorDnaBlock}
 
-Use these types evenly:
-- quick_translate: natural conversational sentences
-- fill_blank: common spoken phrases and connectors
-- choose_word: natural collocation / register
-- correct_mistake: unnatural or stilted phrasing
+Mix these question types across the set (use all five; repeat as needed to reach ${count}):
+
+1) say_more_naturally
+   Prompt format: "Say this sentence more naturally: [Spanish sentence]"
+   expectedAnswer: a more fluent Spanish rewrite
+   acceptableAnswers: 1-3 natural variants
+
+2) choose_natural
+   Prompt format: "Which sounds more natural?\\nA) [version A]\\nB) [version B]"
+   expectedAnswer: "A" or "B" (the more natural one)
+   acceptableAnswers: include the full correct sentence as well
+
+3) complete_conversation
+   Prompt format: "Complete this conversation naturally:\\nJavi: [Spanish]\\nYou:"
+   expectedAnswer: a natural B1 reply in Spanish
+
+4) rewrite_less_translated
+   Prompt format: "Rewrite this sentence to sound less translated:\\n'[over-literal Spanish]'"
+   expectedAnswer: a natural Spanish rewrite (e.g. "Yo fui al mercado para comprar comida" → "Fui al mercado a comprar")
+
+5) native_instead
+   Prompt format: "What would a native speaker say instead of:\\n[over-literal / stilted Spanish or English-influenced line]"
+   expectedAnswer: the natural Spanish alternative
 
 Rules:
-- Short prompts. Brief answers.
+- Short prompts. Natural answers.
+- Use real spoken Spanish (drop redundant pronouns, prefer natural connectors).
 - Tie to weak areas where possible.
+- For choose_natural, make A vs B clearly different in naturalness.
 
 Return JSON exactly:
 {
   "questions": [
     {
       "id": "1",
-      "type": "quick_translate",
+      "type": "say_more_naturally",
       "prompt": "...",
       "expectedAnswer": "...",
       "acceptableAnswers": ["..."],
@@ -2271,11 +2304,11 @@ Return JSON exactly:
   ]
 }
 
-Valid type values: quick_translate, fill_blank, choose_word, correct_mistake`;
+Valid type values: ${fluencyTypes.join(', ')}`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 1400,
+    max_tokens: 2000,
     system,
     messages: [{ role: 'user', content: user }],
   });
@@ -2283,8 +2316,6 @@ Valid type values: quick_translate, fill_blank, choose_word, correct_mistake`;
   const text = extractText(response);
   const parsed = extractFirstJsonObject(text) as { questions: QuickFireQuestion[] };
   if (!Array.isArray(parsed.questions)) return [];
-
-  const fluencyTypes: QuickFireQuestionType[] = ['quick_translate', 'fill_blank', 'choose_word', 'correct_mistake'];
 
   return parsed.questions
     .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')

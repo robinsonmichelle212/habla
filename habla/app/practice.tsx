@@ -30,7 +30,9 @@ import {
 import { getMilestoneQuizDrillQueue } from '@/lib/milestone-celebration-quiz';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import {
+  DRILL_KIND_EMOJI,
   DRILL_OVERRIDE_OPTIONS,
+  drillDisplayTitle,
   drillSelectionForOverride,
   selectPracticeDrill,
   type DrillSelection,
@@ -122,7 +124,9 @@ export default function PracticeScreen() {
   const [javiDrillSelection, setJaviDrillSelection] = useState<DrillSelection | null>(null);
   const [grammarTopicHint, setGrammarTopicHint] = useState<string | undefined>();
   const [manualDrillOverride, setManualDrillOverride] = useState<PracticeDrillKind | null>(initialDrill);
-  const [showDrillOverride, setShowDrillOverride] = useState(false);
+  const isUserOverride =
+    manualDrillOverride != null &&
+    (!javiDrillSelection || manualDrillOverride !== javiDrillSelection.drill);
 
   const [stage, setStage] = useState<ScreenStage>('choose');
   const [questions, setQuestions] = useState<PracticeQuestion[]>([]);
@@ -146,12 +150,12 @@ export default function PracticeScreen() {
   const wrongResults = results.filter((r) => !r.correct);
 
   const displayDrillSelection = useMemo((): DrillSelection | null => {
-    if (manualDrillOverride) {
+    if (isUserOverride && manualDrillOverride) {
       const override = drillSelectionForOverride(manualDrillOverride, grammarTopicHint);
       return { drill: manualDrillOverride, ...override };
     }
     return javiDrillSelection;
-  }, [manualDrillOverride, grammarTopicHint, javiDrillSelection]);
+  }, [isUserOverride, manualDrillOverride, grammarTopicHint, javiDrillSelection]);
 
   const prioritizedForPrompt = useMemo<PrioritizedWeakAreaInput[]>(
     () => priorityWeakAreas.map((item) => ({ label: item.label, frequency: item.frequency })),
@@ -245,13 +249,7 @@ export default function PracticeScreen() {
   };
 
   const startQuickFire = useCallback(async (drillKind: PracticeDrillKind) => {
-    let effectiveDrill = drillKind;
-    const needsWeakAreas = effectiveDrill === 'vocabulary' || effectiveDrill === 'fluency';
-
-    if (needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length)) {
-      if (loadingWeakAreas) return;
-      effectiveDrill = 'grammar';
-    }
+    const effectiveDrill = drillKind;
 
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -417,15 +415,19 @@ export default function PracticeScreen() {
           return;
         }
 
-        const interleavedBatch = await loadInterleavedBatch();
-        if (interleavedBatch.length < 1) {
+        const fluencyBatch = await generateFluencyDrillQuestions(
+          prioritizedForPrompt,
+          TOTAL_QUESTIONS,
+          errorDnaTargets,
+        );
+        if (fluencyBatch.length < 1) {
           Alert.alert('Could not load questions', 'Try again in a moment.');
           setStage('choose');
           return;
         }
-
+        await cachePracticeQuestions('fluency', null, fluencyBatch);
         setQuestions(
-          interleavedBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+          fluencyBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
         );
         setStage('drill');
         return;
@@ -483,7 +485,7 @@ export default function PracticeScreen() {
       Alert.alert('Could not load questions', message);
       setStage('choose');
     }
-  }, [grammarTopicHint, loadingWeakAreas, priorityWeakAreas, prioritizedForPrompt]);
+  }, [demoMode, grammarTopicHint, priorityWeakAreas, prioritizedForPrompt]);
 
   useEffect(() => {
     if (didAutoStartRef.current) return;
@@ -706,11 +708,25 @@ export default function PracticeScreen() {
               <View style={styles.javiNoticeCard}>
                 {loadingWeakAreas || !displayDrillSelection ? (
                   <ActivityIndicator color={palette.gem} />
+                ) : isUserOverride ? (
+                  <>
+                    <Text style={styles.javiNoticeTitle}>
+                      You&apos;ve chosen: {drillDisplayTitle(displayDrillSelection.drill)}{' '}
+                      {DRILL_KIND_EMOJI[displayDrillSelection.drill]}
+                    </Text>
+                    <Text style={styles.javiNoticeReason}>{displayDrillSelection.reason}</Text>
+                  </>
                 ) : (
                   <>
-                    <Text style={styles.javiNoticeTitle}>Javi noticed some areas need work 🎯</Text>
-                    <Text style={styles.javiNoticeTopic}>{displayDrillSelection.topicLabel}</Text>
-                    <Text style={styles.javiNoticeReason}>{displayDrillSelection.reason}</Text>
+                    <Text style={styles.javiNoticeTitle}>
+                      Javi recommends: {drillDisplayTitle(displayDrillSelection.drill)} 🎯
+                    </Text>
+                    <Text style={styles.javiNoticeReason}>
+                      {displayDrillSelection.reason}
+                      {priorityWeakAreas[0]
+                        ? ` ${priorityWeakAreas[0].frequency >= 3 ? '🔴' : priorityWeakAreas[0].frequency === 2 ? '🟡' : '🟢'}`
+                        : ''}
+                    </Text>
                     {priorityWeakAreas.length ? (
                       <View style={styles.chipsWrap}>
                         {priorityWeakAreas.map((w, i) => (
@@ -739,37 +755,42 @@ export default function PracticeScreen() {
                 </View>
               ) : null}
 
-              {showDrillOverride ? (
-                <View style={styles.overrideList}>
-                  {DRILL_OVERRIDE_OPTIONS.map((option) => {
-                    const needsWeakAreas = option.id === 'vocabulary' || option.id === 'fluency';
-                    const disabled = needsWeakAreas && (loadingWeakAreas || !priorityWeakAreas.length);
-                    const isSelected = activeDrillKind === option.id;
-                    return (
-                      <Pressable
-                        key={option.id}
-                        onPress={() => {
-                          if (disabled) return;
+              <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.pillRow}
+                style={styles.pillScroll}>
+                {DRILL_OVERRIDE_OPTIONS.map((option) => {
+                  const isSelected = activeDrillKind === option.id;
+                  const isJaviPick = javiDrillSelection?.drill === option.id;
+                  return (
+                    <Pressable
+                      key={option.id}
+                      onPress={() => {
+                        if (javiDrillSelection && option.id === javiDrillSelection.drill) {
+                          setManualDrillOverride(null);
+                        } else {
                           setManualDrillOverride(option.id);
-                          setShowDrillOverride(false);
-                          if (Platform.OS !== 'web') {
-                            Haptics.selectionAsync();
-                          }
-                        }}
-                        disabled={disabled}
-                        style={({ pressed }) => [
-                          styles.overrideRow,
-                          isSelected && styles.overrideRowSelected,
-                          disabled && styles.overrideRowDisabled,
-                          pressed && !disabled && styles.overrideRowPressed,
-                        ]}>
-                        <Text style={styles.overrideEmoji}>{option.emoji}</Text>
-                        <Text style={styles.overrideLabel}>{option.label}</Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-              ) : null}
+                        }
+                        if (Platform.OS !== 'web') {
+                          Haptics.selectionAsync();
+                        }
+                      }}
+                      style={({ pressed }) => [
+                        styles.drillPill,
+                        isSelected && styles.drillPillSelected,
+                        pressed && styles.drillPillPressed,
+                      ]}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: isSelected }}
+                      accessibilityLabel={`${option.label} drill${isJaviPick ? ', Javi recommended' : ''}`}>
+                      <Text style={[styles.drillPillText, isSelected && styles.drillPillTextSelected]}>
+                        {option.label} {option.emoji}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
 
               <Pressable
                 onPress={() => void startQuickFire(activeDrillKind)}
@@ -780,13 +801,6 @@ export default function PracticeScreen() {
                   (loadingWeakAreas || !displayDrillSelection) && styles.startButtonDisabled,
                 ]}>
                 <Text style={styles.startButtonText}>Start Drill ▶️</Text>
-              </Pressable>
-
-              <Pressable
-                onPress={() => setShowDrillOverride((v) => !v)}
-                style={styles.overrideLinkBtn}
-                accessibilityRole="button">
-                <Text style={styles.overrideLinkText}>Choose a different drill →</Text>
               </Pressable>
             </>
           ) : null}
@@ -954,6 +968,16 @@ function formatPracticeQuestionType(q: PracticeQuestion): string {
       return 'Complete the sentence';
     case 'choose_construction':
       return 'Choose the construction';
+    case 'say_more_naturally':
+      return 'Say it more naturally';
+    case 'choose_natural':
+      return 'Which sounds more natural?';
+    case 'complete_conversation':
+      return 'Complete the conversation';
+    case 'rewrite_less_translated':
+      return 'Sound less translated';
+    case 'native_instead':
+      return 'What would a native say?';
     default:
       return 'Grammar drill';
   }
@@ -1037,13 +1061,6 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     textAlign: 'center',
   },
-  javiNoticeTopic: {
-    fontSize: 16,
-    fontWeight: '900',
-    color: palette.text,
-    lineHeight: 22,
-    textAlign: 'center',
-  },
   javiNoticeReason: {
     fontSize: 14,
     fontWeight: '600',
@@ -1057,40 +1074,36 @@ const styles = StyleSheet.create({
     color: palette.muted,
     textAlign: 'center',
   },
-  overrideLinkBtn: {
-    alignSelf: 'center',
-    paddingVertical: 10,
-    paddingHorizontal: 8,
-    marginTop: 4,
+  pillScroll: {
+    marginBottom: 4,
+    flexGrow: 0,
   },
-  overrideLinkText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: palette.muted,
-  },
-  overrideList: {
+  pillRow: {
     gap: 8,
-    marginBottom: 14,
+    paddingVertical: 4,
+    paddingRight: 8,
   },
-  overrideRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    backgroundColor: palette.surface,
-    borderRadius: 12,
+  drillPill: {
+    borderRadius: 999,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    paddingVertical: 12,
+    backgroundColor: palette.surface,
+    paddingVertical: 10,
     paddingHorizontal: 14,
   },
-  overrideRowSelected: {
-    borderColor: palette.gem,
-    backgroundColor: 'rgba(167, 139, 250, 0.08)',
+  drillPillSelected: {
+    borderColor: palette.accent,
+    backgroundColor: 'rgba(255, 122, 89, 0.16)',
   },
-  overrideRowDisabled: { opacity: 0.45 },
-  overrideRowPressed: { opacity: 0.9 },
-  overrideEmoji: { fontSize: 18 },
-  overrideLabel: { fontSize: 15, fontWeight: '800', color: palette.text },
+  drillPillPressed: { opacity: 0.9 },
+  drillPillText: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: palette.muted,
+  },
+  drillPillTextSelected: {
+    color: palette.text,
+  },
   startButton: {
     backgroundColor: palette.accent,
     borderRadius: 16,

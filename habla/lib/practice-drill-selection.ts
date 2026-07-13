@@ -14,11 +14,31 @@ export const DRILL_OVERRIDE_OPTIONS: {
   label: string;
   emoji: string;
 }[] = [
-  { id: 'grammar', label: 'Grammar', emoji: '📐' },
-  { id: 'vocabulary', label: 'Vocabulary', emoji: '📚' },
+  { id: 'grammar', label: 'Grammar', emoji: '📚' },
+  { id: 'vocabulary', label: 'Vocabulary', emoji: '🔤' },
   { id: 'fluency', label: 'Fluency', emoji: '🗣️' },
   { id: 'word-order', label: 'Word Order', emoji: '🔀' },
 ];
+
+export const DRILL_KIND_EMOJI: Record<PracticeDrillKind, string> = {
+  grammar: '📚',
+  vocabulary: '🔤',
+  fluency: '🗣️',
+  'word-order': '🔀',
+};
+
+export function drillDisplayTitle(drill: PracticeDrillKind, grammarTopicHint?: string): string {
+  switch (drill) {
+    case 'grammar':
+      return grammarTopicHint ? `Grammar drill · ${grammarTopicHint}` : 'Grammar drill';
+    case 'vocabulary':
+      return 'Vocabulary drill';
+    case 'fluency':
+      return 'Fluency drill';
+    case 'word-order':
+      return 'Word order drill';
+  }
+}
 
 const ROTATION_ORDER: PracticeDrillKind[] = ['grammar', 'vocabulary', 'fluency', 'word-order'];
 
@@ -179,14 +199,23 @@ export function drillSelectionForOverride(
   switch (drill) {
     case 'grammar':
       return {
-        topicLabel: grammarTopicHint ? `Grammar drill · ${grammarTopicHint}` : 'Grammar drill',
-        reason: 'You chose to focus on grammar today.',
+        topicLabel: drillDisplayTitle('grammar', grammarTopicHint),
+        reason: 'Javi will target your grammar patterns.',
       };
     case 'vocabulary':
-      return { topicLabel: 'Vocabulary drill', reason: 'You chose to focus on vocabulary today.' };
+      return {
+        topicLabel: drillDisplayTitle('vocabulary'),
+        reason: 'Javi will target your vocabulary patterns.',
+      };
     case 'fluency':
-      return { topicLabel: 'Fluency drill', reason: 'You chose to focus on fluency today.' };
+      return {
+        topicLabel: drillDisplayTitle('fluency'),
+        reason: 'Javi will target your fluency patterns.',
+      };
     case 'word-order':
-      return { topicLabel: 'Word order drill', reason: 'You chose to focus on word order today.' };
+      return {
+        topicLabel: drillDisplayTitle('word-order'),
+        reason: 'Javi will target your word order patterns.',
+      };
   }
 }

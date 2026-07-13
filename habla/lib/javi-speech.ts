@@ -3,8 +3,8 @@ import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
 
 const JAVI_VOICE_LANGUAGE = 'es-ES';
-const JAVI_VOICE_PITCH = 0.75;
-const JAVI_VOICE_RATE = 0.82;
+const JAVI_VOICE_PITCH = 0.9;
+const JAVI_VOICE_RATE = 0.95;
 const PREFERRED_VOICE_ID = 'es-ES-Standard-B';
 
 const JAVI_SPEECH_BASE: Pick<Speech.SpeechOptions, 'language' | 'pitch' | 'rate'> = {
