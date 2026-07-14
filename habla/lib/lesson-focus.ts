@@ -345,8 +345,8 @@ export function buildLessonOpening(focus: LessonFocusContext): {
   switch (focus.kind) {
     case 'grammar':
       return {
-        spanish: `Semana ${focus.weekNumber} de 20. Esta semana practicamos ${focus.topicSpanish}.`,
-        translation: `Week ${focus.weekNumber} of 20. This week we're focusing on ${focus.topic}.`,
+        spanish: `Semana ${focus.weekNumber} de ${TOTAL_CURRICULUM_WEEKS}. Esta semana practicamos ${focus.topicSpanish}.`,
+        translation: `Week ${focus.weekNumber} of ${TOTAL_CURRICULUM_WEEKS}. This week we're focusing on ${focus.topic}.`,
       };
     case 'vocabulary':
       return {

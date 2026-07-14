@@ -72,6 +72,20 @@ export function tensesForTopic(topic: GrammarTopic): TenseKey[] {
       return ['present'];
     case 'Reflexive verbs':
       return ['present'];
+    case 'Present participle (gerund)':
+      return ['present'];
+    case 'Past participle':
+      return ['present'];
+    case 'Perfect tenses':
+      return ['present', 'preterite'];
+    case 'Core prepositions':
+      return ['present'];
+    case 'Compound prepositions':
+      return ['present'];
+    case 'Verbs with prepositions':
+      return ['present'];
+    case 'Imperative mood':
+      return ['present', 'presentSubjunctive'];
   }
 }
 

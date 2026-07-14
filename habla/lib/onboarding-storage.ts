@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { setGrammarCurriculumStartWeek } from '@/lib/grammar-curriculum';
+import { setGrammarCurriculumStartWeek, TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
 import { getTotalGems } from '@/lib/gems';
 import { getLessonHistory } from '@/lib/practice-storage';
 import { formatLocalDate, getStreakState } from '@/lib/streak';
@@ -245,7 +245,7 @@ export async function completeOnboarding(
   profile: OnboardingProfile,
   options: CompleteOnboardingOptions = {},
 ): Promise<void> {
-  const week = Math.max(1, Math.min(20, profile.grammarCurriculumStartWeek));
+  const week = Math.max(1, Math.min(TOTAL_CURRICULUM_WEEKS, profile.grammarCurriculumStartWeek));
   const [[, existingGemsRaw], [, existingStreakRaw], [, existingHistoryRaw]] =
     await AsyncStorage.multiGet(['totalGems', 'currentStreak', 'lessonHistory']);
 

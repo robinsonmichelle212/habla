@@ -3,7 +3,8 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { formatLocalDate } from '@/lib/streak';
 
 export const GRAMMAR_CURRICULUM_KEY = 'grammarCurriculum';
-export const TOTAL_CURRICULUM_WEEKS = 20;
+/** Extending this only appends weeks — never rewrite stored currentWeek for learners already mid-curriculum. */
+export const TOTAL_CURRICULUM_WEEKS = 30;
 
 export type GrammarTopic =
   | 'Present tense'
@@ -15,7 +16,14 @@ export type GrammarTopic =
   | 'Present subjunctive'
   | 'Ser vs Estar'
   | 'Por vs Para'
-  | 'Reflexive verbs';
+  | 'Reflexive verbs'
+  | 'Present participle (gerund)'
+  | 'Past participle'
+  | 'Perfect tenses'
+  | 'Core prepositions'
+  | 'Compound prepositions'
+  | 'Verbs with prepositions'
+  | 'Imperative mood';
 
 export type GrammarWeekDefinition = {
   week: number;
@@ -45,9 +53,16 @@ const TOPIC_SPANISH: Record<GrammarTopic, string> = {
   'Ser vs Estar': 'ser vs estar',
   'Por vs Para': 'por vs para',
   'Reflexive verbs': 'los verbos reflexivos',
+  'Present participle (gerund)': 'el gerundio',
+  'Past participle': 'el participio pasado',
+  'Perfect tenses': 'los tiempos compuestos',
+  'Core prepositions': 'las preposiciones básicas',
+  'Compound prepositions': 'las preposiciones compuestas',
+  'Verbs with prepositions': 'verbos con preposición',
+  'Imperative mood': 'el imperativo',
 };
 
-/** Full 20-week progressive grammar curriculum (weeks 1–2 share a topic, etc.). */
+/** Full 30-week progressive grammar curriculum (paired weeks share a topic). */
 export const GRAMMAR_WEEK_DEFINITIONS: GrammarWeekDefinition[] = [
   {
     week: 1,
@@ -315,6 +330,179 @@ export const GRAMMAR_WEEK_DEFINITIONS: GrammarWeekDefinition[] = [
     ],
     includesContrast: false,
   },
+  {
+    week: 21,
+    topic: 'Present participle (gerund)',
+    topicSpanish: TOPIC_SPANISH['Present participle (gerund)'],
+    summary: 'Present participle (gerund) — -ando/-iendo, progressives, seguir/continuar/llevar',
+    focusVerbs: [
+      'hablar (hablando)',
+      'comer (comiendo)',
+      'escribir (escribiendo)',
+      'ir (yendo)',
+      'leer (leyendo)',
+      'poder (pudiendo)',
+      'venir (viniendo)',
+      'decir (diciendo)',
+      'hirviendo',
+      'lloviendo',
+    ],
+    includesContrast: false,
+  },
+  {
+    week: 22,
+    topic: 'Present participle (gerund)',
+    topicSpanish: TOPIC_SPANISH['Present participle (gerund)'],
+    summary: 'Present participle (gerund) — -ando/-iendo, progressives, seguir/continuar/llevar',
+    focusVerbs: [
+      'hablar (hablando)',
+      'comer (comiendo)',
+      'escribir (escribiendo)',
+      'ir (yendo)',
+      'leer (leyendo)',
+      'poder (pudiendo)',
+      'venir (viniendo)',
+      'decir (diciendo)',
+      'hirviendo',
+      'lloviendo',
+    ],
+    includesContrast: false,
+  },
+  {
+    week: 23,
+    topic: 'Past participle',
+    topicSpanish: TOPIC_SPANISH['Past participle'],
+    summary: 'Past participle — -ado/-ido, irregulars, perfects, adjectives, passive',
+    focusVerbs: [
+      'hacer (hecho)',
+      'ver (visto)',
+      'escribir (escrito)',
+      'abrir (abierto)',
+      'decir (dicho)',
+      'poner (puesto)',
+      'volver (vuelto)',
+      'romper (roto)',
+      'morir (muerto)',
+      'ir (ido)',
+    ],
+    includesContrast: false,
+  },
+  {
+    week: 24,
+    topic: 'Past participle',
+    topicSpanish: TOPIC_SPANISH['Past participle'],
+    summary: 'Past participle — -ado/-ido, irregulars, perfects, adjectives, passive',
+    focusVerbs: [
+      'hacer (hecho)',
+      'ver (visto)',
+      'escribir (escrito)',
+      'abrir (abierto)',
+      'decir (dicho)',
+      'poner (puesto)',
+      'volver (vuelto)',
+      'romper (roto)',
+      'morir (muerto)',
+      'ir (ido)',
+    ],
+    includesContrast: false,
+  },
+  {
+    week: 25,
+    topic: 'Perfect tenses',
+    topicSpanish: TOPIC_SPANISH['Perfect tenses'],
+    summary: 'Perfect tenses — haber + past participle (present, past, future perfect)',
+    focusVerbs: [
+      'haber (he/había/habré)',
+      'comer (comido)',
+      'ver (visto)',
+      'hablar (hablado)',
+      'terminar (terminado)',
+      'salir (salido)',
+      'hacer (hecho)',
+      'escribir (escrito)',
+    ],
+    includesContrast: true,
+  },
+  {
+    week: 26,
+    topic: 'Perfect tenses',
+    topicSpanish: TOPIC_SPANISH['Perfect tenses'],
+    summary: 'Perfect tenses — haber + past participle (present, past, future perfect)',
+    focusVerbs: [
+      'haber (he/había/habré)',
+      'comer (comido)',
+      'ver (visto)',
+      'hablar (hablado)',
+      'terminar (terminado)',
+      'salir (salido)',
+      'hacer (hecho)',
+      'escribir (escrito)',
+    ],
+    includesContrast: true,
+  },
+  {
+    week: 27,
+    topic: 'Core prepositions',
+    topicSpanish: TOPIC_SPANISH['Core prepositions'],
+    summary: 'Core prepositions — a, en, de, con, sin, sobre, entre, hasta, desde',
+    focusVerbs: ['ir a', 'estar en', 'ser de', 'llamar a', 'empezar a', 'escribir con'],
+    includesContrast: false,
+  },
+  {
+    week: 28,
+    topic: 'Compound prepositions',
+    topicSpanish: TOPIC_SPANISH['Compound prepositions'],
+    summary: 'Compound prepositions — delante de, encima de, a pesar de, en vez de…',
+    focusVerbs: [
+      'antes de',
+      'después de',
+      'delante de',
+      'detrás de',
+      'cerca de',
+      'lejos de',
+      'en vez de',
+      'a pesar de',
+    ],
+    includesContrast: false,
+  },
+  {
+    week: 29,
+    topic: 'Verbs with prepositions',
+    topicSpanish: TOPIC_SPANISH['Verbs with prepositions'],
+    summary: 'Verbs that change with prepositions — soñar con, pensar en, casarse con…',
+    focusVerbs: [
+      'soñar con',
+      'pensar en',
+      'pensar de',
+      'casarse con',
+      'depender de',
+      'enamorarse de',
+      'olvidarse de',
+      'acordarse de',
+      'quedar con',
+      'tardar en',
+    ],
+    includesContrast: false,
+  },
+  {
+    week: 30,
+    topic: 'Imperative mood',
+    topicSpanish: TOPIC_SPANISH['Imperative mood'],
+    summary: 'Imperative mood — positive/negative commands and object pronouns',
+    focusVerbs: [
+      'hablar (habla/no hables)',
+      'comer (come/no comas)',
+      'escribir (escribe/no escribas)',
+      'decir (di)',
+      'hacer (haz)',
+      'ir (ve/no vayas)',
+      'poner (pon)',
+      'salir (sal)',
+      'ser (sé)',
+      'venir (ven)',
+    ],
+    includesContrast: false,
+  },
 ];
 
 export const GRAMMAR_TOPICS: GrammarTopic[] = [
@@ -328,6 +516,13 @@ export const GRAMMAR_TOPICS: GrammarTopic[] = [
   'Ser vs Estar',
   'Por vs Para',
   'Reflexive verbs',
+  'Present participle (gerund)',
+  'Past participle',
+  'Perfect tenses',
+  'Core prepositions',
+  'Compound prepositions',
+  'Verbs with prepositions',
+  'Imperative mood',
 ];
 
 function parseLocalDate(dateStr: string): Date {
@@ -476,6 +671,10 @@ export const GRAMMAR_TOPIC_GROUPS: GrammarTopicGroup[] = [
   { id: 'subjunctive', name: 'Subjunctive', weeks: [13, 14] },
   { id: 'confusions', name: 'Common Confusions', weeks: [15, 16, 17, 18] },
   { id: 'reflexive', name: 'Reflexive Verbs', weeks: [19, 20] },
+  { id: 'participles', name: 'Participles', weeks: [21, 22, 23, 24] },
+  { id: 'perfect', name: 'Perfect Tenses', weeks: [25, 26] },
+  { id: 'prepositions', name: 'Prepositions', weeks: [27, 28, 29] },
+  { id: 'imperative', name: 'Imperative', weeks: [30] },
 ];
 
 export function weekRangeLabel(weeks: number[]): string {

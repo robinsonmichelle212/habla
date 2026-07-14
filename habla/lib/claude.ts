@@ -4,10 +4,10 @@ import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dn
 import { formatFocusTipsForDrillPrompt } from '@/lib/current-focus-tips';
 
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
+import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
 import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
-import type { SpanishWrappedReport } from '@/lib/wrapped-data';
-import {
+import type { SpanishWrappedReport } from '@/lib/wrapped-data';import {
   READ_TEXT_TYPE_LABELS,
   type ReadComprehensionEvaluation,
   type ReadDifficultySpec,
@@ -68,7 +68,7 @@ function getModel(): string {
 function buildFocusInstructions(focus: LessonFocusContext): string {
   switch (focus.kind) {
     case 'grammar':
-      return `GRAMMAR CURRICULUM (Week ${focus.weekNumber} of 20 — follow this structure strictly):
+      return `GRAMMAR CURRICULUM (Week ${focus.weekNumber} of ${TOTAL_CURRICULUM_WEEKS} — follow this structure strictly):
 - Topic: ${focus.topic} (${focus.topicSpanish})
 - Week focus: ${focus.weekSummary}
 - Focus verbs this week: ${focus.focusVerbs.join(', ')}
@@ -1667,7 +1667,7 @@ Return JSON exactly:
   "adjustmentDirection": "higher" | "lower" | "same",
   "keyStrengths": ["strength 1", "strength 2"],
   "keyWeaknesses": ["weakness 1", "weakness 2"],
-  "grammarStartingWeek": integer 1-20,
+  "grammarStartingWeek": integer 1-${TOTAL_CURRICULUM_WEEKS},
   "personalNote": "One warm encouraging sentence from Javi about what you noticed"
 }`;
 
@@ -1682,7 +1682,7 @@ Return JSON exactly:
   const week = typeof parsed.grammarStartingWeek === 'number' ? parsed.grammarStartingWeek : 1;
   return {
     ...parsed,
-    grammarStartingWeek: Math.max(1, Math.min(20, Math.trunc(week))),
+    grammarStartingWeek: Math.max(1, Math.min(TOTAL_CURRICULUM_WEEKS, Math.trunc(week))),
     keyStrengths: Array.isArray(parsed.keyStrengths) ? parsed.keyStrengths.slice(0, 2) : [],
     keyWeaknesses: Array.isArray(parsed.keyWeaknesses) ? parsed.keyWeaknesses.slice(0, 2) : [],
   };

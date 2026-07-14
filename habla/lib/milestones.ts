@@ -133,7 +133,7 @@ export const MILESTONE_DEFINITIONS: MilestoneDef[] = [
     id: 'grammar-complete',
     name: 'Grammar Curriculum Complete',
     emoji: '📚',
-    description: 'Complete all 20 weeks of the grammar curriculum.',
+    description: 'Complete all 30 weeks of the grammar curriculum.',
     message:
       'You completed the full grammar curriculum. Every tense. Every week. That\'s remarkable. 📚 +100 💎',
     gems: 100,
@@ -415,7 +415,7 @@ export async function getMilestoneProgress(): Promise<MilestoneProgressItem[]> {
       }
       case 'grammar-complete':
         progressLabel = achieved
-          ? 'All 20 weeks complete ✅'
+          ? `All ${TOTAL_CURRICULUM_WEEKS} weeks complete ✅`
           : `Week ${curriculum.currentWeek} of ${TOTAL_CURRICULUM_WEEKS}`;
         progressPercent = Math.round((grammarWeeksDone / TOTAL_CURRICULUM_WEEKS) * 100);
         break;

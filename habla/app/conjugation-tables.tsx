@@ -3,6 +3,7 @@ import { lookupVerbConjugation } from '@/lib/claude-conjugation';
 import { getFocusVerbsForTopic } from '@/lib/conjugation-data';
 import {
   GRAMMAR_WEEK_DEFINITIONS,
+  TOTAL_CURRICULUM_WEEKS,
   getWeekDefinition,
   type GrammarTopic,
 } from '@/lib/grammar-curriculum';
@@ -34,7 +35,7 @@ const palette = {
 function parseTopic(value: string | undefined): GrammarTopic | null {
   if (!value) return null;
   const week = parseInt(value, 10);
-  if (Number.isFinite(week) && week >= 1 && week <= 20) {
+  if (Number.isFinite(week) && week >= 1 && week <= TOTAL_CURRICULUM_WEEKS) {
     return getWeekDefinition(week).topic;
   }
   const topics = GRAMMAR_WEEK_DEFINITIONS.map((w) => w.topic);

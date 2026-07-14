@@ -211,7 +211,7 @@ export default function LevelScreen() {
     : 'Save words during lessons';
   const grammarSummary = grammarCurriculum
     ? `Week ${grammarCurriculum.currentWeek} of ${TOTAL_CURRICULUM_WEEKS} — ${grammarCurriculum.currentTopic} · ${grammarDaysLeft} day${grammarDaysLeft === 1 ? '' : 's'} left`
-    : '20-week grammar path';
+    : `${TOTAL_CURRICULUM_WEEKS}-week grammar path`;
   const milestonesSummary = `${milestonesAchieved} of ${MILESTONE_DEFINITIONS.length} achieved`;
 
   return (

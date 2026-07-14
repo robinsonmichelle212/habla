@@ -715,6 +715,294 @@ function buildDarPreterite(name: string): MemoryPalaceVerbSet {
   };
 }
 
+/** Kitchen walk for present participles (gerunds) — weeks 21–22. */
+function buildGerundPalace(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'gerund_kitchen',
+    verbLabel: 'GERUNDIO',
+    englishMeaning: 'present participles (-ando / -iendo)',
+    previewForms: 'hirviendo, enfriando, cocinando…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'hirviendo',
+        '-iendo — ee-end-oh — action in progress',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, look at the kettle — hirviendo (boiling). The kettle is boiling. Say it: hirviendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'enfriando',
+        '-ando sounds like “and-oh!” — present action happening',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge — enfriando (cooling). The food is cooling. Say it: enfriando.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'cocinando',
+        '-ando — and-oh! something is cooking',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — cocinando (cooking). Something is cooking. Say it: cocinando.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'esperando',
+        '-ando — waiting at the table',
+        personalize(
+          `${TABLE.itemEmoji} At the table — esperando (waiting). We're sitting waiting. Say it: esperando.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'lloviendo',
+        '-iendo — raining outside',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — lloviendo (raining). Looking at rain outside. Say it: lloviendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'saliendo',
+        '-iendo — someone is leaving',
+        personalize(
+          `${DOOR.itemEmoji} The door — saliendo (leaving). Someone is leaving. Say it: saliendo.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
+/** Kitchen walk for irregular present participles. */
+function buildIrregularGerundPalace(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'gerund_irregulars',
+    verbLabel: 'GERUNDIOS IRREGULARES',
+    englishMeaning: 'irregular gerunds',
+    previewForms: 'yendo, leyendo, pudiendo…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'yendo',
+        'ir → yendo — going, not *iendo',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, at the kettle — ir becomes yendo. Say it: yendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'leyendo',
+        'leer → leyendo — y bridges the vowels',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge door note — leyendo the list. Say it: leyendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'pudiendo',
+        'poder → pudiendo',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — pudiendo finish dinner if it cooperates. Say it: pudiendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'viniendo',
+        'venir → viniendo',
+        personalize(
+          `${TABLE.itemEmoji} At the table — guests viniendo for supper. Say it: viniendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'diciendo',
+        'decir → diciendo',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — neighbours diciendo hello. Say it: diciendo.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'hablando',
+        '-ando — and-oh! still happening',
+        personalize(
+          `${DOOR.itemEmoji} The door — voices hablando in the hall. Say it: hablando.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
+/** Kitchen walk for past participles — weeks 23–24. */
+function buildPastParticiplePalace(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'past_participle_kitchen',
+    verbLabel: 'PARTICIPIO',
+    englishMeaning: 'past participles (-ado / -ido + irregulars)',
+    previewForms: 'hecho, abierto, escrito…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'hecho',
+        'hecho — “echo” — what’s done echoes',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, the kettle job is hecho (done) — like the tea. Say it: hecho.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'abierto',
+        'abierto — “a bear-to” — opened by a bear',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge — abierto (opened). The fridge is always opened. Say it: abierto.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'hecho',
+        'hecho — the food is done/cooked',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — hecho (cooked/done). The food is done. Say it: hecho.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'escrito',
+        'escrito — “es-creeto” — written in secret',
+        personalize(
+          `${TABLE.itemEmoji} At the table — escrito (written). Notes written at the table. Say it: escrito.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'visto',
+        'visto — “feast-o” — I’ve seen the feast',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — visto (seen). Seen through the window. Say it: visto.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'abierto',
+        'abierto — the door has been opened',
+        personalize(
+          `${DOOR.itemEmoji} The door — abierto (opened). The door has been opened. Say it: abierto.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
+/** Extra irregular past participles to drill the set. */
+function buildIrregularPastParticiplePalace(name: string): MemoryPalaceVerbSet {
+  return {
+    id: 'past_participle_irregulars',
+    verbLabel: 'PARTICIPIOS IRREGULARES',
+    englishMeaning: 'key irregular past participles',
+    previewForms: 'dicho, puesto, vuelto, roto…',
+    slots: [
+      slot(
+        'yo',
+        KETTLE,
+        'dicho',
+        'dicho — “dee-cho” — said “dee-cho!”',
+        personalize(
+          `${KETTLE.itemEmoji} ${name}, at the kettle — someone has dicho the tea is ready. Say it: dicho.`,
+          name,
+        ),
+      ),
+      slot(
+        'tu',
+        FRIDGE,
+        'puesto',
+        'puesto — “pwest-o” — put in the west',
+        personalize(
+          `${FRIDGE.itemEmoji} The fridge — milk puesto back on the shelf. Say it: puesto.`,
+          name,
+        ),
+      ),
+      slot(
+        'el',
+        COOKER,
+        'vuelto',
+        'vuelto — “bwelt-o” — belt twisted when returned',
+        personalize(
+          `${COOKER.itemEmoji} The cooker — you've vuelto to check the pan. Say it: vuelto.`,
+          name,
+        ),
+      ),
+      slot(
+        'nosotros',
+        TABLE,
+        'roto',
+        'roto — broken like a rota that’s broken',
+        personalize(
+          `${TABLE.itemEmoji} At the table — a plate roto on the floor. Say it: roto.`,
+          name,
+        ),
+      ),
+      slot(
+        'vosotros',
+        WINDOW,
+        'muerto',
+        'morir → muerto',
+        personalize(
+          `${WINDOW.itemEmoji} By the window — the plant looks muerto… water it! Say it: muerto.`,
+          name,
+        ),
+      ),
+      slot(
+        'ellos',
+        DOOR,
+        'ido',
+        'ir → ido (gone)',
+        personalize(
+          `${DOOR.itemEmoji} The door — they’ve already ido. Say it: ido.`,
+          name,
+        ),
+      ),
+    ],
+  };
+}
+
 export const MEMORY_PALACE_GROUPS: MemoryPalaceWeekGroup[] = [
   {
     id: 'week-3-4-preterite',
@@ -722,6 +1010,20 @@ export const MEMORY_PALACE_GROUPS: MemoryPalaceWeekGroup[] = [
     minWeek: 3,
     maxWeek: 4,
     verbSets: [], // filled by buildVerbSetsForUser
+  },
+  {
+    id: 'week-21-22-gerund',
+    weekLabel: 'Week 21–22: Present participle (gerund)',
+    minWeek: 21,
+    maxWeek: 22,
+    verbSets: [],
+  },
+  {
+    id: 'week-23-24-past-participle',
+    weekLabel: 'Week 23–24: Past participle',
+    minWeek: 23,
+    maxWeek: 24,
+    verbSets: [],
   },
 ];
 
@@ -743,6 +1045,23 @@ export function buildVerbSetsForUser(name: string): MemoryPalaceWeekGroup[] {
         buildSaberPreterite(learnerName),
         buildDarPreterite(learnerName),
         buildVenirPreterite(learnerName),
+      ],
+    },
+    {
+      id: 'week-21-22-gerund',
+      weekLabel: 'Week 21–22: Present participle (gerund)',
+      minWeek: 21,
+      maxWeek: 22,
+      verbSets: [buildGerundPalace(learnerName), buildIrregularGerundPalace(learnerName)],
+    },
+    {
+      id: 'week-23-24-past-participle',
+      weekLabel: 'Week 23–24: Past participle',
+      minWeek: 23,
+      maxWeek: 24,
+      verbSets: [
+        buildPastParticiplePalace(learnerName),
+        buildIrregularPastParticiplePalace(learnerName),
       ],
     },
   ];
@@ -767,6 +1086,10 @@ export const MEMORY_PALACE_VERB_IDS = [
   'saber_preterite',
   'dar_preterite',
   'venir_preterite',
+  'gerund_kitchen',
+  'gerund_irregulars',
+  'past_participle_kitchen',
+  'past_participle_irregulars',
 ] as const;
 
 export type MemoryPalaceHistoryEntry = {
