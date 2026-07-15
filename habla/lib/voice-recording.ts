@@ -28,6 +28,7 @@ export async function startVoiceRecording(): Promise<void> {
       // Ignore stale recording cleanup errors.
     }
     activeRecording = null;
+    recordingStartedAt = 0;
   }
 
   await prepareAudioForRecording();
@@ -47,15 +48,43 @@ export async function stopVoiceRecording(): Promise<{
     return { uri: null, durationMs: 0 };
   }
 
+  const recording = activeRecording;
   const durationMs = Math.max(0, Date.now() - recordingStartedAt);
+  // Clear the global before unload so concurrent callers never touch a half-dead recorder.
+  activeRecording = null;
+  recordingStartedAt = 0;
+
+  let uri: string | null = null;
+  try {
+    uri = recording.getURI();
+  } catch {
+    uri = null;
+  }
 
   try {
-    await activeRecording.stopAndUnloadAsync();
-  } finally {
-    const uri = activeRecording.getURI();
+    await recording.stopAndUnloadAsync();
+  } catch (error) {
+    console.log('[Habla] stopAndUnloadAsync failed:', error);
+  }
+
+  try {
+    // Prefer post-unload URI when available; fall back to pre-unload.
+    uri = recording.getURI() ?? uri;
+  } catch {
+    // keep prior uri
+  }
+
+  return { uri, durationMs };
+}
+
+/** Best-effort mic teardown — never throws. Call before leaving lesson / switching to TTS. */
+export async function ensureRecordingStopped(): Promise<void> {
+  try {
+    await stopVoiceRecording();
+  } catch (error) {
+    console.log('[Habla] ensureRecordingStopped failed:', error);
     activeRecording = null;
     recordingStartedAt = 0;
-    return { uri, durationMs };
   }
 }
 

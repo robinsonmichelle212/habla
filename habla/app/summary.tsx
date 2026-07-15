@@ -498,11 +498,13 @@ function SummaryScreenInner({
   }, [milestoneGemPulse]);
 
   const startDrills = async () => {
-    if (!analysis || !lessonType || loadingDrills) return;
+    if (!analysis || !lessonType || loadingDrills || leavingHomeRef.current) return;
+    if (isCelebratingRef.current) return;
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
 
+    stopJaviSpeech();
     setLoadingDrills(true);
     setLastFeedback(null);
     setAnswer('');
@@ -530,7 +532,7 @@ function SummaryScreenInner({
       const message = e instanceof Error ? e.message : 'Something went wrong.';
       Alert.alert('Could not generate drills', message);
     } finally {
-      setLoadingDrills(false);
+      if (isMountedRef.current) setLoadingDrills(false);
     }
   };
 
@@ -607,7 +609,6 @@ function SummaryScreenInner({
     }, 1000);
 
     try {
-      // Wait for all pending saves before navigating (avoids race / crash on Android).
       await (persistencePromiseRef.current ?? runSummaryPersistence());
       await withOneRetry('finalLastSummary', () => saveLastSummary(payload));
       if (indicatorShown && isMountedRef.current) {
@@ -622,16 +623,18 @@ function SummaryScreenInner({
       clearTimeout(indicatorTimer);
       timeoutsRef.current = timeoutsRef.current.filter((t) => t !== indicatorTimer);
       stopJaviSpeech();
+    }
+
+    try {
+      router.replace(HOME_HREF);
+      // Clear session after navigation starts so a failed replace doesn't blank the UI.
       clearLessonSessionMemory();
-      try {
-        router.replace(HOME_HREF);
-      } catch (navError) {
-        console.log('Save error:', navError);
-        leavingHomeRef.current = false;
-        if (isMountedRef.current) {
-          setLeavingHome(false);
-          setSaveIndicator(null);
-        }
+    } catch (navError) {
+      console.log('Save error:', navError);
+      leavingHomeRef.current = false;
+      if (isMountedRef.current) {
+        setLeavingHome(false);
+        setSaveIndicator(null);
       }
     }
   }, [milestoneGemPulse, payload, router, runSummaryPersistence, scheduleTimeout]);

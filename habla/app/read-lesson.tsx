@@ -11,7 +11,7 @@ import {
 } from '@/lib/claude';
 import { addCulturalNote } from '@/lib/cultural-notes';
 import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
-import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
+import { speakJavi, stopJaviSpeech, stopJaviSpeechAsync } from '@/lib/javi-speech';
 import { getTopErrorsForLesson } from '@/lib/error-dna';
 import { getLevelBarometer } from '@/lib/level-progress';
 import { lessonFocusLabel, prepareLessonFocus } from '@/lib/lesson-focus';
@@ -30,7 +30,12 @@ import {
   type ReadingSessionContent,
 } from '@/lib/read-with-javi';
 import { saveReadingVocabularyWords } from '@/lib/saved-vocabulary';
-import { MIN_RECORDING_MS, startVoiceRecording, stopVoiceRecording } from '@/lib/voice-recording';
+import {
+  MIN_RECORDING_MS,
+  ensureRecordingStopped,
+  startVoiceRecording,
+  stopVoiceRecording,
+} from '@/lib/voice-recording';
 import { transcribeSpanishAudio } from '@/lib/whisper';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -228,6 +233,7 @@ export default function ReadLessonScreen() {
     return () => {
       cancelled = true;
       stopJaviSpeech();
+      void ensureRecordingStopped();
       if (heardTimerRef.current) clearTimeout(heardTimerRef.current);
     };
   }, []);
@@ -325,6 +331,9 @@ export default function ReadLessonScreen() {
     setPhase('finishing');
 
     try {
+      await ensureRecordingStopped();
+      await stopJaviSpeechAsync();
+
       const vocabWords = session.vocabularyHighlights.map((v) => ({
         spanish: v.spanish,
         english: v.english,

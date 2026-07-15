@@ -20,7 +20,7 @@ import {
   type JaviMessage,
 } from '@/lib/claude';
 import { parseJaviResponse, safeSpanish, stripReadyForWritingMarker } from '@/lib/javi-response';
-import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
+import { speakJavi, stopJaviSpeech, stopJaviSpeechAsync } from '@/lib/javi-speech';
 import { addGems, OFFLINE_SPEAKING_ATTEMPT_GEMS, OFFLINE_WRITING_GEMS } from '@/lib/gems';
 import { mergeErrorDnaFromLesson, getTopErrorsForLesson, type ErrorDNAItem } from '@/lib/error-dna';
 import { cacheLessonIntro, getCachedLessonIntro } from '@/lib/lesson-intro-cache';
@@ -97,6 +97,7 @@ import { formatLocalDate } from '@/lib/streak';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import {
   MIN_RECORDING_MS,
+  ensureRecordingStopped,
   startVoiceRecording,
   stopVoiceRecording,
 } from '@/lib/voice-recording';
@@ -546,9 +547,9 @@ export default function LessonScreen() {
 
   useEffect(() => {
     return () => {
-      if (navigatedToSummaryRef.current) return;
+      // Always tear down mic + TTS — orphaned recordings crash the process after summary nav.
       stopJaviSpeech();
-      void stopVoiceRecording();
+      void ensureRecordingStopped();
     };
   }, []);
 
@@ -956,16 +957,21 @@ export default function LessonScreen() {
 
   const skipToSummary = () => {
     if (!lessonFocus || !writingResult || !writingPrompt) return;
-    stopJaviSpeech();
-    const pendingSpeaking =
-      pendingSpeakingEvalRef.current ??
-      buildPendingSpeakingEvaluation(
-        speakingUserTurns,
-        'Skipped to summary — speaking score pending.',
-      );
-    navigatedToSummaryRef.current = false;
-    finishingRef.current = false;
-    void finishLessonRef.current(pendingSpeaking, 'Skipping to summary…', { force: true });
+    if (navigatedToSummaryRef.current) return;
+
+    void (async () => {
+      await ensureRecordingStopped();
+      await stopJaviSpeechAsync();
+      const pendingSpeaking =
+        pendingSpeakingEvalRef.current ??
+        buildPendingSpeakingEvaluation(
+          speakingUserTurns,
+          'Skipped to summary — speaking score pending.',
+        );
+      // Allow force finish if stuck wrapping up, but never reopen a completed navigate.
+      finishingRef.current = false;
+      void finishLessonRef.current(pendingSpeaking, 'Skipping to summary…', { force: true });
+    })();
   };
 
   const processOfflineSpeakingTurn = async (audioUri: string, nextTurn: number) => {
@@ -1164,6 +1170,10 @@ export default function LessonScreen() {
       if (navigatedToSummaryRef.current) return;
       navigatedToSummaryRef.current = true;
 
+      // Critical: stop mic + TTS before leaving — orphaned AV session kills the app.
+      await ensureRecordingStopped();
+      await stopJaviSpeechAsync();
+
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
 
@@ -1183,7 +1193,6 @@ export default function LessonScreen() {
 
       router.replace('/summary');
 
-      stopJaviSpeech();
       const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
       if (isDemoSession) return;
 
@@ -1242,7 +1251,8 @@ export default function LessonScreen() {
 
       finishingRef.current = true;
       setFinishing(true);
-      stopJaviSpeech();
+      await ensureRecordingStopped();
+      await stopJaviSpeechAsync();
 
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
@@ -1576,6 +1586,7 @@ export default function LessonScreen() {
     if (voiceStateRef.current !== 'recording') return;
 
     if (demoModeRef.current) {
+      await ensureRecordingStopped();
       setVoiceStateSafe('idle');
       showHeardTranscript('Demo mode: Speaking registered.');
       showPhaseSummaryAndFinish(

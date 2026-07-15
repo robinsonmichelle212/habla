@@ -16,6 +16,7 @@ const ENGLISH_VOICE_SETTINGS: Speech.SpeechOptions = {
 };
 
 let speakingPromise: Promise<void> | null = null;
+let ttsGate: Promise<void> = Promise.resolve();
 
 export async function prepareAudioForPlayback(): Promise<void> {
   try {
@@ -31,13 +32,33 @@ export async function prepareAudioForPlayback(): Promise<void> {
   }
 }
 
+/** Awaitable stop — serialize TTS teardown before mode changes / navigation. */
+export async function stopJaviSpeechAsync(): Promise<void> {
+  const run = async () => {
+    try {
+      Speech.stop();
+    } catch (error) {
+      console.log('Speech error (stop):', error);
+    }
+    if (speakingPromise) {
+      try {
+        await Promise.race([
+          speakingPromise,
+          new Promise<void>((resolve) => setTimeout(resolve, 400)),
+        ]);
+      } catch {
+        // ignore
+      }
+    }
+    speakingPromise = null;
+  };
+
+  ttsGate = ttsGate.then(run, run);
+  await ttsGate;
+}
+
 export function stopJaviSpeech(): void {
-  try {
-    Speech.stop();
-  } catch (error) {
-    console.log('Speech error (stop):', error);
-  }
-  speakingPromise = null;
+  void stopJaviSpeechAsync();
 }
 
 function speakWithOptions(cleaned: string, settings: Speech.SpeechOptions): Promise<void> {
@@ -75,7 +96,7 @@ export async function speakJavi(text: string): Promise<void> {
   const cleaned = cleanForSpeech(text);
   if (!cleaned) return;
 
-  stopJaviSpeech();
+  await stopJaviSpeechAsync();
   await prepareAudioForPlayback();
   return speakWithOptions(cleaned, JAVI_VOICE_SETTINGS);
 }
@@ -84,7 +105,7 @@ export async function speakEnglish(text: string): Promise<void> {
   const cleaned = cleanForSpeech(text);
   if (!cleaned) return;
 
-  stopJaviSpeech();
+  await stopJaviSpeechAsync();
   await prepareAudioForPlayback();
   return speakWithOptions(cleaned, ENGLISH_VOICE_SETTINGS);
 }

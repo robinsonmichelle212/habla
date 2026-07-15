@@ -1,5 +1,5 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, usePathname, useRouter, type Href } from 'expo-router';
+import { Stack, usePathname, useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
@@ -39,20 +39,15 @@ function GlobalOfflineBanner() {
 /** Never let Android back exit the app from the summary screen. */
 function SummaryAndroidBackGuard() {
   const pathname = usePathname();
-  const router = useRouter();
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (pathname.includes('summary')) {
-        // Fallback if the summary screen handler is not registered.
-        // Summary's focused handler (registered later) usually runs first and saves then navigates.
-        router.replace('/(tabs)' as Href);
-        return true;
-      }
-      return false;
+      // Swallow only — summary owns save + replace('/(tabs)').
+      // Eager replace here raced persistence and looked like an app exit.
+      return pathname.includes('summary');
     });
     return () => sub.remove();
-  }, [pathname, router]);
+  }, [pathname]);
 
   return null;
 }
