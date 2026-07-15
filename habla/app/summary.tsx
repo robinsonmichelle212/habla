@@ -38,6 +38,7 @@ import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { lessonTypeLabel, upsertLessonHistoryEntry, getLessonHistory } from '@/lib/practice-storage';
 import { getLevelBarometer } from '@/lib/level-progress';
 import { queueMilestoneQuizzesFromCelebrations } from '@/lib/milestone-celebration-quiz';
+import { useFocusEffect } from '@react-navigation/native';
 import { useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -55,6 +56,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+/** Prefer /(tabs) over '/' — bare '/' can empty the Android back stack and exit the app. */
+const HOME_HREF = '/(tabs)' as Href;
 
 const palette = {
   background: '#0B0F14',
@@ -128,7 +132,7 @@ export default function SummaryScreen() {
   const onErrorGoHome = useCallback(() => {
     stopJaviSpeech();
     clearLessonSessionMemory();
-    router.replace('/' as Href);
+    router.replace(HOME_HREF);
   }, [router]);
 
   return (
@@ -162,7 +166,9 @@ function SummaryScreenInner({
   const didRecordRef = useRef(false);
   const pendingCelebrationsRef = useRef<MilestoneCelebration[]>([]);
   const milestoneGemPulse = useRef(new Animated.Value(1)).current;
-  const { celebrate } = useMilestoneCelebration();
+  const { celebrate, isCelebrating } = useMilestoneCelebration();
+  const isCelebratingRef = useRef(isCelebrating);
+  isCelebratingRef.current = isCelebrating;
   const [gemsEarned, setGemsEarned] = useState(payload.gemsEarnedEstimate ?? 2);
   const [gemsBefore, setGemsBefore] = useState(0);
   const [streakHydrated, setStreakHydrated] = useState(false);
@@ -579,8 +585,10 @@ function SummaryScreenInner({
   });
   revealRef.current = reveal;
 
-  const confirmAndGoHome = useCallback(async () => {
+  /** Only path that may leave summary — never call from useEffect / timers / animations. */
+  const handleBackToHome = useCallback(async () => {
     if (leavingHomeRef.current) return;
+    if (isCelebratingRef.current) return;
     leavingHomeRef.current = true;
     if (isMountedRef.current) setLeavingHome(true);
 
@@ -599,6 +607,7 @@ function SummaryScreenInner({
     }, 1000);
 
     try {
+      // Wait for all pending saves before navigating (avoids race / crash on Android).
       await (persistencePromiseRef.current ?? runSummaryPersistence());
       await withOneRetry('finalLastSummary', () => saveLastSummary(payload));
       if (indicatorShown && isMountedRef.current) {
@@ -607,28 +616,43 @@ function SummaryScreenInner({
           scheduleTimeout(() => resolve(), 450);
         });
       }
-    } catch (err) {
-      console.error('[Habla] confirmAndGoHome save failed:', err);
+    } catch (error) {
+      console.log('Save error:', error);
     } finally {
       clearTimeout(indicatorTimer);
       timeoutsRef.current = timeoutsRef.current.filter((t) => t !== indicatorTimer);
       stopJaviSpeech();
       clearLessonSessionMemory();
-      isMountedRef.current = false;
-      router.replace('/' as Href);
+      try {
+        router.replace(HOME_HREF);
+      } catch (navError) {
+        console.log('Save error:', navError);
+        leavingHomeRef.current = false;
+        if (isMountedRef.current) {
+          setLeavingHome(false);
+          setSaveIndicator(null);
+        }
+      }
     }
   }, [milestoneGemPulse, payload, router, runSummaryPersistence, scheduleTimeout]);
 
-  useEffect(() => {
-    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      void confirmAndGoHome();
-      return true;
-    });
-    return () => sub.remove();
-  }, [confirmAndGoHome]);
+  // Android back → home (never exit app). Ignore while milestone modal is open.
+  useFocusEffect(
+    useCallback(() => {
+      const onHardwareBack = () => {
+        if (isCelebratingRef.current) {
+          return true;
+        }
+        void handleBackToHome();
+        return true;
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onHardwareBack);
+      return () => sub.remove();
+    }, [handleBackToHome]),
+  );
 
   const goHome = () => {
-    void confirmAndGoHome();
+    void handleBackToHome();
   };
 
   const challengeBorderColor = reveal.challengeHighlight.interpolate({
@@ -1188,6 +1212,8 @@ const styles = StyleSheet.create({
   gemTopCount: { fontSize: 16, fontWeight: '900', color: '#A78BFA' },
   skipOverlay: {
     ...StyleSheet.absoluteFillObject,
+    // Leave sticky "Back to Home" tappable during reveal — never cover it.
+    bottom: 88,
     zIndex: 40,
   },
   stickyHomeFooter: {
@@ -1200,7 +1226,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(11, 15, 20, 0.94)',
     borderTopWidth: 1,
     borderTopColor: palette.surfaceBorder,
-    zIndex: 50,
+    zIndex: 60,
+    elevation: 12,
   },
   stickyHomeButton: {
     backgroundColor: palette.accent,

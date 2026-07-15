@@ -1,9 +1,9 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, usePathname, useRouter, type Href } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
-import { View } from 'react-native';
+import { BackHandler, View } from 'react-native';
 import 'react-native-reanimated';
 
 import { AppErrorBoundary } from '@/components/app-error-boundary';
@@ -34,6 +34,27 @@ function GlobalOfflineBanner() {
   const { isOnline, hydrated } = useNetworkStatus();
   if (!hydrated || isOnline) return null;
   return <OfflineBanner message="📡 Offline — your work is being saved locally" />;
+}
+
+/** Never let Android back exit the app from the summary screen. */
+function SummaryAndroidBackGuard() {
+  const pathname = usePathname();
+  const router = useRouter();
+
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (pathname.includes('summary')) {
+        // Fallback if the summary screen handler is not registered.
+        // Summary's focused handler (registered later) usually runs first and saves then navigates.
+        router.replace('/(tabs)' as Href);
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [pathname, router]);
+
+  return null;
 }
 
 function WrappedBootstrap() {
@@ -110,6 +131,7 @@ export default function RootLayout() {
           </View>
           <MilestoneProvider>
             <WrappedBootstrap />
+            <SummaryAndroidBackGuard />
             <Stack>
           <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
           <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
@@ -124,7 +146,12 @@ export default function RootLayout() {
           <Stack.Screen name="milestone-quiz" options={{ headerShown: false }} />
           <Stack.Screen
             name="summary"
-            options={{ headerShown: false, gestureEnabled: false, animation: 'slide_from_right' }}
+            options={{
+              headerShown: false,
+              gestureEnabled: false,
+              fullScreenGestureEnabled: false,
+              animation: 'slide_from_right',
+            }}
           />
           <Stack.Screen name="last-summary" options={{ headerShown: false }} />
           <Stack.Screen name="wrapped" options={{ headerShown: false }} />

@@ -10,7 +10,7 @@ export function AppErrorBoundary({ children }: { children: ReactNode }) {
   const onGoHome = useCallback(() => {
     stopJaviSpeech();
     resetLessonSession();
-    router.replace('/' as Href);
+    router.replace('/(tabs)' as Href);
   }, [router]);
 
   return <ErrorBoundary onGoHome={onGoHome}>{children}</ErrorBoundary>;
