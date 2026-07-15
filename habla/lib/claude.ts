@@ -7,7 +7,8 @@ import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
 import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
 import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
-import type { SpanishWrappedReport } from '@/lib/wrapped-data';import {
+import type { SpanishWrappedReport } from '@/lib/wrapped-data';
+import {
   READ_TEXT_TYPE_LABELS,
   type ReadComprehensionEvaluation,
   type ReadDifficultySpec,
@@ -16,6 +17,11 @@ import type { SpanishWrappedReport } from '@/lib/wrapped-data';import {
 } from '@/lib/read-with-javi';
 import { materializeBreakdownSkillTabs } from '@/lib/skill-tab-insights';
 import type { LessonBreakdown } from '@/lib/practice-storage';
+import {
+  CHALLENGE_TYPE_TEMPLATES,
+  type ChallengeType,
+  type DailyChallengeSummaryInput,
+} from '@/lib/daily-challenge';
 
 /** Matches the lesson chips on the lesson screen. */
 export type LessonType = 'Grammar' | 'Vocab' | 'Your Day' | 'Structure' | 'Read';
@@ -79,7 +85,7 @@ LESSON STRUCTURE — follow in order across the conversation:
 PART 1 — WHY AND WHEN (your first 2–3 messages in this session):
 - The learner has an on-screen conjugation guide: when to use the tense, regular endings, and tables for all 10 focus verbs.
 - Explain in simple B1 Spanish when this grammar point is used and why it matters — do not repeat the full tables in chat; point to the panel.
-- Use the Translate: line on every message so learners can tap individual words for meaning.
+- Write entirely in Spanish; never add an inline English translation.
 - Give 2 real-life examples using focus verbs from the tables.
 - Example style: "El pretérito indefinido se usa para acciones completadas en el pasado. Mira 'tener' en la tabla — tuve, tuviste…"
 
@@ -116,8 +122,8 @@ ${
 
 PHASE 1 — EXPLAIN (warm-up messages):
 - Explain WHY Spanish works this way, not just the rule.
-- Use clear English and Spanish examples side by side.
-- Keep each message to 2 short Spanish sentences + Translate: line.
+- Use clear Spanish examples only.
+- Keep each message to 2 short Spanish sentences with no translation line.
 - Do NOT drill yet — teach the concept fully before the writing task.
 - Stay on this structure topic only for the whole lesson.`;
     case 'read':
@@ -213,6 +219,19 @@ After the memory palace walkthrough immediately drill the user on each item:
 "What did you do with the fridge?" → fuiste
 And so on for each kitchen item.`;
 
+const SPANISH_ONLY_PHASES_RULE = `
+CRITICAL LANGUAGE RULE:
+Every single message you send in Phase 1, Phase 2 and Phase 3 must be written entirely in Spanish.
+No English words. No English sentences. No bilingual responses. No English translations inline.
+If you need to explain something complex, use simpler Spanish — never English.
+Use examples in Spanish — never English.
+The app's reveal translation controls handle translation; you do not provide it.
+This applies to introductions, explanations, writing prompts, writing feedback, speaking prompts,
+responses, corrections, encouragement, instructions, and every word Javi displays in these phases.
+The ONLY exception is a conjugation memory hook, which may contain one English sound-alike in
+brackets, for example: "fui — (sounds like phooey) — ...".
+This rule overrides every conflicting language or response-format instruction.`;
+
 function buildSystemPrompt(
   lessonType: LessonType,
   focus: LessonFocusContext,
@@ -236,12 +255,10 @@ Dialect (Spain Castilian as default; Argentina for contrast):
 - When a word or phrase differs meaningfully in Argentina, add the Argentine equivalent in brackets exactly like: [🇦🇷 Argentine: …] (keep it short—often just the word or phrase, e.g. [🇦🇷 Argentine: auto] if you said "coche").
 - When a natural moment arises, briefly highlight Spain vs Argentina vocabulary or usage—conversationally, not as a lecture. Occasionally drop in an interesting dialect tidbit unprompted so it feels educational but still chatty, never textbook-y.
 
-Response format (every message must follow this structure):
+Response format (every Phase 1, Phase 2, and Phase 3 message must follow this structure):
 1) If the learner made Spanish mistakes, gently correct them first in one short sentence if possible, then continue. If there were no meaningful errors, skip correction and respond warmly.
-2) Your main reply in Spanish only: at most 2–3 sentences (bracketed [🇦🇷 Argentine: …] notes count as part of this Spanish block). Do not put English inside the Spanish block—no English glosses or translations there (dialect tags in Spanish are fine).
-3) On its own line after the Spanish, add the English translation using exactly this prefix (nothing before it on that line):
-   Translate: <English translation of your Spanish sentences>
-   The Translate line is stored for reference; learners tap words for meaning instead of revealing the full translation.
+2) Reply only in Spanish: at most 2–3 sentences (bracketed [🇦🇷 Argentina: …] notes count as part of this Spanish block).
+3) Never add a Translate: or Translation: line.
 
 General:
 - Stay on this lesson type; if the learner drifts, acknowledge briefly and steer back.
@@ -250,12 +267,14 @@ General:
 
 Vocabulary teaching (all lesson types):
 - Roughly once per conversation (not every message), naturally introduce 1–2 words slightly above B1 level.
-- Use each new word in a natural Spanish sentence first, then briefly explain in Spanish on a new line starting with "Por cierto —" e.g. "Por cierto — 'conseguir' means to achieve or to get. You might want to save that one."
+- Use each new word in a natural Spanish sentence first, then briefly explain it in simple Spanish on a new line starting with "Por cierto —".
 - Keep it conversational — never turn into a vocabulary list. The learner can save words with the app's Save a word feature.
 
 INTERLEAVING: Always mix current grammar focus with vocabulary from a different theme than this week's vocabulary lesson. In conversation naturally reference vocabulary from previous weeks to force retrieval. In writing tasks use current grammar with non-current vocabulary themes.
 
 FEYNMAN TECHNIQUE: On the first lesson of each new grammar curriculum week, after your introduction, ask the user to explain the grammar rule back to you in Spanish in their own words with an example. Evaluate their explanation and address specific gaps only. Maximum 2 Feynman exchanges before moving to writing phase. Only use Feynman on Grammar and Structure lessons.
+
+${SPANISH_ONLY_PHASES_RULE}
 
 ${CONJUGATION_MEMORY_TECHNIQUES}${buildErrorDnaAppendix(topErrors)}`;
 }
@@ -492,7 +511,7 @@ Do not over-explain. Trust the user to learn by doing.
 The writing and speaking phases teach more than the introduction.
 
 - The learner sees a conjugation reference panel above the chat — point to on-screen tables ("mira la tabla de tener") instead of typing full conjugation lists.
-- Keep each message to 2-3 short sentences maximum, then Translate: line.
+- Keep each message to 2-3 short Spanish sentences maximum.
 - Be warm and practical.
 
 COMPLETION SIGNAL:
@@ -544,10 +563,10 @@ export async function generateWarmUpOpening(
 
   const openingPrompt =
     focus.kind === 'structure'
-      ? `Start the warm-up. Explain why today's structure point matters (${focus.topic.title}): ${focus.topic.summary}. Use clear English and Spanish examples. Explain WHY, not just the rule. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
+      ? `Start the warm-up. Explain in simple Spanish why today's structure point matters (${focus.topic.title}): ${focus.topic.summary}. Use Spanish examples only. Explain WHY, not just the rule. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
       : focus.kind === 'grammar'
-        ? `Start the warm-up for ${focus.topic} (week ${focus.weekNumber}). The learner sees conjugation tables for: ${focus.focusVerbs.join(', ')}. Explain when and why this tense is used, point them to the regular endings on screen, and highlight 2–3 irregular focus verbs to study in the tables. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
-        : 'Start the warm-up. Introduce today\'s topic, explain why it matters, and highlight 2–3 verbs or structures to practise. End with Translate: line. Do not use [READY_FOR_WRITING] yet — this is only your first message.';
+        ? `Start the warm-up for ${focus.topic} (week ${focus.weekNumber}). The learner sees conjugation tables for: ${focus.focusVerbs.join(', ')}. Explain in simple Spanish when and why this tense is used, point them to the regular endings on screen, and highlight 2–3 irregular focus verbs. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
+        : 'Start the warm-up in Spanish only. Introduce today\'s topic, explain why it matters, and highlight 2–3 verbs or structures to practise. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.';
 
   const response = await anthropic.messages.create({
     model,
@@ -694,7 +713,7 @@ Return JSON exactly:
   "naturalFlowScore": 0-100 integer (did it sound conversational and natural?),
   "score": 0-100 integer (overall speaking — average of the four scores above),
   "pronunciationNotes": array of up to 3 short notes if transcripts suggest unclear words,
-  "feedback": 2 sentences encouraging feedback from Javi in English — focus on fluency strengths, not grammar nitpicks
+  "feedback": 2 short encouraging sentences from Javi entirely in Spanish — focus on fluency strengths, not grammar nitpicks
 }
 
 Do NOT evaluate:
@@ -737,7 +756,7 @@ ${lessonType === 'Structure' ? '\nBonus: note if word order sounded natural in c
 export type FeynmanEvaluationJson = {
   verdict: 'correct' | 'partial' | 'wrong';
   javiSpanish: string;
-  javiTranslation: string;
+  javiTranslation?: string;
   moveToWriting: boolean;
 };
 
@@ -752,6 +771,7 @@ export async function evaluateFeynmanExplanation(
   const model = getModel();
 
   const system = `You are Javi using the Feynman Technique to check if a B1 learner truly understands a grammar/structure concept.
+${SPANISH_ONLY_PHASES_RULE}
 Return ONLY valid JSON. No markdown.
 
 FEYNMAN RULES:
@@ -776,7 +796,6 @@ Return JSON exactly:
 {
   "verdict": "correct" | "partial" | "wrong",
   "javiSpanish": "Javi's reply in Spanish (2 short sentences max)",
-  "javiTranslation": "English translation of javiSpanish",
   "moveToWriting": boolean
 }`;
 
@@ -797,10 +816,7 @@ Return JSON exactly:
   return {
     verdict,
     javiSpanish: typeof parsed.javiSpanish === 'string' ? parsed.javiSpanish.trim() : 'Bien — sigamos practicando.',
-    javiTranslation:
-      typeof parsed.javiTranslation === 'string'
-        ? parsed.javiTranslation.trim()
-        : 'Good — let\'s keep practising.',
+    javiTranslation: undefined,
     moveToWriting:
       attemptNumber >= 2 ||
       Boolean(parsed.moveToWriting) ||
@@ -1084,6 +1100,9 @@ export async function analyzeConversation(
 Return ONLY valid JSON. No markdown. No extra keys. No trailing commentary.`;
 
   const user = `Analyze this lesson conversation and return a JSON object with exactly these keys:
+You MUST return a complete JSON object with ALL four skill assessments.
+Never omit any tab or any field. Even if the lesson did not heavily feature a skill,
+return an assessment based on what was observed.
 - strongAreas: array of 3 things the user did well
 - weakAreas: array of 3 things the user struggled with
 - focusAreas: array of 2 specific ${isStructure ? 'sentence structure' : 'grammar or vocabulary'} topics to practise next
@@ -1239,9 +1258,9 @@ function writingTaskFocusLine(focus: LessonFocusContext): string {
       return `Conversation angle: ${focus.starter}. Ask the learner to write 4–5 sentences in Spanish about this topic.`;
     case 'structure':
       return `Structure topic: ${focus.topic.title} — ${focus.topic.summary}
-Ask the learner to rewrite exactly 5 English sentences in correct Spanish word order.
+Ask the learner to correct exactly 5 Spanish sentences into natural Spanish word order.
 ${focus.topic.writingHint}
-List the 5 English sentences clearly numbered 1–5 in the prompt. Each tests today's structure point: ${focus.topic.focus}`;
+List the 5 Spanish sentences clearly numbered 1–5 in the prompt. Each tests today's structure point: ${focus.topic.focus}`;
     case 'read':
       return `Reading text type: ${focus.textTypeLabel}. The learner reads authentic Spanish texts — comprehension is handled in the Read lesson flow.`;
   }
@@ -1257,6 +1276,8 @@ export async function generateWritingTask(
   const model = getModel();
 
   const system = `You are Javi, a Spanish tutor.
+${SPANISH_ONLY_PHASES_RULE}
+The writing task prompt value must be entirely in Spanish.
 Return ONLY valid JSON. No markdown.`;
 
   const user = `Create a writing task prompt for a B1 learner.
@@ -1292,6 +1313,9 @@ export async function evaluateWriting(
   const model = getModel();
 
   const system = `You are Javi, a Spanish tutor evaluating B1 writing.
+${SPANISH_ONLY_PHASES_RULE}
+Every learner-facing string in the JSON must be Spanish, including feedback, corrections,
+explanations, accent issues, and structural feedback.
 Return ONLY valid JSON. No markdown. No extra keys.
 Be encouraging and specific.`;
 
@@ -1307,7 +1331,7 @@ Return JSON exactly with these keys:
 - vocabularyScore: integer 0-100
 - fluencyScore: integer 0-100
 ${isStructure ? '- structureScore: integer 0-100 (word order and sentence construction for today\'s structure topic)\n- wordOrderErrors: array of word-order mistakes { mistake, correction, explanation }' : ''}
-- feedback: 2-3 sentences of encouraging, specific feedback from Javi
+- feedback: 2-3 sentences of encouraging, specific feedback from Javi, entirely in Spanish
 - corrections: array of specific mistakes with why it was wrong, with objects:
   { "mistake": "...", "correction": "...", "explanation": "..." }
 - accentIssues: array of accent/tilde mistakes flagged separately (e.g. "café written as cafe")
@@ -1365,13 +1389,6 @@ focusAreas: ${JSON.stringify(focusAreas)}`;
   const parsed = extractFirstJsonObject(text) as { exercises: DrillExerciseJson[] };
   return Array.isArray(parsed.exercises) ? parsed.exercises : [];
 }
-
-import {
-  CHALLENGE_TYPE_TEMPLATES,
-  type ChallengeType,
-  type DailyChallengeSummaryInput,
-} from '@/lib/daily-challenge';
-
 
 export async function generateWrappedJaviMessage(report: SpanishWrappedReport): Promise<string> {
   const anthropic = getClient();
@@ -1705,7 +1722,12 @@ export type QuickFireQuestionType =
   | 'choose_natural'
   | 'complete_conversation'
   | 'rewrite_less_translated'
-  | 'native_instead';
+  | 'native_instead'
+  | 'describe_and_respond'
+  | 'opinion_question'
+  | 'situation_response'
+  | 'story_completion'
+  | 'reaction_question';
 
 export type GrammarDrillContext = {
   topic: string;
@@ -2244,61 +2266,58 @@ For those 2 questions set "targetsErrorDna": true.`
       : '';
 
   const fluencyTypes: QuickFireQuestionType[] = [
-    'say_more_naturally',
-    'choose_natural',
-    'complete_conversation',
-    'rewrite_less_translated',
-    'native_instead',
+    'describe_and_respond',
+    'opinion_question',
+    'situation_response',
+    'story_completion',
+    'reaction_question',
   ];
 
   const system = `You are Javi, a Spanish tutor creating fluency quick-fire drills for a B1 learner.
 Return ONLY valid JSON. No markdown. No extra keys.`;
 
-  const user = `Generate exactly ${count} fluency-focused quick-fire questions for a B1 learner.
+  const user = `Generate exactly ${count} VOICE-ONLY fluency questions for a B1 learner.
 
-Focus on natural spoken Spanish — not grammar tables or tense drills.
+Every question must be open-ended and designed to make the learner speak freely in Spanish.
+Focus on conversational flow — not grammar tables, translations, or single correct answers.
 Target weak areas: ${JSON.stringify(prioritizedWeakAreas)}
 ${errorDnaBlock}
 
 Mix these question types across the set (use all five; repeat as needed to reach ${count}):
 
-1) say_more_naturally
-   Prompt format: "Say this sentence more naturally: [Spanish sentence]"
-   expectedAnswer: a more fluent Spanish rewrite
-   acceptableAnswers: 1-3 natural variants
+1) describe_and_respond
+   Examples: "¿Qué ves en tu habitación ahora mismo?", "Describe tu día de hoy en tres frases."
 
-2) choose_natural
-   Prompt format: "Which sounds more natural?\\nA) [version A]\\nB) [version B]"
-   expectedAnswer: "A" or "B" (the more natural one)
-   acceptableAnswers: include the full correct sentence as well
+2) opinion_question
+   Examples: "¿Qué opinas del tiempo hoy?", "¿Cuál es tu comida favorita y por qué?"
 
-3) complete_conversation
-   Prompt format: "Complete this conversation naturally:\\nJavi: [Spanish]\\nYou:"
-   expectedAnswer: a natural B1 reply in Spanish
+3) situation_response
+   Example: "Estás en un restaurante y el camarero te pregunta qué quieres. ¿Qué dices?"
 
-4) rewrite_less_translated
-   Prompt format: "Rewrite this sentence to sound less translated:\\n'[over-literal Spanish]'"
-   expectedAnswer: a natural Spanish rewrite (e.g. "Yo fui al mercado para comprar comida" → "Fui al mercado a comprar")
+4) story_completion
+   Example: "Ayer fui al mercado y de repente... Continúa la historia."
 
-5) native_instead
-   Prompt format: "What would a native speaker say instead of:\\n[over-literal / stilted Spanish or English-influenced line]"
-   expectedAnswer: the natural Spanish alternative
+5) reaction_question
+   Example: "¿Cómo reaccionarías si te dijeran que tienes que mudarte a España mañana?"
 
 Rules:
-- Short prompts. Natural answers.
-- Use real spoken Spanish (drop redundant pronouns, prefer natural connectors).
+- Ask the question in Spanish.
+- Require a sentence or short multi-sentence response, never one word.
+- Keep prompts concise, practical, and B1 appropriate.
+- Do not provide choices.
+- Do not ask for a translation or a specific grammatical form.
 - Tie to weak areas where possible.
-- For choose_natural, make A vs B clearly different in naturalness.
+- "expectedAnswer" must always be "Open spoken response".
+- "acceptableAnswers" must be omitted or empty.
 
 Return JSON exactly:
 {
   "questions": [
     {
       "id": "1",
-      "type": "say_more_naturally",
+      "type": "describe_and_respond",
       "prompt": "...",
-      "expectedAnswer": "...",
-      "acceptableAnswers": ["..."],
+      "expectedAnswer": "Open spoken response",
       "targetsErrorDna": false
     }
   ]
@@ -2332,6 +2351,60 @@ Valid type values: ${fluencyTypes.join(', ')}`;
         : undefined,
       targetsErrorDna: Boolean(q.targetsErrorDna),
     }));
+}
+
+export type FluencyDrillEvaluation = {
+  correct: boolean;
+  feedback: string;
+};
+
+export async function evaluateFluencyDrillResponse(
+  question: string,
+  transcription: string,
+): Promise<FluencyDrillEvaluation> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a warm Spanish tutor evaluating a voice-only fluency drill.
+Return ONLY valid JSON. No markdown.`;
+
+  const user = `The fluency drill question was: ${question}
+The user responded with: ${transcription}
+
+Evaluate for:
+- Natural Spanish flow — does it sound conversational?
+- Correct vocabulary choice
+- Appropriate sentence structure
+- Confidence — did they attempt a full response?
+
+Do not penalise grammar errors heavily. Fluency, relevance, and making a full-sentence attempt matter most.
+Set correct=true when the response is relevant and makes a genuine sentence-level attempt.
+Set correct=false for one-word, irrelevant, empty, or too unclear responses.
+Feedback must be one short encouraging sentence in English.
+
+Return JSON exactly:
+{
+  "correct": true,
+  "feedback": "One short encouraging sentence"
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 160,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as Partial<FluencyDrillEvaluation>;
+  return {
+    correct: parsed.correct === true,
+    feedback:
+      typeof parsed.feedback === 'string' && parsed.feedback.trim()
+        ? parsed.feedback.trim()
+        : parsed.correct === true
+          ? 'Good job — that sounded natural and complete.'
+          : 'Good attempt — try giving Javi one complete sentence next time.',
+  };
 }
 
 function readTextTypePromptBlock(textType: ReadTextType): string {

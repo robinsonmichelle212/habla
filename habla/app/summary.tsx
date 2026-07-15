@@ -323,6 +323,10 @@ function SummaryScreenInner({
     if (analysis && lessonType) {
       const lessonHistoryEntry = buildLessonHistoryEntry();
       if (lessonHistoryEntry) {
+        console.log('Saving grammar:', lessonHistoryEntry.breakdown.grammar);
+        console.log('Saving vocabulary:', lessonHistoryEntry.breakdown.vocabulary);
+        console.log('Saving fluency:', lessonHistoryEntry.breakdown.fluency);
+        console.log('Saving writing:', lessonHistoryEntry.breakdown.writing);
         console.log(
           '[Habla] Saving to lessonHistory:',
           JSON.stringify(lessonHistoryEntry, null, 2),
@@ -416,33 +420,37 @@ function SummaryScreenInner({
       try {
         celebrate(allCelebrations, {
           onAllDismissed: () => {
-            const milestoneGems = pendingCelebrationsRef.current.reduce(
-              (sum, c) => sum + c.gemsAwarded,
-              0,
-            );
-            if (milestoneGems > 0 && isMountedRef.current) {
-              setGemsEarned((prev) => prev + milestoneGems);
-              Animated.sequence([
-                Animated.timing(milestoneGemPulse, {
-                  toValue: 1.22,
-                  duration: 180,
-                  useNativeDriver: true,
-                }),
-                Animated.timing(milestoneGemPulse, {
-                  toValue: 1,
-                  duration: 220,
-                  useNativeDriver: true,
-                }),
-              ]).start();
+            try {
+              const milestoneGems = pendingCelebrationsRef.current.reduce(
+                (sum, c) => sum + c.gemsAwarded,
+                0,
+              );
+              if (milestoneGems > 0 && isMountedRef.current) {
+                setGemsEarned((prev) => prev + milestoneGems);
+                Animated.sequence([
+                  Animated.timing(milestoneGemPulse, {
+                    toValue: 1.22,
+                    duration: 180,
+                    useNativeDriver: true,
+                  }),
+                  Animated.timing(milestoneGemPulse, {
+                    toValue: 1,
+                    duration: 220,
+                    useNativeDriver: true,
+                  }),
+                ]).start();
+              }
+              const celebrationsSnapshot = [...pendingCelebrationsRef.current];
+              pendingCelebrationsRef.current = [];
+              void queueMilestoneQuizzesFromCelebrations(celebrationsSnapshot, {
+                levelLabel: levelUpLabel,
+                achievedDate: today,
+              }).catch((quizErr) => {
+                console.error('[Habla] milestone quiz queue failed:', quizErr);
+              });
+            } catch (dismissErr) {
+              console.log('Keep going error:', dismissErr);
             }
-            const celebrationsSnapshot = [...pendingCelebrationsRef.current];
-            pendingCelebrationsRef.current = [];
-            void queueMilestoneQuizzesFromCelebrations(celebrationsSnapshot, {
-              levelLabel: levelUpLabel,
-              achievedDate: today,
-            }).catch((quizErr) => {
-              console.error('[Habla] milestone quiz queue failed:', quizErr);
-            });
           },
         });
       } catch (celebrateErr) {

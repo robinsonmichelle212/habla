@@ -7,11 +7,11 @@ export function demoTopicLabel(focus: LessonFocusContext): string {
   return lessonFocusLabel(focus);
 }
 
-export function demoWarmUpOpening(topic: string): { spanish: string; translation: string } {
-  const spanish = `Demo mode: Hola! Vamos a practicar el ${topic}. Esta es una lección de demostración.`;
+export function demoWarmUpOpening(_topic: string): { spanish: string; translation: string } {
+  const spanish = '¡Hola! Vamos a practicar el tema de hoy. Esta es una lección de demostración.';
   return {
     spanish,
-    translation: `Demo mode: Hi! Let's practice ${topic}. This is a demo lesson.`,
+    translation: '',
   };
 }
 
@@ -27,12 +27,12 @@ export function demoWritingEvaluation(text: string): WritingEvaluation {
     fluencyScore: 82,
     structureScore: 78,
     feedback:
-      'Demo evaluation: Good effort! Grammar: 85% · Vocabulary: 80% · Fluency: 82% · Writing: 78%',
+      '¡Buen esfuerzo! Gramática: 85% · Vocabulario: 80% · Fluidez: 82% · Escritura: 78%',
     corrections: [
       {
         mistake: '—',
         correction: '—',
-        explanation: 'No corrections in demo mode.',
+        explanation: 'No hay correcciones en el modo de demostración.',
       },
     ],
     accentIssues: [],
@@ -49,7 +49,7 @@ export function demoSpeakingEvaluation(): SpeakingEvaluation {
   const combinedScore = Math.round(
     (fluencyScore + confidenceScore + vocabularyRangeScore + naturalFlowScore) / 4,
   );
-  const feedback = 'Demo mode: Speaking registered. Fluency: 80% · Confidence: 75%';
+  const feedback = 'Respuesta registrada. Fluidez: 80% · Confianza: 75%';
   return {
     fluencyScore,
     confidenceScore,
@@ -59,7 +59,7 @@ export function demoSpeakingEvaluation(): SpeakingEvaluation {
     score: combinedScore,
     javiFeedback: feedback,
     feedback,
-    exchangeCount: 1,
+    exchangeCount: 3,
     pronunciationNotes: [],
   };
 }

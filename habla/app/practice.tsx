@@ -1,4 +1,5 @@
 import { AppTextInput } from '@/components/app-text-input';
+import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { useDemoMode } from '@/contexts/demo-mode-context';
 import { DEMO_DRILLS } from '@/lib/demo-mode';
 import {
@@ -18,16 +19,19 @@ import {
   generateInterleavedPracticeQuestions,
   generateFluencyDrillQuestions,
   generateWordOrderDrillQuestions,
+  evaluateFluencyDrillResponse,
   type PrioritizedWeakAreaInput,
   type QuickFireQuestion,
 } from '@/lib/claude';
 import { getTopErrorDNA, getWordOrderErrorDNA } from '@/lib/error-dna';
-import { offerMilestoneCelebrationQuiz } from '@/lib/milestone-quiz-navigation';
 import {
   getActiveFocusTipsForDrill,
   markFocusTipsUsedInDrill,
 } from '@/lib/current-focus-tips';
-import { getMilestoneQuizDrillQueue } from '@/lib/milestone-celebration-quiz';
+import {
+  getMilestoneQuizDrillQueue,
+  queueMilestoneQuizzesFromCelebrations,
+} from '@/lib/milestone-celebration-quiz';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import {
   DRILL_KIND_EMOJI,
@@ -40,8 +44,15 @@ import {
 } from '@/lib/practice-drill-selection';
 import { GemEarnedToast } from '@/components/gem-earned-toast';
 import { useMilestoneCelebration } from '@/contexts/milestone-context';
-import { addGems, gemsForPracticeDrill, practiceDrillEncouragement } from '@/lib/gems';
+import {
+  addGems,
+  fluencyDrillEncouragement,
+  gemsForFluencyDrill,
+  gemsForPracticeDrill,
+  practiceDrillEncouragement,
+} from '@/lib/gems';
 import { checkIsOnline } from '@/lib/network-status';
+import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import { buildInterleavedDrillPlan } from '@/lib/interleaving';
 import { cachePracticeQuestions, getCachedPracticeQuestions } from '@/lib/practice-questions-cache';
 import { getOfflineGrammarDrillQuestions } from '@/lib/offline-practice-fallbacks';
@@ -51,6 +62,14 @@ import { checkQuickFireAnswer } from '@/lib/quick-fire';
 import { formatWordOrderQuestionType, recordWordOrderDrillMistakes } from '@/lib/word-order-drill';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import { formatLocalDate, recordQuickFirePractice } from '@/lib/streak';
+import {
+  MIN_RECORDING_MS,
+  ensureRecordingStopped,
+  startVoiceRecording,
+  stopVoiceRecording,
+} from '@/lib/voice-recording';
+import { transcribeSpanishAudio } from '@/lib/whisper';
+import { useRecordingCountdown } from '@/hooks/use-recording-countdown';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -79,6 +98,8 @@ const palette = {
   blue: '#60A5FA',
   green: '#34D399',
   greenBg: 'rgba(52, 211, 153, 0.22)',
+  amber: '#FBBF24',
+  amberBg: 'rgba(251, 191, 36, 0.22)',
   red: '#F87171',
   redBg: 'rgba(248, 113, 113, 0.22)',
   gem: '#A78BFA',
@@ -86,6 +107,31 @@ const palette = {
 
 const TOTAL_QUESTIONS = 10;
 const AUTO_ADVANCE_MS = 2000;
+const FLUENCY_RECORDING_SECONDS = 10;
+
+const DEMO_FLUENCY_QUESTIONS: QuickFireQuestion[] = [
+  '¿Qué ves en tu habitación ahora mismo?',
+  'Describe tu día de hoy en tres frases.',
+  '¿Cómo llegas normalmente al trabajo?',
+  '¿Qué opinas del tiempo hoy?',
+  '¿Cuál es tu comida favorita y por qué?',
+  '¿Qué harías si tuvieras un día libre mañana?',
+  'Estás en un restaurante y el camarero te pregunta qué quieres. ¿Qué dices?',
+  'Tu amigo español te pregunta por tu familia. ¿Qué le cuentas?',
+  'Ayer fui al mercado y de repente... Continúa la historia.',
+  '¿Cómo reaccionarías si tuvieras que mudarte a España mañana?',
+].map((prompt, index) => ({
+  id: `demo-fluency-${index + 1}`,
+  type: [
+    'describe_and_respond',
+    'opinion_question',
+    'situation_response',
+    'story_completion',
+    'reaction_question',
+  ][index % 5] as QuickFireQuestion['type'],
+  prompt,
+  expectedAnswer: 'Open spoken response',
+}));
 
 function parseDrillParam(value: string | undefined): PracticeDrillKind | null {
   if (value === 'grammar' || value === 'vocabulary' || value === 'fluency' || value === 'word-order') {
@@ -100,6 +146,7 @@ type AnswerRecord = {
   practiceQuestion: PracticeQuestion;
   userAnswer: string;
   correct: boolean;
+  feedback?: string;
 };
 
 type FlashState = 'correct' | 'incorrect' | null;
@@ -114,6 +161,8 @@ export default function PracticeScreen() {
   const { enabled: demoMode } = useDemoMode();
   const didAutoStartRef = useRef(false);
   const activeDrillRef = useRef<PracticeDrillKind>('vocabulary');
+  const voiceStateRef = useRef<VoiceButtonState>('idle');
+  const handleFluencyPressOutRef = useRef<() => Promise<void>>(async () => {});
 
   const initialDrill = parseDrillParam(typeof drill === 'string' ? drill : undefined);
 
@@ -144,9 +193,19 @@ export default function PracticeScreen() {
   const [savingRewards, setSavingRewards] = useState(false);
   const [masteryEvent, setMasteryEvent] = useState<VocabMasteryEvent | null>(null);
   const [vocabExample, setVocabExample] = useState<string | null>(null);
+  const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
+  const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [heardText, setHeardText] = useState<string | null>(null);
+  const [fluencyFeedback, setFluencyFeedback] = useState<string | null>(null);
+  const fluencyCountdown = useRecordingCountdown(
+    voiceState === 'recording',
+    FLUENCY_RECORDING_SECONDS,
+    () => {
+      void handleFluencyPressOutRef.current();
+    },
+  );
 
   const currentQuestion = questions[questionIdx];
-  const correctCount = results.filter((r) => r.correct).length;
   const wrongResults = results.filter((r) => !r.correct);
 
   const displayDrillSelection = useMemo((): DrillSelection | null => {
@@ -165,6 +224,7 @@ export default function PracticeScreen() {
   const activeDrillKind = displayDrillSelection?.drill ?? 'grammar';
 
   const goHome = () => {
+    void ensureRecordingStopped();
     if (Platform.OS !== 'web') {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     }
@@ -177,6 +237,18 @@ export default function PracticeScreen() {
       advanceTimerRef.current = null;
     }
   };
+
+  const setVoiceStateSafe = useCallback((next: VoiceButtonState) => {
+    voiceStateRef.current = next;
+    setVoiceState(next);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearAdvanceTimer();
+      void ensureRecordingStopped();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -245,6 +317,10 @@ export default function PracticeScreen() {
     setShowGemToast(false);
     setMasteryEvent(null);
     setVocabExample(null);
+    setVoiceStateSafe('idle');
+    setVoiceError(null);
+    setHeardText(null);
+    setFluencyFeedback(null);
     didAwardRef.current = false;
   };
 
@@ -261,11 +337,15 @@ export default function PracticeScreen() {
 
     try {
       if (demoMode) {
-        const demoQuestions: PracticeQuestion[] = DEMO_DRILLS.map((d) => ({
+        const source = effectiveDrill === 'fluency' ? DEMO_FLUENCY_QUESTIONS : DEMO_DRILLS;
+        const demoQuestions: PracticeQuestion[] = source.map((d) => ({
           kind: 'quick' as const,
           question: {
             id: d.id,
-            type: 'quick_translate' as const,
+            type:
+              effectiveDrill === 'fluency'
+                ? (d as QuickFireQuestion).type
+                : ('quick_translate' as const),
             prompt: d.prompt,
             expectedAnswer: d.expectedAnswer ?? '',
           },
@@ -280,7 +360,7 @@ export default function PracticeScreen() {
       const weekDef = getWeekDefinition(curriculum.currentWeek);
       const grammarWeek = effectiveDrill === 'grammar' ? weekDef.week : null;
 
-      const useCachedOrFallback = async (
+      const getCachedOrFallback = async (
         drillKind: PracticeDrillKind,
         week: number | null,
         fallback?: () => QuickFireQuestion[],
@@ -342,7 +422,7 @@ export default function PracticeScreen() {
 
       if (effectiveDrill === 'word-order') {
         if (!online) {
-          const offlineBatch = await useCachedOrFallback('word-order', null);
+          const offlineBatch = await getCachedOrFallback('word-order', null);
           if (!offlineBatch?.length) {
             Alert.alert(
               'Offline',
@@ -398,20 +478,25 @@ export default function PracticeScreen() {
       }
 
       if (effectiveDrill === 'fluency') {
-        if (!online) {
-          const offlineBatch = await useCachedOrFallback('fluency', null);
-          if (!offlineBatch?.length) {
-            Alert.alert(
-              'Offline',
-              'No saved fluency questions yet. Connect once while online to cache a drill set.',
-            );
-            setStage('choose');
-            return;
-          }
-          setQuestions(
-            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
+        if (Platform.OS === 'web') {
+          Alert.alert(
+            'Voice required',
+            'Fluency drill uses push to talk and is available in the iOS and Android app.',
           );
-          setStage('drill');
+          setStage('choose');
+          return;
+        }
+        if (!online) {
+          setStage('choose');
+          Alert.alert(
+            'Fluency drill needs internet',
+            'Fluency drill needs internet for voice recognition. Switch to Grammar or Vocabulary drill instead? Or try later when online.',
+            [
+              { text: 'Grammar', onPress: () => void startQuickFire('grammar') },
+              { text: 'Vocabulary', onPress: () => void startQuickFire('vocabulary') },
+              { text: 'Try later', style: 'cancel' },
+            ],
+          );
           return;
         }
 
@@ -434,7 +519,7 @@ export default function PracticeScreen() {
       }
 
       if (!online) {
-        const offlineBatch = await useCachedOrFallback('vocabulary', null);
+        const offlineBatch = await getCachedOrFallback('vocabulary', null);
         if (offlineBatch?.length) {
           setQuestions(
             offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
@@ -514,6 +599,10 @@ export default function PracticeScreen() {
       setFlash(null);
       setShowCorrectAnswer(null);
       setVocabExample(null);
+      setHeardText(null);
+      setFluencyFeedback(null);
+      setVoiceError(null);
+      setVoiceStateSafe('idle');
       setLocked(false);
       setAnswer('');
 
@@ -524,7 +613,7 @@ export default function PracticeScreen() {
 
       setQuestionIdx((i) => i + 1);
     },
-    [finishDrill, questionIdx],
+    [finishDrill, questionIdx, setVoiceStateSafe],
   );
 
   const submitAnswer = async () => {
@@ -581,13 +670,165 @@ export default function PracticeScreen() {
     }, AUTO_ADVANCE_MS);
   };
 
+  const recordFluencyResult = useCallback(
+    (transcription: string, correct: boolean, feedback: string) => {
+      if (!currentQuestion || locked) return;
+      const record: AnswerRecord = {
+        practiceQuestion: currentQuestion,
+        userAnswer: transcription,
+        correct,
+        feedback,
+      };
+      const nextResults = [...results, record];
+
+      setResults(nextResults);
+      setLocked(true);
+      setFlash(correct ? 'correct' : 'incorrect');
+      setFluencyFeedback(feedback);
+      setVoiceStateSafe('idle');
+
+      if (Platform.OS !== 'web') {
+        void Haptics.notificationAsync(
+          correct
+            ? Haptics.NotificationFeedbackType.Success
+            : Haptics.NotificationFeedbackType.Warning,
+        );
+      }
+
+      advanceTimerRef.current = setTimeout(() => {
+        advanceQuestion(nextResults);
+      }, AUTO_ADVANCE_MS);
+    },
+    [advanceQuestion, currentQuestion, locked, results, setVoiceStateSafe],
+  );
+
+  const handleFluencyPressIn = async () => {
+    if (
+      activeDrillRef.current !== 'fluency' ||
+      !currentQuestion ||
+      locked ||
+      voiceStateRef.current !== 'idle'
+    ) {
+      return;
+    }
+
+    if (!(await checkIsOnline())) {
+      setStage('choose');
+      Alert.alert(
+        'Fluency drill needs internet',
+        'Fluency drill needs internet for voice recognition. Switch to Grammar or Vocabulary drill instead? Or try later when online.',
+        [
+          { text: 'Grammar', onPress: () => void startQuickFire('grammar') },
+          { text: 'Vocabulary', onPress: () => void startQuickFire('vocabulary') },
+          { text: 'Try later', style: 'cancel' },
+        ],
+      );
+      return;
+    }
+
+    const permission = await ensureMicPermission();
+    if (!permission.granted) {
+      setVoiceError(MIC_DENIED_MESSAGE);
+      return;
+    }
+
+    setVoiceError(null);
+    setHeardText(null);
+    setFluencyFeedback(null);
+    try {
+      await startVoiceRecording();
+      setVoiceStateSafe('recording');
+    } catch (error) {
+      console.log('[Habla] Fluency recording start failed:', error);
+      setVoiceError('Could not start the microphone. Please try again.');
+      setVoiceStateSafe('idle');
+    }
+  };
+
+  const handleFluencyPressOut = async () => {
+    if (voiceStateRef.current !== 'recording' || !currentQuestion) return;
+    setVoiceStateSafe('processing');
+
+    try {
+      const { uri, durationMs } = await stopVoiceRecording();
+      if (!uri || durationMs < MIN_RECORDING_MS) {
+        setVoiceError('Hold the button while you answer.');
+        setVoiceStateSafe('idle');
+        return;
+      }
+
+      if (demoMode) {
+        const transcript = 'Hoy estoy practicando español y quiero hablar con más confianza.';
+        setHeardText(transcript);
+        recordFluencyResult(
+          transcript,
+          true,
+          'Great — you gave a clear, complete response with confident flow.',
+        );
+        return;
+      }
+
+      const transcription = await transcribeSpanishAudio(uri);
+      if (!transcription.ok) {
+        if (transcription.reason === 'offline') {
+          setVoiceStateSafe('idle');
+          setStage('choose');
+          Alert.alert(
+            'Fluency drill needs internet',
+            'The connection dropped. Switch to Grammar or Vocabulary drill instead? Or try later when online.',
+            [
+              { text: 'Grammar', onPress: () => void startQuickFire('grammar') },
+              { text: 'Vocabulary', onPress: () => void startQuickFire('vocabulary') },
+              { text: 'Try later', style: 'cancel' },
+            ],
+          );
+          return;
+        }
+        const feedback =
+          'Javi could not hear a clear sentence — try speaking a little longer and louder.';
+        recordFluencyResult('[No clear transcription]', false, feedback);
+        return;
+      }
+
+      setHeardText(transcription.text);
+      let evaluation;
+      try {
+        evaluation = await evaluateFluencyDrillResponse(
+          practiceQuestionPrompt(currentQuestion),
+          transcription.text,
+        );
+      } catch (error) {
+        console.log('[Habla] Fluency evaluation failed:', error);
+        const attemptedSentence = transcription.text.trim().split(/\s+/).length >= 4;
+        evaluation = {
+          correct: attemptedSentence,
+          feedback: attemptedSentence
+            ? 'Good work — you kept speaking in a complete, relevant sentence.'
+            : 'Good attempt — try expanding your answer into one complete sentence.',
+        };
+      }
+
+      recordFluencyResult(transcription.text, evaluation.correct, evaluation.feedback);
+    } catch (error) {
+      console.log('[Habla] Fluency response failed:', error);
+      await ensureRecordingStopped();
+      setVoiceError('Javi could not process that answer. Please try again.');
+      setVoiceStateSafe('idle');
+    }
+  };
+  handleFluencyPressOutRef.current = handleFluencyPressOut;
+
   useEffect(() => {
     if (stage !== 'result') return;
     if (didAwardRef.current) return;
     didAwardRef.current = true;
 
     const finalScore = results.filter((r) => r.correct).length;
-    const gems = demoMode ? 0 : gemsForPracticeDrill(finalScore, TOTAL_QUESTIONS);
+    const gems = demoMode
+      ? 0
+      : activeDrillRef.current === 'fluency'
+        ? gemsForFluencyDrill(finalScore)
+        : gemsForPracticeDrill(finalScore, TOTAL_QUESTIONS);
     setGemsEarned(gems);
     if (gems > 0) {
       setGemToastAmount(gems);
@@ -644,7 +885,12 @@ export default function PracticeScreen() {
                 setGemToastAmount(milestoneGems);
                 setShowGemToast(true);
               }
-              void offerMilestoneCelebrationQuiz(router, celebrations);
+              // Queue quiz for later — Keep Going navigates home safely from MilestoneProvider.
+              void queueMilestoneQuizzesFromCelebrations(celebrations, {
+                achievedDate: today,
+              }).catch((quizErr) => {
+                console.error('[Habla] milestone quiz queue failed:', quizErr);
+              });
             },
           });
         }
@@ -818,25 +1064,51 @@ export default function PracticeScreen() {
                 Question {questionIdx + 1} of {TOTAL_QUESTIONS}
               </Text>
 
-              <View style={[styles.questionCard, flash === 'correct' && styles.flashGreenCard, flash === 'incorrect' && styles.flashRedCard]}>
+              <View
+                style={[
+                  styles.questionCard,
+                  flash === 'correct' && styles.flashGreenCard,
+                  flash === 'incorrect' &&
+                    (activeDrillRef.current === 'fluency'
+                      ? styles.flashAmberCard
+                      : styles.flashRedCard),
+                ]}>
                 {currentQuestion.kind === 'quick' && currentQuestion.question.targetsFocusTip ? (
                   <Text style={styles.focusTipLabel}>🎯 Javi&apos;s focus area</Text>
                 ) : currentQuestion.kind === 'quick' && currentQuestion.question.focusLabel ? (
                   <Text style={styles.focusLabel}>{currentQuestion.question.focusLabel}</Text>
                 ) : null}
                 {currentQuestion.kind === 'quick' && currentQuestion.question.targetsErrorDna ? (
-                  <Text style={styles.javiWatchingLabel}>Javi's watching this one 👀</Text>
+                  <Text style={styles.javiWatchingLabel}>Javi&apos;s watching this one 👀</Text>
                 ) : null}
                 <Text style={styles.questionType}>{formatPracticeQuestionType(currentQuestion)}</Text>
                 <Text style={styles.questionPrompt}>{practiceQuestionPrompt(currentQuestion)}</Text>
 
                 {flash ? (
                   <View style={styles.flashRow}>
-                    <Text style={styles.flashIcon}>{flash === 'correct' ? '✅' : '❌'}</Text>
+                    <Text style={styles.flashIcon}>
+                      {flash === 'correct'
+                        ? '✅'
+                        : activeDrillRef.current === 'fluency'
+                          ? '⚠️'
+                          : '❌'}
+                    </Text>
                     {showCorrectAnswer ? (
                       <Text style={styles.correctReveal}>{showCorrectAnswer}</Text>
                     ) : null}
                   </View>
+                ) : null}
+                {activeDrillRef.current === 'fluency' && heardText ? (
+                  <Text style={styles.heardText}>Javi heard: {heardText}</Text>
+                ) : null}
+                {activeDrillRef.current === 'fluency' && fluencyFeedback ? (
+                  <Text
+                    style={[
+                      styles.fluencyFeedback,
+                      flash === 'correct' ? styles.feedbackGood : styles.feedbackHesitant,
+                    ]}>
+                    {fluencyFeedback}
+                  </Text>
                 ) : null}
                 {flash && vocabExample ? (
                   <View style={styles.exampleBlock}>
@@ -846,7 +1118,24 @@ export default function PracticeScreen() {
                 ) : null}
               </View>
 
-              {!locked ? (
+              {!locked && activeDrillRef.current === 'fluency' ? (
+                <View style={styles.voiceAnswerCard}>
+                  <Text style={styles.voiceAnswerLabel}>
+                    {voiceState === 'processing'
+                      ? 'Javi is listening... 🎤'
+                      : 'You have 10 seconds 🎤'}
+                  </Text>
+                  <PushToTalkButton
+                    state={voiceState}
+                    disabled={locked}
+                    onPressIn={() => void handleFluencyPressIn()}
+                    onPressOut={() => void handleFluencyPressOut()}
+                    countdownSeconds={fluencyCountdown.secondsRemaining}
+                    countdownProgress={fluencyCountdown.progressRemaining}
+                  />
+                  {voiceError ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
+                </View>
+              ) : !locked ? (
                 <View style={styles.inputCard}>
                   <AppTextInput
                     style={styles.input}
@@ -877,7 +1166,9 @@ export default function PracticeScreen() {
           {stage === 'result' ? (
             <View style={styles.resultWrap}>
               <Text style={styles.resultTitle}>
-                {practiceDrillEncouragement(score, TOTAL_QUESTIONS)}
+                {activeDrillRef.current === 'fluency'
+                  ? fluencyDrillEncouragement(score)
+                  : practiceDrillEncouragement(score, TOTAL_QUESTIONS)}
               </Text>
               <Text style={styles.scoreBig}>
                 {score}/{TOTAL_QUESTIONS}
@@ -895,15 +1186,17 @@ export default function PracticeScreen() {
                   <Text style={styles.reviewTitle}>Review mistakes</Text>
                   {wrongResults.map((r, i) => {
                     const prompt = practiceQuestionPrompt(r.practiceQuestion);
-                    const expected =
-                      r.practiceQuestion.kind === 'quick'
-                        ? r.practiceQuestion.question.expectedAnswer
-                        : r.practiceQuestion.question.expectedAnswer;
                     return (
                     <View key={`${practiceQuestionId(r.practiceQuestion)}-${i}`} style={styles.reviewRow}>
                       <Text style={styles.reviewPrompt}>{prompt}</Text>
                       <Text style={styles.reviewWrong}>You: {r.userAnswer}</Text>
-                      <Text style={styles.reviewRight}>✓ {expected}</Text>
+                      {activeDrillRef.current === 'fluency' ? (
+                        <Text style={styles.reviewRight}>{r.feedback}</Text>
+                      ) : (
+                        <Text style={styles.reviewRight}>
+                          ✓ {r.practiceQuestion.question.expectedAnswer}
+                        </Text>
+                      )}
                     </View>
                     );
                   })}
@@ -978,6 +1271,16 @@ function formatPracticeQuestionType(q: PracticeQuestion): string {
       return 'Sound less translated';
     case 'native_instead':
       return 'What would a native say?';
+    case 'describe_and_respond':
+      return 'Describe and respond';
+    case 'opinion_question':
+      return 'Share your opinion';
+    case 'situation_response':
+      return 'Respond to the situation';
+    case 'story_completion':
+      return 'Continue the story';
+    case 'reaction_question':
+      return 'React naturally';
     default:
       return 'Grammar drill';
   }
@@ -1142,6 +1445,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   flashGreenCard: { backgroundColor: palette.greenBg, borderColor: 'rgba(52, 211, 153, 0.5)' },
+  flashAmberCard: { backgroundColor: palette.amberBg, borderColor: 'rgba(251, 191, 36, 0.55)' },
   flashRedCard: { backgroundColor: palette.redBg, borderColor: 'rgba(248, 113, 113, 0.5)' },
   javiWatchingLabel: {
     fontSize: 12,
@@ -1180,6 +1484,40 @@ const styles = StyleSheet.create({
   flashRow: { marginTop: 16, flexDirection: 'row', alignItems: 'center', gap: 10 },
   flashIcon: { fontSize: 28 },
   correctReveal: { fontSize: 17, fontWeight: '800', color: palette.text, flex: 1 },
+  heardText: {
+    marginTop: 12,
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 20,
+  },
+  fluencyFeedback: {
+    marginTop: 8,
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  feedbackGood: { color: palette.green },
+  feedbackHesitant: { color: palette.amber },
+  voiceAnswerCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+  },
+  voiceAnswerLabel: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.text,
+  },
+  voiceError: {
+    marginTop: 4,
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.amber,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   inputCard: { gap: 10 },
   input: {
     backgroundColor: palette.surface,

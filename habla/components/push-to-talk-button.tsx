@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import Svg, { Circle } from 'react-native-svg';
 
 export type VoiceButtonState = 'idle' | 'recording' | 'processing' | 'javi-speaking';
 
@@ -25,10 +26,18 @@ type Props = {
   disabled?: boolean;
   onPressIn: () => void;
   onPressOut: () => void;
+  countdownSeconds?: number;
+  countdownProgress?: number;
 };
 
 function WaveformBars({ color }: { color: string }) {
-  const bars = [useRef(new Animated.Value(0.35)).current, useRef(new Animated.Value(0.6)).current, useRef(new Animated.Value(0.45)).current, useRef(new Animated.Value(0.75)).current, useRef(new Animated.Value(0.5)).current];
+  const bars = useRef([
+    new Animated.Value(0.35),
+    new Animated.Value(0.6),
+    new Animated.Value(0.45),
+    new Animated.Value(0.75),
+    new Animated.Value(0.5),
+  ]).current;
 
   useEffect(() => {
     const animations = bars.map((bar, index) =>
@@ -78,8 +87,18 @@ function WaveformBars({ color }: { color: string }) {
   );
 }
 
-export function PushToTalkButton({ state, disabled, onPressIn, onPressOut }: Props) {
+export function PushToTalkButton({
+  state,
+  disabled,
+  onPressIn,
+  onPressOut,
+  countdownSeconds,
+  countdownProgress = 1,
+}: Props) {
   const pulse = useRef(new Animated.Value(1)).current;
+  const showsCountdown = state === 'recording' && countdownSeconds != null;
+  const countdownRadius = 53;
+  const countdownCircumference = 2 * Math.PI * countdownRadius;
 
   useEffect(() => {
     if (state !== 'recording') {
@@ -118,6 +137,31 @@ export function PushToTalkButton({ state, disabled, onPressIn, onPressOut }: Pro
 
   return (
     <View style={styles.wrap}>
+      {showsCountdown ? (
+        <Svg pointerEvents="none" width={120} height={120} style={styles.countdownSvg}>
+          <Circle
+            cx={60}
+            cy={60}
+            r={countdownRadius}
+            stroke="rgba(239, 68, 68, 0.22)"
+            strokeWidth={5}
+            fill="none"
+          />
+          <Circle
+            cx={60}
+            cy={60}
+            r={countdownRadius}
+            stroke={palette.recording}
+            strokeWidth={5}
+            strokeLinecap="round"
+            fill="none"
+            rotation={-90}
+            origin="60, 60"
+            strokeDasharray={`${countdownCircumference} ${countdownCircumference}`}
+            strokeDashoffset={countdownCircumference * (1 - countdownProgress)}
+          />
+        </Svg>
+      ) : null}
       {state === 'recording' ? (
         <Animated.View
           pointerEvents="none"
@@ -162,6 +206,11 @@ export function PushToTalkButton({ state, disabled, onPressIn, onPressOut }: Pro
           <ActivityIndicator color="#0B0F14" size="large" />
         ) : state === 'javi-speaking' ? (
           <WaveformBars color="#0B0F14" />
+        ) : showsCountdown ? (
+          <View style={styles.countdownCenter}>
+            <Text style={styles.countdownMic}>🎤</Text>
+            <Text style={styles.countdownText}>{countdownSeconds}</Text>
+          </View>
         ) : state === 'recording' ? (
           <WaveformBars color="#FFFFFF" />
         ) : (
@@ -183,6 +232,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     width: 120,
     height: 120,
+  },
+  countdownSvg: {
+    position: 'absolute',
+  },
+  countdownCenter: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countdownMic: {
+    fontSize: 24,
+    lineHeight: 26,
+  },
+  countdownText: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    lineHeight: 22,
+    fontWeight: '900',
   },
   pulseRing: {
     position: 'absolute',

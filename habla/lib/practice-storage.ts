@@ -598,6 +598,8 @@ export async function upsertLessonHistoryEntry(
 ): Promise<'created' | 'updated' | 'unchanged'> {
   const history = await getLessonHistory();
   const idx = findLessonHistoryIndex(history, entry.date, entry.lessonType);
+  const candidateProvidedInsights =
+    countBreakdownInsightItems(normalizeBreakdown(entry.breakdown)) > 0;
 
   const richerBreakdown = materializeBreakdownSkillTabs(
     normalizeBreakdown(entry.breakdown),
@@ -623,7 +625,7 @@ export async function upsertLessonHistoryEntry(
   }
 
   const existing = history[idx];
-  if (!isRicherLessonEntry(normalizedEntry, existing)) {
+  if (!isRicherLessonEntry(normalizedEntry, existing) && !candidateProvidedInsights) {
     // Still merge skill-tab insights if the existing row is missing them.
     const mergedInsights = materializeBreakdownSkillTabs(
       {

@@ -123,6 +123,20 @@ export default function ProgressScreen() {
     ? `${barometer.band.label} — ${barometer.progressInBand}% through band`
     : 'Complete lessons to see your level';
 
+  const openTodayBreakdown = useCallback(async () => {
+    if (Platform.OS !== 'web') {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    const [latestLessonHistory, latestDrillHistory] = await Promise.all([
+      getLessonHistory(),
+      getDrillHistory(),
+    ]);
+    setLessons(latestLessonHistory);
+    setDrills(latestDrillHistory);
+    setTodaysScoreInfo(getTodayScoreInfo(latestLessonHistory, latestDrillHistory));
+    setShowTodayModal(true);
+  }, []);
+
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
@@ -152,12 +166,7 @@ export default function ProgressScreen() {
               value={todaysScoreInfo.score != null ? `${todaysScoreInfo.score}%` : '--'}
               onPress={
                 todaysScoreInfo.score != null
-                  ? () => {
-                      if (Platform.OS !== 'web') {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }
-                      setShowTodayModal(true);
-                    }
+                  ? () => void openTodayBreakdown()
                   : undefined
               }
             />

@@ -13,6 +13,7 @@ import {
   type ReadTextType,
 } from '@/lib/read-with-javi';
 import {
+  TOTAL_CURRICULUM_WEEKS,
   getWeekDefinition,
   resolveGrammarCurriculum,
   type GrammarCurriculumState,

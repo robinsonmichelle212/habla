@@ -2,6 +2,7 @@ import type { LessonHistoryEntry } from '@/lib/practice-storage';
 import { scoreBarColor } from '@/lib/practice-storage';
 import type { SkillTabInsights } from '@/lib/skill-tab-insights';
 import {
+  materializeBreakdownSkillTabs,
   resolveFluencyInsights,
   resolveGrammarInsights,
   resolveVocabularyInsights,
@@ -41,7 +42,10 @@ type Props = {
 export function ScoreDetailModal({ visible, tab, entry, onClose }: Props) {
   if (!tab) return null;
 
-  const breakdown = entry.breakdown;
+  const breakdown = materializeBreakdownSkillTabs(entry.breakdown, {
+    weakAreas: entry.weakAreas,
+    focusAreas: entry.focusAreas,
+  });
   const titles: Record<ScoreDetailTab, string> = {
     grammar: 'Grammar',
     vocabulary: 'Vocabulary',
@@ -63,6 +67,19 @@ export function ScoreDetailModal({ visible, tab, entry, onClose }: Props) {
   };
 
   const { score, insights } = tabConfig[tab];
+  const rawSection = entry.breakdown?.[tab] as
+    | { didWell?: unknown; workOn?: unknown; focusThisWeek?: unknown }
+    | undefined;
+  const displayedInsights: SkillTabInsights = {
+    didWell:
+      Array.isArray(rawSection?.didWell) && rawSection.didWell.length > 0 ? insights.didWell : [],
+    workOn:
+      Array.isArray(rawSection?.workOn) && rawSection.workOn.length > 0 ? insights.workOn : [],
+    focusThisWeek:
+      Array.isArray(rawSection?.focusThisWeek) && rawSection.focusThisWeek.length > 0
+        ? insights.focusThisWeek
+        : [],
+  };
 
   return (
     <Modal
@@ -80,14 +97,23 @@ export function ScoreDetailModal({ visible, tab, entry, onClose }: Props) {
         </View>
 
         <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          <SkillTabDetail score={score} insights={insights} />
+          <SkillTabDetail score={score} insights={displayedInsights} tab={tab} />
         </ScrollView>
       </SafeAreaView>
     </Modal>
   );
 }
 
-function SkillTabDetail({ score, insights }: { score: number; insights: SkillTabInsights }) {
+function SkillTabDetail({
+  score,
+  insights,
+  tab,
+}: {
+  score: number;
+  insights: SkillTabInsights;
+  tab: ScoreDetailTab;
+}) {
+  const emptyFallback = `Complete a full lesson to see ${tab} analysis.`;
   return (
     <>
       <View style={styles.scoreHeader}>
@@ -98,19 +124,19 @@ function SkillTabDetail({ score, insights }: { score: number; insights: SkillTab
         label="What you did well ✅"
         color={palette.green}
         items={insights.didWell}
-        emptyFallback="Specific strengths will appear after your next scored lesson."
+        emptyFallback={emptyFallback}
       />
       <InsightSection
         label="What to work on ⚠️"
         color={palette.amber}
         items={insights.workOn}
-        emptyFallback="Areas to improve will appear after your next scored lesson."
+        emptyFallback={emptyFallback}
       />
       <InsightSection
         label="Focus this week 🎯"
         color={palette.blue}
         items={insights.focusThisWeek}
-        emptyFallback="A focused practice tip will appear after your next scored lesson."
+        emptyFallback={emptyFallback}
       />
     </>
   );

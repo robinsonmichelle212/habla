@@ -11,6 +11,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
+import ErrorBoundary from '@/components/ErrorBoundary';
 import type { MilestoneCelebration } from '@/lib/milestones';
 
 const palette = {
@@ -25,15 +26,27 @@ const palette = {
 type Props = {
   visible: boolean;
   celebration: MilestoneCelebration | null;
+  navigating?: boolean;
   onDismiss: () => void;
+  onRecoveryHome?: () => void;
 };
 
-export function MilestoneCelebrationModal({ visible, celebration, onDismiss }: Props) {
+function MilestoneCelebrationContent({
+  visible,
+  celebration,
+  navigating = false,
+  onDismiss,
+}: Props) {
   const starsX = useSharedValue(-120);
   const starsOpacity = useSharedValue(0);
   const gemsScale = useSharedValue(0.3);
   const gemsOpacity = useSharedValue(0);
   const contentOpacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (!visible || !celebration) return;
+    console.log('Milestone modal mounted');
+  }, [visible, celebration]);
 
   useEffect(() => {
     if (!visible || !celebration) return;
@@ -81,7 +94,11 @@ export function MilestoneCelebrationModal({ visible, celebration, onDismiss }: P
   if (!celebration) return null;
 
   return (
-    <Modal visible={visible} animationType="fade" transparent={false} onRequestClose={onDismiss}>
+    <Modal
+      visible={visible}
+      animationType="fade"
+      transparent={false}
+      onRequestClose={navigating ? undefined : onDismiss}>
       <View style={styles.screen}>
         <Animated.View style={[styles.content, contentStyle]}>
           <Text style={styles.emoji}>{celebration.emoji}</Text>
@@ -103,13 +120,27 @@ export function MilestoneCelebrationModal({ visible, celebration, onDismiss }: P
 
           <Pressable
             onPress={onDismiss}
-            style={({ pressed }) => [styles.dismissBtn, pressed && styles.dismissBtnPressed]}
-            accessibilityRole="button">
-            <Text style={styles.dismissBtnText}>Keep going 💪</Text>
+            disabled={navigating}
+            style={({ pressed }) => [
+              styles.dismissBtn,
+              (pressed || navigating) && styles.dismissBtnPressed,
+              navigating && styles.dismissBtnDisabled,
+            ]}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: navigating }}>
+            <Text style={styles.dismissBtnText}>Keep Going 💪</Text>
           </Pressable>
         </Animated.View>
       </View>
     </Modal>
+  );
+}
+
+export function MilestoneCelebrationModal(props: Props) {
+  return (
+    <ErrorBoundary onGoHome={props.onRecoveryHome}>
+      <MilestoneCelebrationContent {...props} />
+    </ErrorBoundary>
   );
 }
 
@@ -176,6 +207,9 @@ const styles = StyleSheet.create({
   },
   dismissBtnPressed: {
     opacity: 0.88,
+  },
+  dismissBtnDisabled: {
+    opacity: 0.55,
   },
   dismissBtnText: {
     fontSize: 17,

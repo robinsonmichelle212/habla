@@ -51,6 +51,18 @@ export function gemsForPracticeDrill(correctCount: number, totalQuestions = 10):
   return 1;
 }
 
+/** Voice fluency: 7–10 → 2 gems, 0–6 → 1 gem. */
+export function gemsForFluencyDrill(correctCount: number): number {
+  return correctCount >= 7 ? 2 : 1;
+}
+
+export function fluencyDrillEncouragement(correctCount: number): string {
+  if (correctCount >= 9) return 'Excellent flow — you kept the conversation moving! 🗣️';
+  if (correctCount >= 7) return 'Strong speaking — your confidence is growing! 💪';
+  if (correctCount >= 5) return 'Good effort — keep expanding your answers into full sentences.';
+  return 'You showed up and spoke Spanish — that is how fluency grows. 🔥';
+}
+
 export function practiceDrillEncouragement(correctCount: number, totalQuestions = 10): string {
   if (correctCount >= totalQuestions) return 'Perfect! 🌟 +4 💎';
   if (correctCount >= 5) return 'Nice work! 💪 +2 💎';

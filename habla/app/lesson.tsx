@@ -68,7 +68,6 @@ import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storag
 import {
   buildHistoryEntryFromAnalysis,
   persistLessonProgress,
-  recoverUnregisteredSessions,
 } from '@/lib/session-recovery';
 import {
   buildFallbackLessonAnalysis,
@@ -102,6 +101,7 @@ import {
   stopVoiceRecording,
 } from '@/lib/voice-recording';
 import { transcribeSpanishAudio } from '@/lib/whisper';
+import { useRecordingCountdown } from '@/hooks/use-recording-countdown';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -154,11 +154,12 @@ const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
 const WARMUP_SKIP_AFTER_MESSAGES = 4;
 const WARMUP_MAX_JAVI_MESSAGES = 4;
 const SPEAKING_USER_TURNS = 3;
+const SPEAKING_RECORDING_SECONDS = 20;
 const MAX_FEYNMAN_ATTEMPTS = 2;
 const SPEAKING_SKIP_LINK_MS = 30_000;
 const FINISH_ESCAPE_MS = 12_000;
-const FINISH_FALLBACK_NOTICE = 'Almost there — let\'s see your results 📊';
-const SPEAKING_TIMEOUT_NOTICE = 'Taking longer than expected — moving to summary';
+const FINISH_FALLBACK_NOTICE = 'Ya casi está — vamos a ver tus resultados 📊';
+const SPEAKING_TIMEOUT_NOTICE = 'Está tardando más de lo esperado — pasamos al resumen';
 
 function newId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -224,7 +225,7 @@ export default function LessonScreen() {
   const [speakingIntroDone, setSpeakingIntroDone] = useState(false);
   const [offlineSpeakingMode, setOfflineSpeakingMode] = useState(false);
   const [offlineIntroNote, setOfflineIntroNote] = useState(false);
-  const [pendingAudioPaths, setPendingAudioPaths] = useState<string[]>([]);
+  const [, setPendingAudioPaths] = useState<string[]>([]);
 
   const [voiceState, setVoiceState] = useState<VoiceButtonState>('idle');
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -241,6 +242,14 @@ export default function LessonScreen() {
   const finishingRef = useRef(false);
   const navigatedToSummaryRef = useRef(false);
   const mountedRef = useRef(true);
+  const handlePressOutRef = useRef<() => Promise<void>>(async () => {});
+  const speakingCountdown = useRecordingCountdown(
+    voiceState === 'recording',
+    SPEAKING_RECORDING_SECONDS,
+    () => {
+      void handlePressOutRef.current();
+    },
+  );
 
   useEffect(() => {
     mountedRef.current = true;
@@ -877,8 +886,7 @@ export default function LessonScreen() {
       const introMsg: ChatMessage = {
         id: newId(),
         role: 'assistant',
-        spanish: 'Demo mode: ¡Hablemos!',
-        translation: "Demo mode: Let's talk!",
+        spanish: '¡Hablemos!',
       };
       setSpeakingMessages([introMsg]);
       setSpeakingIntroDone(true);
@@ -892,7 +900,6 @@ export default function LessonScreen() {
         id: newId(),
         role: 'assistant',
         spanish: OFFLINE_SPEAKING_INTRO.spanish,
-        translation: OFFLINE_SPEAKING_INTRO.translation,
       };
       setSpeakingMessages([introMsg]);
       setSpeakingIntroDone(true);
@@ -958,6 +965,7 @@ export default function LessonScreen() {
   const skipToSummary = () => {
     if (!lessonFocus || !writingResult || !writingPrompt) return;
     if (navigatedToSummaryRef.current) return;
+    if (speakingUserTurns < SPEAKING_USER_TURNS) return;
 
     void (async () => {
       await ensureRecordingStopped();
@@ -1066,18 +1074,22 @@ export default function LessonScreen() {
     setSpeakingMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
 
     try {
-      const replyText = await askJaviSpeakingConversation(
-        lessonType,
-        trimmed,
-        priorExchanges,
-        lessonFocus,
-        writingPrompt,
-        nextTurn,
-        SPEAKING_USER_TURNS,
-        topErrorDna,
-        interleavingContext ?? undefined,
-      );
-      const parsed = parseJaviResponse(replyText);
+      const parsed =
+        nextTurn >= SPEAKING_USER_TURNS
+          ? { spanish: 'Muy bien. Vamos a ver cómo lo has hecho.', translation: undefined }
+          : parseJaviResponse(
+              await askJaviSpeakingConversation(
+                lessonType,
+                trimmed,
+                priorExchanges,
+                lessonFocus,
+                writingPrompt,
+                nextTurn,
+                SPEAKING_USER_TURNS,
+                topErrorDna,
+                interleavingContext ?? undefined,
+              ),
+            );
       setShowJaviRevealPanel(false);
       setSpeakingMessages((prev) => [
         ...prev,
@@ -1205,15 +1217,18 @@ export default function LessonScreen() {
         }
 
         try {
-          await upsertLessonHistoryEntry(
-            buildHistoryEntryFromAnalysis({
-              date: formatLocalDate(),
-              lessonType: lessonTypeLabel(lessonType),
-              analysis: params.analysis,
-              speaking: params.speakingEvaluation,
-              writingPending: writingResult!.pendingEvaluation,
-            }),
-          );
+          const historyEntry = buildHistoryEntryFromAnalysis({
+            date: formatLocalDate(),
+            lessonType: lessonTypeLabel(lessonType),
+            analysis: params.analysis,
+            speaking: params.speakingEvaluation,
+            writingPending: writingResult!.pendingEvaluation,
+          });
+          console.log('Saving grammar:', historyEntry.breakdown.grammar);
+          console.log('Saving vocabulary:', historyEntry.breakdown.vocabulary);
+          console.log('Saving fluency:', historyEntry.breakdown.fluency);
+          console.log('Saving writing:', historyEntry.breakdown.writing);
+          await upsertLessonHistoryEntry(historyEntry);
           await clearLessonCheckpoint();
         } catch (saveErr) {
           console.error('[Habla] Summary save failed, persisting progress:', saveErr);
@@ -1587,12 +1602,26 @@ export default function LessonScreen() {
 
     if (demoModeRef.current) {
       await ensureRecordingStopped();
-      setVoiceStateSafe('idle');
-      showHeardTranscript('Demo mode: Speaking registered.');
-      showPhaseSummaryAndFinish(
-        demoSpeakingEvaluation(),
-        'Demo mode: Speaking registered. Fluency: 80% · Confidence: 75%',
-      );
+      const nextTurn = speakingUserTurns + 1;
+      setSpeakingUserTurns(nextTurn);
+      showHeardTranscript('Respuesta registrada.');
+      const reply =
+        nextTurn >= SPEAKING_USER_TURNS
+          ? 'Muy bien. Vamos a ver cómo lo has hecho.'
+          : nextTurn === 2
+            ? 'Muy bien. Una última pregunta: ¿qué más quieres contarme?'
+            : '¡Interesante! ¿Puedes contarme un poco más?';
+      setSpeakingMessages((prev) => [
+        ...prev,
+        { id: newId(), role: 'user', spanish: '🎤 Respuesta registrada' },
+        { id: newId(), role: 'assistant', spanish: reply },
+      ]);
+      await speakJaviMessage(reply);
+      if (nextTurn >= SPEAKING_USER_TURNS) {
+        showPhaseSummaryAndFinish(demoSpeakingEvaluation());
+      } else {
+        setVoiceStateSafe('idle');
+      }
       return;
     }
 
@@ -1652,6 +1681,7 @@ export default function LessonScreen() {
       setVoiceError('Connection issue — check your internet');
     }
   };
+  handlePressOutRef.current = handlePressOut;
 
   const micDisabled =
     phase !== 'speaking' ||
@@ -1661,15 +1691,17 @@ export default function LessonScreen() {
     !lessonFocus ||
     !micGranted ||
     voiceState === 'processing' ||
-    voiceState === 'javi-speaking';
+    voiceState === 'javi-speaking' ||
+    speakingUserTurns >= SPEAKING_USER_TURNS;
 
   const voiceHint = (() => {
     if (!speakingIntroDone || speakingStep === 'intro') return 'Javi is speaking…';
     if (finishing) return 'Wrapping up…';
-    if (voiceState === 'recording') return 'Release when finished';
+    if (voiceState === 'recording') return `${speakingCountdown.secondsRemaining} segundos`;
     if (voiceState === 'processing') return 'Processing…';
     if (voiceState === 'javi-speaking') return 'Listen to Javi…';
-    return `Speak naturally — ${speakingUserTurns}/${SPEAKING_USER_TURNS} 🎤`;
+    if (speakingUserTurns === 2) return 'Final question 🎤';
+    return `Habla con naturalidad — ${speakingUserTurns}/${SPEAKING_USER_TURNS} 🎤`;
   })();
 
   return (
@@ -1916,8 +1948,11 @@ export default function LessonScreen() {
               disabled={micDisabled}
               onPressIn={() => void handlePressIn()}
               onPressOut={() => void handlePressOut()}
+              countdownSeconds={speakingCountdown.secondsRemaining}
+              countdownProgress={speakingCountdown.progressRemaining}
             />
             <Text style={styles.voiceHint}>{voiceHint}</Text>
+            {voiceError ? <Text style={styles.errorText}>{voiceError}</Text> : null}
             {allowJaviReveal && latestJaviSpeaking && speakingStep === 'conversation' ? (
               <>
                 <Pressable
@@ -1939,7 +1974,10 @@ export default function LessonScreen() {
                 ) : null}
               </>
             ) : null}
-            {showSkipToSummary && speakingStep === 'conversation' && !finishing ? (
+            {showSkipToSummary &&
+            speakingStep === 'conversation' &&
+            speakingUserTurns >= SPEAKING_USER_TURNS &&
+            !finishing ? (
               <Pressable
                 onPress={skipToSummary}
                 style={({ pressed }) => [styles.skipToSummaryLink, pressed && styles.skipToSummaryPressed]}

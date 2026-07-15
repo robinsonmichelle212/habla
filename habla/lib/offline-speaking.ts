@@ -1,5 +1,4 @@
 import type { LessonFocusContext } from '@/lib/lesson-focus';
-import type { LessonType } from '@/lib/claude';
 import type { WritingEvaluation } from '@/lib/lesson-session';
 
 export { buildOfflineLessonAnalysis, buildPendingWritingEvaluation } from '@/lib/offline-lesson';
@@ -7,26 +6,21 @@ export { buildOfflineLessonAnalysis, buildPendingWritingEvaluation } from '@/lib
 export const OFFLINE_SPEAKING_INTRO = {
   spanish:
     'Ahora vamos a hablar. Olvida lo que escribiste — solo habla con naturalidad. Cuéntame más sobre el tema de hoy.',
-  translation:
-    "Now let's talk. Forget what you wrote — just speak naturally. Tell me more about today's topic.",
 };
 
 const OFFLINE_JAVI_REPLIES = [
   {
-    spanish: '¡Muy bien! Sigue contándome más.',
-    translation: 'Very good! Keep telling me more.',
+    spanish: '¡Muy bien! ¿Puedes contarme un poco más?',
   },
   {
-    spanish: '¡Interesante! ¿Y qué más?',
-    translation: 'Interesting! What else?',
+    spanish: '¡Interesante! Una última pregunta: ¿qué más quieres contarme?',
   },
   {
-    spanish: 'Perfecto, gracias por compartir. Cuéntame un poco más.',
-    translation: 'Perfect, thanks for sharing. Tell me a bit more.',
+    spanish: 'Muy bien. Vamos a ver cómo lo has hecho.',
   },
 ];
 
-export function offlineJaviReply(turnIndex: number): { spanish: string; translation: string } {
+export function offlineJaviReply(turnIndex: number): { spanish: string; translation?: string } {
   return OFFLINE_JAVI_REPLIES[turnIndex % OFFLINE_JAVI_REPLIES.length];
 }
 

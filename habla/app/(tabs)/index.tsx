@@ -87,20 +87,22 @@ export default function HomeScreen() {
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
+      // Always re-read home stats when returning from a milestone or lesson.
+      setStreakHydrated(false);
 
       void (async () => {
         try {
           await recoverUnregisteredSessions();
           const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary] =
             await Promise.all([
-            getStreakState(),
-            getTotalGems(),
-            getTodaysChallengeForHome(),
-            getGemShopProgress(),
-            getUserName(),
-            getLast7DaysActivity(),
-            hasLastSummary(),
-          ]);
+              getStreakState(),
+              getTotalGems(),
+              getTodaysChallengeForHome(),
+              getGemShopProgress(),
+              getUserName(),
+              getLast7DaysActivity(),
+              hasLastSummary(),
+            ]);
           if (cancelled) return;
 
           setCurrentStreak(streak.currentStreak);

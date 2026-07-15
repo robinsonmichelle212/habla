@@ -12,10 +12,11 @@ import { getPendingAudioTasks } from '@/lib/pending-audio-storage';
 import { processPendingWritingTasks } from '@/lib/pending-writing-sync';
 import { getPendingWritingTasks } from '@/lib/pending-writing-storage';
 import {
+  buildHistoryEntryFromAnalysis,
   buildHistoryEntryFromPendingSummary,
   recoverUnregisteredSessions,
 } from '@/lib/session-recovery';
-import { hasLessonHistoryFor, updateLessonHistorySpeaking, upsertLessonHistoryEntry } from '@/lib/practice-storage';
+import { hasLessonHistoryFor, upsertLessonHistoryEntry } from '@/lib/practice-storage';
 
 export type SyncResult = {
   writingProcessed: number;
@@ -113,24 +114,13 @@ async function processPendingLessonSummaries(): Promise<number> {
         item.lessonFocusLabel,
       );
 
-      if (!(await hasLessonHistoryFor(item.lessonDate, item.lessonType))) {
-        await upsertLessonHistoryEntry(buildHistoryEntryFromPendingSummary(item));
-      }
-
-      await updateLessonHistorySpeaking(
-        item.lessonDate,
-        item.lessonType,
-        {
-          fluencyScore: speaking.fluencyScore,
-          confidenceScore: speaking.confidenceScore,
-          vocabularyRangeScore: speaking.vocabularyRangeScore,
-          naturalFlowScore: speaking.naturalFlowScore,
-          combinedScore: speaking.combinedScore,
-          javiFeedback: speaking.javiFeedback,
-          exchangeCount: speaking.exchangeCount,
-          pendingEvaluation: false,
-        },
-        analysisJson.overallScore ?? combinedScore,
+      await upsertLessonHistoryEntry(
+        buildHistoryEntryFromAnalysis({
+          date: item.lessonDate,
+          lessonType: item.lessonType,
+          analysis: analysisJson,
+          speaking,
+        }),
       );
 
       await updatePendingLessonSummary(item.id, { processed: true });

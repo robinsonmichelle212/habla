@@ -5,7 +5,7 @@ import type { LessonKindId } from '@/lib/claude';
 export function getOfflineGrammarIntro(week: number): { spanish: string; translation: string } {
   const def = getWeekDefinition(week);
   return {
-    spanish: `¡Hola! Hoy vamos a practicar ${def.topicSpanish}. ${def.summary}. Cuéntame — ¿qué sabes ya sobre este tema?`,
+    spanish: `¡Hola! Hoy vamos a practicar ${def.topicSpanish}. Cuéntame: ¿qué sabes ya sobre este tema?`,
     translation: `Hello! Today we'll practise ${def.topic}. ${def.summary}. Tell me — what do you already know about this topic?`,
   };
 }
@@ -22,19 +22,19 @@ export function getOfflineLessonOpening(
   switch (focus.kind) {
     case 'vocabulary':
       return {
-        spanish: `¡Hola! Hoy practicamos vocabulario sobre ${focus.theme}. Empecemos con palabras útiles del día a día.`,
+        spanish: '¡Hola! Hoy practicamos el vocabulario de la lección. Empecemos con palabras útiles del día a día.',
         translation: `Hello! Today we're practising vocabulary about ${focus.theme}. Let's start with useful everyday words.`,
         usedBundle: true,
       };
     case 'your-day':
       return {
-        spanish: `¡Hola! Hoy hablamos de tu vida: ${focus.starter}. Cuéntame algo sobre ti.`,
+        spanish: '¡Hola! Hoy hablamos de tu vida. Cuéntame algo sobre ti.',
         translation: `Hello! Today we talk about your life: ${focus.starter}. Tell me something about yourself.`,
         usedBundle: true,
       };
     case 'structure':
       return {
-        spanish: `¡Hola! Hoy trabajamos la estructura: ${focus.topic.title}. ${focus.topic.summary}`,
+        spanish: '¡Hola! Hoy trabajamos la estructura de las frases en español. Vamos a verla paso a paso.',
         translation: `Hello! Today we work on structure: ${focus.topic.title}. ${focus.topic.summary}`,
         usedBundle: true,
       };
@@ -59,13 +59,13 @@ export function getOfflineWritingPrompt(focus: LessonFocusContext): string {
     return `Escribe 4–6 frases en español usando ${def.topicSpanish}. Usa estos verbos: ${def.focusVerbs.slice(0, 4).join(', ')}.`;
   }
   if (focus.kind === 'vocabulary') {
-    return `Escribe un párrafo corto (4–6 frases) usando vocabulario del tema: ${focus.theme}.`;
+    return 'Escribe un párrafo corto de cuatro a seis frases usando el vocabulario de hoy.';
   }
   if (focus.kind === 'your-day') {
-    return `Escribe 4–6 frases sobre: ${focus.starter}.`;
+    return 'Escribe de cuatro a seis frases sobre tu día y tus experiencias.';
   }
   if (focus.kind === 'structure') {
-    return `Escribe 4–6 frases practicando: ${focus.topic.title}. ${focus.topic.examples[0] ?? ''}`;
+    return 'Escribe de cuatro a seis frases practicando la estructura de la lección.';
   }
   return 'Escribe 4–6 frases en español sobre el tema de hoy.';
 }
