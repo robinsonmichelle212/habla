@@ -36,7 +36,7 @@ export function buildPendingWritingEvaluation(originalText: string): WritingEval
     vocabularyScore: 0,
     fluencyScore: 0,
     feedback:
-      '📡 Saved locally — Javi will mark this when you\'re back online',
+      '¡Bien hecho! Tu respuesta ha sido guardada. Javi la revisará en breve.\nWriting saved 💾 — Javi will review it shortly.',
     corrections: [],
     pendingEvaluation: true,
   };

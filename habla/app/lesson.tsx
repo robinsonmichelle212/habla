@@ -43,6 +43,7 @@ import {
 } from '@/lib/offline-speaking';
 import { addPendingAudioTask, saveRecordingToPendingAudio } from '@/lib/pending-audio-storage';
 import { addPendingWritingTask } from '@/lib/pending-writing-storage';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
 import {
   conversationToJaviMessages,
@@ -77,6 +78,7 @@ import { computeSpeakingCombinedScore } from '@/lib/speaking-score';
 import {
   LESSON_ANALYSIS_TIMEOUT_MS,
   SPEAKING_EVAL_TIMEOUT_MS,
+  WRITING_EVAL_TIMEOUT_MS,
   TimeoutError,
   withTimeout,
 } from '@/lib/with-timeout';
@@ -216,6 +218,7 @@ export default function LessonScreen() {
   const [loadingWritingTask, setLoadingWritingTask] = useState(false);
   const [writingText, setWritingText] = useState('');
   const [writingSubmitting, setWritingSubmitting] = useState(false);
+  const [writingRetrying, setWritingRetrying] = useState(false);
   const [writingResult, setWritingResult] = useState<WritingEvaluation | null>(null);
 
   const [speakingMessages, setSpeakingMessages] = useState<ChatMessage[]>([]);
@@ -416,6 +419,8 @@ export default function LessonScreen() {
     setWritingPrompt('');
     setWritingText('');
     setWritingResult(null);
+    setWritingSubmitting(false);
+    setWritingRetrying(false);
     setSpeakingMessages([]);
     setSpeakingStep('intro');
     setSpeakingUserTurns(0);
@@ -786,6 +791,48 @@ export default function LessonScreen() {
     }
 
     setWritingSubmitting(true);
+    setWritingRetrying(false);
+
+    // Always persist the response before any API call so it is never lost.
+    try {
+      await AsyncStorage.setItem('currentWritingResponse', trimmed);
+    } catch (saveErr) {
+      console.log('Writing local save error:', saveErr);
+    }
+
+    const savePendingAndShowContinue = async () => {
+      const taskId = `writing-pending-${Date.now()}`;
+      const warmUpTurns = toTurns(warmUpMessages);
+
+      try {
+        await addPendingWritingTask({
+          id: taskId,
+          writtenResponse: trimmed,
+          lessonDate: formatLocalDate(),
+          lessonType,
+          grammarTopic: grammarTopicFromFocus(lessonFocus),
+          writingPrompt,
+          submittedAt: Date.now(),
+          evaluated: false,
+          warmUpConversation: warmUpTurns,
+          lessonFocusLabel: lessonFocusLabel(lessonFocus),
+          lessonTypeEnum: lessonType,
+        });
+      } catch (pendingErr) {
+        console.log('Writing pending save error:', pendingErr);
+      }
+
+      const evaluation = buildPendingWritingEvaluation(trimmed);
+      evaluation.pendingTaskId = taskId;
+      setWritingResult(evaluation);
+      setLessonSession({ writingEvaluation: evaluation });
+      try {
+        await addGems(OFFLINE_WRITING_GEMS);
+      } catch {
+        // Non-blocking — progression must continue.
+      }
+    };
+
     try {
       if (demoModeRef.current) {
         const evaluation = demoWritingEvaluation(trimmed);
@@ -798,43 +845,53 @@ export default function LessonScreen() {
       const online = await checkIsOnline();
 
       if (!online) {
-        const taskId = `writing-pending-${Date.now()}`;
-        const lessonDate = formatLocalDate();
-        const warmUpTurns = toTurns(warmUpMessages);
-
-        await addPendingWritingTask({
-          id: taskId,
-          writtenResponse: trimmed,
-          lessonDate,
-          lessonType,
-          grammarTopic: grammarTopicFromFocus(lessonFocus),
-          writingPrompt,
-          submittedAt: Date.now(),
-          evaluated: false,
-          warmUpConversation: warmUpTurns,
-          lessonFocusLabel: lessonFocusLabel(lessonFocus),
-          lessonTypeEnum: lessonType,
-        });
-
-        const evaluation = buildPendingWritingEvaluation(trimmed);
-        evaluation.pendingTaskId = taskId;
-
-        setWritingResult(evaluation);
-        setLessonSession({ writingEvaluation: evaluation });
-        await addGems(OFFLINE_WRITING_GEMS);
-
-        setTimeout(() => {
-          void startSpeakingPhase(evaluation);
-        }, 600);
+        await savePendingAndShowContinue();
         return;
       }
 
-      const evalJson = await evaluateWriting(
-        lessonType,
-        writingPrompt,
-        conversationToJaviMessages(toTurns(warmUpMessages)),
-        trimmed,
-      );
+      const runEval = () =>
+        withTimeout(
+          evaluateWriting(
+            lessonType,
+            writingPrompt,
+            conversationToJaviMessages(toTurns(warmUpMessages)),
+            trimmed,
+          ),
+          WRITING_EVAL_TIMEOUT_MS,
+          'writing-eval',
+        );
+
+      let evalJson;
+      try {
+        evalJson = await runEval();
+      } catch (firstError) {
+        const err = firstError as { name?: string; message?: string; status?: number };
+        console.log('Writing eval error type:', err?.name);
+        console.log('Writing eval error message:', err?.message);
+        console.log('Writing eval error status:', err?.status);
+        console.log(
+          'Writing eval full error:',
+          JSON.stringify(firstError, Object.getOwnPropertyNames(firstError as object)),
+        );
+        console.log('Writing eval failed:', firstError);
+
+        // One automatic retry before falling back — never show the error yet.
+        setWritingRetrying(true);
+        await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+        try {
+          evalJson = await runEval();
+        } catch (secondError) {
+          const err2 = secondError as { name?: string; message?: string; status?: number };
+          console.log('Writing eval retry error type:', err2?.name);
+          console.log('Writing eval retry error message:', err2?.message);
+          console.log('Writing eval retry error status:', err2?.status);
+          console.log('Writing eval failed:', secondError);
+          await savePendingAndShowContinue();
+          return;
+        } finally {
+          setWritingRetrying(false);
+        }
+      }
 
       const evaluation: WritingEvaluation = {
         originalText: trimmed,
@@ -854,9 +911,12 @@ export default function LessonScreen() {
 
       setWritingResult(evaluation);
       setLessonSession({ writingEvaluation: evaluation });
-    } catch {
-      Alert.alert('Could not evaluate writing', 'Check your internet and try again.');
+    } catch (error) {
+      console.log('Writing eval failed:', error);
+      // Never block progression — save and let the user continue to speaking.
+      await savePendingAndShowContinue();
     } finally {
+      setWritingRetrying(false);
       setWritingSubmitting(false);
     }
   };
@@ -1817,12 +1877,12 @@ export default function LessonScreen() {
             <View style={styles.writingBlock}>
               {writingResult.pendingEvaluation ? (
                 <>
-                  <Text style={styles.phaseTitle}>✍️ Writing submitted — evaluation pending ⏳</Text>
+                  <Text style={styles.phaseTitle}>Writing saved 💾</Text>
                   <Text style={styles.feedbackBody}>{writingResult.feedback}</Text>
                   <Pressable
                     onPress={() => void startSpeakingPhase()}
                     style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
-                    <Text style={styles.primaryButtonText}>Let&apos;s talk 🎤</Text>
+                    <Text style={styles.primaryButtonText}>Continue to speaking →</Text>
                   </Pressable>
                 </>
               ) : (
@@ -1869,7 +1929,7 @@ export default function LessonScreen() {
               <Pressable
                 onPress={() => void startSpeakingPhase()}
                 style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
-                <Text style={styles.primaryButtonText}>Let&apos;s talk 🎤</Text>
+                <Text style={styles.primaryButtonText}>Continue to speaking →</Text>
               </Pressable>
                 </>
               )}
@@ -1913,7 +1973,13 @@ export default function LessonScreen() {
         ) : null}
 
         {phase === 'writing' && !writingResult ? (
-          <ConversationInputDock
+          <>
+            {writingSubmitting ? (
+              <Text style={styles.writingStatus}>
+                {writingRetrying ? 'Javi is thinking... ⏳ (retry)' : 'Javi is thinking... ⏳'}
+              </Text>
+            ) : null}
+            <ConversationInputDock
             prompt={writingPrompt}
             promptLoading={loadingWritingTask}
             inputValue={writingText}
@@ -1939,6 +2005,7 @@ export default function LessonScreen() {
               </Pressable>
             }
           />
+          </>
         ) : null}
 
         {phase === 'speaking' ? (
@@ -2070,6 +2137,14 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
   writingBlock: { gap: 12 },
+  writingStatus: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+    paddingBottom: 6,
+  },
   phaseTitle: { fontSize: 16, fontWeight: '800', color: palette.text },
   taskCard: {
     backgroundColor: palette.surface,

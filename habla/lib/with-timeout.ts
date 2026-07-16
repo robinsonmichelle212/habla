@@ -1,5 +1,6 @@
 export const SPEAKING_EVAL_TIMEOUT_MS = 15_000;
 export const LESSON_ANALYSIS_TIMEOUT_MS = 15_000;
+export const WRITING_EVAL_TIMEOUT_MS = 30_000;
 
 export class TimeoutError extends Error {
   constructor(message: string) {

@@ -1303,6 +1303,17 @@ ${JSON.stringify(conversation, null, 2)}`;
   return parsed;
 }
 
+/** Cap writing eval payload so long responses do not time out or overflow. */
+export function prepareWritingForEvaluation(userWriting: string): string {
+  const sanitised = userWriting
+    .replace(/\u0000/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+  // ~500 words ≈ 2000 characters for typical B1 Spanish.
+  return sanitised.slice(0, 2000);
+}
+
 export async function evaluateWriting(
   lessonType: LessonType,
   taskPrompt: string,
@@ -1311,6 +1322,12 @@ export async function evaluateWriting(
 ): Promise<WritingEvaluationJson> {
   const anthropic = getClient();
   const model = getModel();
+  const textToEvaluate = prepareWritingForEvaluation(userWriting);
+  // Keep conversation context small — warm-up turns are enough for scoring.
+  const compactConversation = conversation.slice(-8).map((turn) => ({
+    role: turn.role,
+    content: String(turn.content ?? '').slice(0, 400),
+  }));
 
   const system = `You are Javi, a Spanish tutor evaluating B1 writing.
 ${SPANISH_ONLY_PHASES_RULE}
@@ -1338,23 +1355,38 @@ ${isStructure ? '- structureScore: integer 0-100 (word order and sentence constr
 - structuralFeedback: array of 2-3 notes on ${isStructure ? 'word order and Spanish sentence construction' : 'paragraph structure, connectors, or sentence variety'}
 
 Lesson type: ${lessonType}
-Task prompt: ${taskPrompt}
+Task prompt: ${JSON.stringify(String(taskPrompt ?? '').slice(0, 800))}
 Conversation context:
-${JSON.stringify(conversation, null, 2)}
+${JSON.stringify(compactConversation)}
 
 User writing:
-${userWriting}`;
+${JSON.stringify(textToEvaluate)}`;
 
-  const response = await anthropic.messages.create({
-    model,
-    max_tokens: 1100,
-    system,
-    messages: [{ role: 'user', content: user }],
-  });
+  try {
+    const response = await anthropic.messages.create({
+      model,
+      max_tokens: 1100,
+      system,
+      messages: [{ role: 'user', content: user }],
+    });
 
-  const text = extractText(response);
-  const parsed = extractFirstJsonObject(text) as WritingEvaluationJson;
-  return parsed;
+    const text = extractText(response);
+    const parsed = extractFirstJsonObject(text) as WritingEvaluationJson;
+    return parsed;
+  } catch (error) {
+    const err = error as {
+      name?: string;
+      message?: string;
+      status?: number;
+      statusCode?: number;
+      error?: { type?: string; message?: string };
+    };
+    console.log('Writing eval error type:', err?.name);
+    console.log('Writing eval error message:', err?.message);
+    console.log('Writing eval error status:', err?.status ?? err?.statusCode);
+    console.log('Writing eval full error:', JSON.stringify(error, Object.getOwnPropertyNames(error as object)));
+    throw error;
+  }
 }
 
 export async function generateDrills(

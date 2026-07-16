@@ -19,8 +19,7 @@ import { addPendingWritingTask } from '@/lib/pending-writing-storage';
 import { cacheWritingTask, getCachedWritingTask } from '@/lib/writing-task-cache';
 import { buildInterleavingContext } from '@/lib/interleaving';
 import { formatLocalDate } from '@/lib/streak';
-
-const WRITING_PRACTICE_KEY = 'writingPracticePrompt';
+import { WRITING_EVAL_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -38,6 +37,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+const WRITING_PRACTICE_KEY = 'writingPracticePrompt';
 
 const palette = {
   background: '#0B0F14',
@@ -160,16 +161,24 @@ export default function WritingScreen() {
 
     setSubmitting(true);
     try {
-      const online = await checkIsOnline();
+      await AsyncStorage.setItem('currentWritingResponse', trimmed);
+    } catch (saveErr) {
+      console.log('Writing local save error:', saveErr);
+    }
 
-      if (!online && lessonFocus) {
-        const taskId = `writing-pending-${Date.now()}`;
-        const lessonDate = formatLocalDate();
-
+    const savePending = async () => {
+      if (!lessonFocus) {
+        const evaluation = buildPendingWritingEvaluation(trimmed);
+        setResult(evaluation);
+        setLessonSession({ writingEvaluation: evaluation });
+        return;
+      }
+      const taskId = `writing-pending-${Date.now()}`;
+      try {
         await addPendingWritingTask({
           id: taskId,
           writtenResponse: trimmed,
-          lessonDate,
+          lessonDate: formatLocalDate(),
           lessonType: activeLessonType,
           grammarTopic:
             lessonFocus.kind === 'grammar' ? lessonFocus.topic : lessonFocusLabel(lessonFocus),
@@ -180,21 +189,55 @@ export default function WritingScreen() {
           lessonFocusLabel: lessonFocusLabel(lessonFocus),
           lessonTypeEnum: activeLessonType,
         });
+      } catch (pendingErr) {
+        console.log('Writing pending save error:', pendingErr);
+      }
 
-        const evaluation = buildPendingWritingEvaluation(trimmed);
-        evaluation.pendingTaskId = taskId;
-        setResult(evaluation);
-        setLessonSession({ writingEvaluation: evaluation });
+      const evaluation = buildPendingWritingEvaluation(trimmed);
+      evaluation.pendingTaskId = taskId;
+      setResult(evaluation);
+      setLessonSession({ writingEvaluation: evaluation });
+      try {
         await addGems(OFFLINE_WRITING_GEMS);
+      } catch {
+        // Non-blocking.
+      }
+    };
+
+    try {
+      const online = await checkIsOnline();
+
+      if (!online) {
+        await savePending();
         return;
       }
 
-      const evalJson = await evaluateWriting(
-        activeLessonType,
-        taskPrompt,
-        conversationToJaviMessages(conversation),
-        trimmed,
-      );
+      const runEval = () =>
+        withTimeout(
+          evaluateWriting(
+            activeLessonType,
+            taskPrompt,
+            conversationToJaviMessages(conversation),
+            trimmed,
+          ),
+          WRITING_EVAL_TIMEOUT_MS,
+          'writing-eval',
+        );
+
+      let evalJson;
+      try {
+        evalJson = await runEval();
+      } catch (firstError) {
+        console.log('Writing eval failed:', firstError);
+        await new Promise<void>((resolve) => setTimeout(resolve, 2000));
+        try {
+          evalJson = await runEval();
+        } catch (secondError) {
+          console.log('Writing eval failed:', secondError);
+          await savePending();
+          return;
+        }
+      }
 
       const evaluation: WritingEvaluation = {
         originalText: trimmed,
@@ -213,8 +256,8 @@ export default function WritingScreen() {
       setResult(evaluation);
       setLessonSession({ writingEvaluation: evaluation });
     } catch (e) {
-      const message = e instanceof Error ? e.message : 'Something went wrong.';
-      Alert.alert('Could not evaluate writing', message);
+      console.log('Writing eval failed:', e);
+      await savePending();
     } finally {
       setSubmitting(false);
     }
