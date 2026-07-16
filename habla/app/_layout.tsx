@@ -36,15 +36,13 @@ function GlobalOfflineBanner() {
   return <OfflineBanner message="📡 Offline — your work is being saved locally" />;
 }
 
-/** Never let Android back exit the app from the summary screen. */
+/** Never let Android back exit the app from the summary / save screens. */
 function SummaryAndroidBackGuard() {
   const pathname = usePathname();
 
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      // Swallow only — summary owns save + replace('/(tabs)').
-      // Eager replace here raced persistence and looked like an app exit.
-      return pathname.includes('summary');
+      return pathname.includes('summary') || pathname.includes('lesson-complete');
     });
     return () => sub.remove();
   }, [pathname]);
@@ -136,9 +134,15 @@ export default function RootLayout() {
           <Stack.Screen name="level" options={{ headerShown: false }} />
           <Stack.Screen name="progress" options={{ headerShown: false }} />
           <Stack.Screen name="read-lesson" options={{ headerShown: false }} />
-          <Stack.Screen name="score-history" options={{ headerShown: false }} />
-          <Stack.Screen name="memory-palace" options={{ headerShown: false }} />
-          <Stack.Screen name="milestone-quiz" options={{ headerShown: false }} />
+          <Stack.Screen
+            name="lesson-complete"
+            options={{
+              headerShown: false,
+              gestureEnabled: false,
+              fullScreenGestureEnabled: false,
+              animation: 'fade',
+            }}
+          />
           <Stack.Screen
             name="summary"
             options={{
@@ -148,7 +152,11 @@ export default function RootLayout() {
               animation: 'slide_from_right',
             }}
           />
+          <Stack.Screen name="crash-log" options={{ headerShown: false, presentation: 'modal' }} />
           <Stack.Screen name="last-summary" options={{ headerShown: false }} />
+          <Stack.Screen name="score-history" options={{ headerShown: false }} />
+          <Stack.Screen name="memory-palace" options={{ headerShown: false }} />
+          <Stack.Screen name="milestone-quiz" options={{ headerShown: false }} />
           <Stack.Screen name="wrapped" options={{ headerShown: false }} />
           <Stack.Screen name="gem-shop" options={{ headerShown: false, presentation: 'modal' }} />
           <Stack.Screen name="bonus-round" options={{ headerShown: false }} />

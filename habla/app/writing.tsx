@@ -21,7 +21,7 @@ import { buildInterleavingContext } from '@/lib/interleaving';
 import { formatLocalDate } from '@/lib/streak';
 import { WRITING_EVAL_TIMEOUT_MS, withTimeout } from '@/lib/with-timeout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useRouter, useLocalSearchParams, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -270,6 +270,10 @@ export default function WritingScreen() {
     }
 
     try {
+      const { stopJaviSpeechAsync } = await import('@/lib/javi-speech');
+      await stopJaviSpeechAsync();
+      await new Promise((r) => setTimeout(r, 500));
+
       const online = await checkIsOnline();
 
       if (!online && lessonFocus) {
@@ -281,7 +285,7 @@ export default function WritingScreen() {
           false,
         );
         setLessonSession({ analysis });
-        router.replace('/summary');
+        router.replace('/lesson-complete' as Href);
         return;
       }
 
@@ -335,7 +339,7 @@ export default function WritingScreen() {
         await mergeErrorDnaFromLesson(analysisJson.errorDNA);
       }
       setLessonSession({ analysis });
-      router.replace('/summary');
+      router.replace('/lesson-complete' as Href);
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
       Alert.alert('Could not build summary', message);

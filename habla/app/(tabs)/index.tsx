@@ -2,7 +2,7 @@ import * as Haptics from 'expo-haptics';
 import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -23,6 +23,7 @@ import { DailyActivityRow } from '@/components/daily-activity-row';
 import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activity';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { hasLastSummary } from '@/lib/last-summary-storage';
+import { getCrashLog, logCrashBreadcrumb } from '@/lib/crash-breadcrumb';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
@@ -56,6 +57,8 @@ export default function HomeScreen() {
   const [greeting, setGreeting] = useState<string | null>(null);
   const [activityDays, setActivityDays] = useState<DailyActivityDay[]>([]);
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
+  const titleTapCountRef = useRef(0);
+  const titleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     void shouldShowOnboarding().then((show) => {
@@ -92,6 +95,10 @@ export default function HomeScreen() {
 
       void (async () => {
         try {
+          await logCrashBreadcrumb('home_screen_mounted');
+          const crashLog = await getCrashLog();
+          console.log('Last crash breadcrumbs:', crashLog);
+
           await recoverUnregisteredSessions();
           const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary] =
             await Promise.all([
@@ -133,6 +140,22 @@ export default function HomeScreen() {
     dismissShopBadge(affordable);
     setShowShopBadge(false);
     router.push('/gem-shop');
+  };
+
+  const handleTitleTap = () => {
+    titleTapCountRef.current += 1;
+    if (titleTapTimerRef.current) clearTimeout(titleTapTimerRef.current);
+    titleTapTimerRef.current = setTimeout(() => {
+      titleTapCountRef.current = 0;
+    }, 1500);
+    if (titleTapCountRef.current >= 5) {
+      titleTapCountRef.current = 0;
+      if (titleTapTimerRef.current) clearTimeout(titleTapTimerRef.current);
+      if (Platform.OS !== 'web') {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      }
+      router.push('/crash-log' as Href);
+    }
   };
 
   const handleStartLesson = () => {
@@ -181,9 +204,11 @@ export default function HomeScreen() {
       ) : (
         <View style={[styles.page, { paddingBottom: Math.max(insets.bottom, 16) }]}>
           <View style={styles.topBar}>
-            <Text style={styles.greeting} numberOfLines={1}>
-              {greeting ?? 'Habla'}
-            </Text>
+            <Pressable onPress={handleTitleTap} hitSlop={8} accessibilityRole="button">
+              <Text style={styles.greeting} numberOfLines={1}>
+                {greeting ?? 'Habla'}
+              </Text>
+            </Pressable>
             <Pressable
               onPress={() => void openGemShop()}
               style={({ pressed }) => [styles.gemsPill, pressed && styles.gemsPillPressed]}

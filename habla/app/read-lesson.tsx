@@ -37,7 +37,7 @@ import {
   stopVoiceRecording,
 } from '@/lib/voice-recording';
 import { transcribeSpanishAudio } from '@/lib/whisper';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -333,6 +333,7 @@ export default function ReadLessonScreen() {
     try {
       await ensureRecordingStopped();
       await stopJaviSpeechAsync();
+      await new Promise((r) => setTimeout(r, 500));
 
       const vocabWords = session.vocabularyHighlights.map((v) => ({
         spanish: v.spanish,
@@ -388,7 +389,7 @@ export default function ReadLessonScreen() {
         },
       });
 
-      router.replace('/summary');
+      router.replace('/lesson-complete' as Href);
     } catch {
       Alert.alert('Could not finish', 'Check your internet and try again.');
       setFinishing(false);

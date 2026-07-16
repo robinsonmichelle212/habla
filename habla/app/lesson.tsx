@@ -104,7 +104,7 @@ import {
 } from '@/lib/voice-recording';
 import { transcribeSpanishAudio } from '@/lib/whisper';
 import { useRecordingCountdown } from '@/hooks/use-recording-countdown';
-import { useRouter } from 'expo-router';
+import { useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -1245,6 +1245,12 @@ export default function LessonScreen() {
       // Critical: stop mic + TTS before leaving — orphaned AV session kills the app.
       await ensureRecordingStopped();
       await stopJaviSpeechAsync();
+      try {
+        // Extra settle time before leaving the lesson screen.
+        await new Promise((r) => setTimeout(r, 500));
+      } catch {
+        // ignore
+      }
 
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
@@ -1263,45 +1269,8 @@ export default function LessonScreen() {
         demoSession: demoModeRef.current || getLessonSession().demoSession,
       });
 
-      router.replace('/summary');
-
-      const isDemoSession = demoModeRef.current || getLessonSession().demoSession;
-      if (isDemoSession) return;
-
-      void (async () => {
-        try {
-          const payload = buildSafeSummaryPayload(getLessonSession());
-          await saveLastSummary(payload);
-        } catch (saveSummaryErr) {
-          console.error('[Habla] Pre-render lastSummary save failed:', saveSummaryErr);
-        }
-
-        try {
-          const historyEntry = buildHistoryEntryFromAnalysis({
-            date: formatLocalDate(),
-            lessonType: lessonTypeLabel(lessonType),
-            analysis: params.analysis,
-            speaking: params.speakingEvaluation,
-            writingPending: writingResult!.pendingEvaluation,
-          });
-          console.log('Saving grammar:', historyEntry.breakdown.grammar);
-          console.log('Saving vocabulary:', historyEntry.breakdown.vocabulary);
-          console.log('Saving fluency:', historyEntry.breakdown.fluency);
-          console.log('Saving writing:', historyEntry.breakdown.writing);
-          await upsertLessonHistoryEntry(historyEntry);
-          await clearLessonCheckpoint();
-        } catch (saveErr) {
-          console.error('[Habla] Summary save failed, persisting progress:', saveErr);
-          await persistLessonProgress({
-            date: formatLocalDate(),
-            lessonType: lessonTypeLabel(lessonType),
-            focusLabel: lessonFocusLabel(lessonFocus!),
-            writing: writingResult!,
-            writingPrompt: writingPrompt!,
-            speaking: params.speakingEvaluation,
-          }).catch(() => {});
-        }
-      })();
+      // Save screen persists everything, then opens display-only summary.
+      router.replace('/lesson-complete' as Href);
     },
     [
       lessonFocus,
@@ -1363,7 +1332,7 @@ export default function LessonScreen() {
               demoSession: demoModeRef.current || getLessonSession().demoSession,
             });
             navigatedToSummaryRef.current = true;
-            router.replace('/summary');
+            router.replace('/lesson-complete' as Href);
           }
         }
       };
