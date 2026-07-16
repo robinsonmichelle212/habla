@@ -116,10 +116,21 @@ export type LevelUnlockRecord = {
   completed: boolean;
 };
 
+/** Per-level high score (out of 10). Next level unlocks only when qualified. */
+export type LevelScoreRecord = {
+  level: RoundLevel;
+  highestScore: number;
+  qualified: boolean;
+};
+
 export type RoundProgress = {
   unlocks: LevelUnlockRecord[];
   totalPlays: number;
+  levelScores: LevelScoreRecord[];
 };
+
+/** Minimum score out of 10 to unlock the next level. */
+export const LEVEL_QUALIFY_SCORE = 7;
 
 export type UrgentPendingUnlock = {
   roundId: BonusRoundId;
@@ -142,12 +153,25 @@ export type GemShopStats = {
 
 export type RoundShopState =
   | { kind: 'mastered' }
-  | { kind: 'play'; level: RoundLevel }
+  | {
+      kind: 'play';
+      level: RoundLevel;
+      highestScore: number;
+      qualified: boolean;
+    }
   | {
       kind: 'unlock';
       level: RoundLevel;
       cost: number;
       previousCompletedLevel: RoundLevel | null;
+      previousHighestScore: number;
+    }
+  | {
+      /** Previous level played but score < 7 — next level purchase is locked. */
+      kind: 'locked';
+      level: RoundLevel;
+      blockedLevel: RoundLevel;
+      highestScore: number;
     };
 
 export type LevelUnlockTarget = {
@@ -198,7 +222,7 @@ export function parseRoundLevel(value: string | number | undefined): RoundLevel 
 }
 
 function emptyRoundProgress(): RoundProgress {
-  return { unlocks: [], totalPlays: 0 };
+  return { unlocks: [], totalPlays: 0, levelScores: [] };
 }
 
 function normalizeUnlockRecord(raw: unknown): LevelUnlockRecord | null {
@@ -216,9 +240,28 @@ function normalizeUnlockRecord(raw: unknown): LevelUnlockRecord | null {
   };
 }
 
+function normalizeLevelScoreRecord(raw: unknown): LevelScoreRecord | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Partial<LevelScoreRecord>;
+  const level = parseRoundLevel(obj.level);
+  if (!level) return null;
+  const highestScore = Math.max(0, Math.min(10, Math.trunc(Number(obj.highestScore) || 0)));
+  return {
+    level,
+    highestScore,
+    qualified: Boolean(obj.qualified) || highestScore >= LEVEL_QUALIFY_SCORE,
+  };
+}
+
 function migrateLegacyRoundProgress(raw: unknown): RoundProgress {
   if (!raw || typeof raw !== 'object') return emptyRoundProgress();
   const obj = raw as Record<string, unknown>;
+
+  const levelScores = Array.isArray(obj.levelScores)
+    ? obj.levelScores
+        .map(normalizeLevelScoreRecord)
+        .filter((s): s is LevelScoreRecord => s != null)
+    : [];
 
   if (Array.isArray(obj.unlocks)) {
     const unlocks = obj.unlocks
@@ -227,6 +270,7 @@ function migrateLegacyRoundProgress(raw: unknown): RoundProgress {
     return {
       unlocks: dedupeUnlockRecords(unlocks),
       totalPlays: Math.max(0, Math.trunc(Number(obj.totalPlays) || 0)),
+      levelScores: dedupeLevelScores(levelScores),
     };
   }
 
@@ -255,10 +299,40 @@ function migrateLegacyRoundProgress(raw: unknown): RoundProgress {
     }
   }
 
+  // Backfill qualified scores for already-completed levels (legacy).
+  const backfilledScores = dedupeLevelScores([
+    ...levelScores,
+    ...unlocks
+      .filter((u) => u.completed)
+      .map((u) => ({
+        level: u.level,
+        highestScore: LEVEL_QUALIFY_SCORE,
+        qualified: true,
+      })),
+  ]);
+
   return {
     unlocks: dedupeUnlockRecords(unlocks),
     totalPlays: Math.max(0, Math.trunc(Number(obj.totalPlays) || 0)),
+    levelScores: backfilledScores,
   };
+}
+
+function dedupeLevelScores(scores: LevelScoreRecord[]): LevelScoreRecord[] {
+  const byLevel = new Map<RoundLevel, LevelScoreRecord>();
+  for (const record of scores) {
+    const existing = byLevel.get(record.level);
+    if (!existing || record.highestScore > existing.highestScore) {
+      byLevel.set(record.level, {
+        level: record.level,
+        highestScore: record.highestScore,
+        qualified: record.qualified || record.highestScore >= LEVEL_QUALIFY_SCORE,
+      });
+    } else if (record.qualified && !existing.qualified) {
+      byLevel.set(record.level, { ...existing, qualified: true });
+    }
+  }
+  return [...byLevel.values()].sort((a, b) => a.level - b.level);
 }
 
 function dedupeUnlockRecords(unlocks: LevelUnlockRecord[]): LevelUnlockRecord[] {
@@ -342,6 +416,10 @@ async function migrateLegacyUnlocks(progress: GemShopProgress): Promise<GemShopP
           { level: 1, unlockedAt: now, expiresAt: now, completed: true },
         ],
         totalPlays: Math.max(existing.totalPlays, entry.playCount ?? 0),
+        levelScores: dedupeLevelScores([
+          ...existing.levelScores,
+          { level: 1, highestScore: LEVEL_QUALIFY_SCORE, qualified: true },
+        ]),
       };
     }
     await AsyncStorage.setItem(PROGRESS_KEY, JSON.stringify(next));
@@ -462,6 +540,25 @@ export function countMasteredRounds(progress: GemShopProgress): number {
   return BONUS_ROUNDS.reduce((count, round) => count + (isRoundMastered(progress, round.id) ? 1 : 0), 0);
 }
 
+export function getLevelHighestScore(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  level: RoundLevel,
+): number {
+  return progress[roundId].levelScores.find((s) => s.level === level)?.highestScore ?? 0;
+}
+
+export function isLevelQualified(
+  progress: GemShopProgress,
+  roundId: BonusRoundId,
+  level: RoundLevel,
+): boolean {
+  const record = progress[roundId].levelScores.find((s) => s.level === level);
+  if (record?.qualified) return true;
+  // Legacy: completed unlock without score record counts as qualified.
+  return isLevelCompleted(progress, roundId, level);
+}
+
 export function getRoundShopState(
   progress: GemShopProgress,
   roundId: BonusRoundId,
@@ -473,12 +570,32 @@ export function getRoundShopState(
 
   const pending = getActivePendingUnlock(progress[roundId].unlocks, now);
   if (pending) {
-    return { kind: 'play', level: pending.level };
+    const highestScore = getLevelHighestScore(progress, roundId, pending.level);
+    return {
+      kind: 'play',
+      level: pending.level,
+      highestScore,
+      qualified: highestScore >= LEVEL_QUALIFY_SCORE || isLevelQualified(progress, roundId, pending.level),
+    };
   }
 
   const next = getNextUnlockLevel(progress, roundId, now);
   if (!next) {
     return { kind: 'mastered' };
+  }
+
+  if (next > 1) {
+    const previous = (next - 1) as RoundLevel;
+    const previousHighest = getLevelHighestScore(progress, roundId, previous);
+    const previousQualified = isLevelQualified(progress, roundId, previous);
+    if (!previousQualified) {
+      return {
+        kind: 'locked',
+        level: previous,
+        blockedLevel: next,
+        highestScore: previousHighest,
+      };
+    }
   }
 
   const previousCompletedLevel =
@@ -491,6 +608,9 @@ export function getRoundShopState(
     level: next,
     cost: getLevelCost(roundId, next),
     previousCompletedLevel,
+    previousHighestScore: previousCompletedLevel
+      ? getLevelHighestScore(progress, roundId, previousCompletedLevel)
+      : 0,
   };
 }
 
@@ -656,21 +776,66 @@ export async function getGemRoundPlayDates(): Promise<Set<string>> {
 }
 
 export async function recordLevelCompleted(roundId: BonusRoundId, level: RoundLevel): Promise<void> {
+  await recordLevelAttempt(roundId, level, 10);
+}
+
+/**
+ * Record a level attempt score (0–10). Keeps the highest score ever.
+ * Marks the level completed/qualified only when highestScore >= 7.
+ * Low scores keep the unlock playable so the user can retry.
+ */
+export async function recordLevelAttempt(
+  roundId: BonusRoundId,
+  level: RoundLevel,
+  scoreOutOf10: number,
+): Promise<{ qualified: boolean; highestScore: number; newlyQualified: boolean }> {
+  const score = Math.max(0, Math.min(10, Math.round(scoreOutOf10)));
   const progress = await getGemShopProgress();
   const round = progress[roundId];
-  const existing = round.unlocks.find((u) => u.level === level);
-  const now = Date.now();
+  const existing = round.levelScores.find((s) => s.level === level);
+  const highestScore = Math.max(existing?.highestScore ?? 0, score);
+  const wasQualified = Boolean(existing?.qualified) || isLevelCompletedInUnlocks(round.unlocks, level);
+  const qualified = highestScore >= LEVEL_QUALIFY_SCORE;
+  const newlyQualified = qualified && !wasQualified;
 
-  const updatedRecord: LevelUnlockRecord = existing
-    ? { ...existing, completed: true }
-    : { level, unlockedAt: now, expiresAt: now, completed: true };
+  const levelScores = dedupeLevelScores([
+    ...round.levelScores.filter((s) => s.level !== level),
+    { level, highestScore, qualified },
+  ]);
+
+  const now = Date.now();
+  let unlocks = [...round.unlocks];
+  const existingUnlock = unlocks.find((u) => u.level === level);
+
+  if (qualified) {
+    const updatedRecord: LevelUnlockRecord = existingUnlock
+      ? { ...existingUnlock, completed: true }
+      : { level, unlockedAt: now, expiresAt: now, completed: true };
+    unlocks = [...unlocks.filter((u) => u.level !== level), updatedRecord];
+    await cancelUnlockExpiryWarning(roundId, level);
+  } else if (existingUnlock && !existingUnlock.completed) {
+    // Keep retry available — refresh the 24h window after an attempt.
+    const refreshed: LevelUnlockRecord = {
+      ...existingUnlock,
+      expiresAt: now + UNLOCK_WINDOW_MS,
+    };
+    unlocks = [...unlocks.filter((u) => u.level !== level), refreshed];
+    await scheduleUnlockExpiryWarning(roundId, level, refreshed.expiresAt);
+  }
 
   progress[roundId] = {
     ...round,
-    unlocks: [...round.unlocks.filter((u) => u.level !== level), updatedRecord],
+    levelScores,
+    unlocks,
   };
   await saveProgress(progress);
-  await cancelUnlockExpiryWarning(roundId, level);
+
+  return { qualified, highestScore, newlyQualified };
+}
+
+/** Convert a 0–100 percentage into a 0–10 level score. */
+export function percentToLevelScore(percent: number): number {
+  return Math.max(0, Math.min(10, Math.round(percent / 10)));
 }
 
 export async function getGemShopStats(): Promise<GemShopStats> {

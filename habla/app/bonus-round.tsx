@@ -33,12 +33,17 @@ import { addCulturalNote } from '@/lib/cultural-notes';
 import {
   eliteBadgeId,
   eliteBadgeLabel,
+  getLevelCost,
   getRoundDef,
   isRoundLevelPlayable,
+  LEVEL_QUALIFY_SCORE,
   parseRoundLevel,
-  recordLevelCompleted,
+  percentToLevelScore,
+  purchaseLevel,
+  recordLevelAttempt,
   recordRoundPlayed,
   type BonusRoundId,
+  type RoundLevel,
 } from '@/lib/gem-shop';
 import { addGems } from '@/lib/gems';
 import { milestonesAfterBonusRound } from '@/lib/milestones';
@@ -108,6 +113,9 @@ export default function BonusRoundScreen() {
   const [showGemToast, setShowGemToast] = useState(false);
   const [resultTitle, setResultTitle] = useState('');
   const [resultDetail, setResultDetail] = useState('');
+  const [resultScore, setResultScore] = useState<number | null>(null);
+  const [resultQualified, setResultQualified] = useState(false);
+  const [unlockingNext, setUnlockingNext] = useState(false);
 
   // Quiz state
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
@@ -115,6 +123,11 @@ export default function BonusRoundScreen() {
   const [quizScore, setQuizScore] = useState(0);
   const [quizTimer, setQuizTimer] = useState(QUIZ_TIMER_SEC_DEFAULT);
   const [quizLocked, setQuizLocked] = useState(false);
+  const [quizSelected, setQuizSelected] = useState<number | null>(null);
+  const [quizAwaitingNext, setQuizAwaitingNext] = useState(false);
+  const usedQuizPromptsRef = useRef<string[]>([]);
+  const quizAdvanceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingQuizScoreRef = useRef(0);
 
   // Generic chat
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant'; text: string }[]>([]);
@@ -152,11 +165,13 @@ export default function BonusRoundScreen() {
   }, [chatMessages]);
 
   const finishRound = useCallback(
-    async (title: string, detail: string, gems: number) => {
+    async (title: string, detail: string, gems: number, scoreOutOf10: number = 10) => {
+      let qualified = scoreOutOf10 >= LEVEL_QUALIFY_SCORE;
       if (roundId) {
         await recordRoundPlayed(roundId, roundLevel);
-        await recordLevelCompleted(roundId, roundLevel);
-        if (roundLevel === 5) {
+        const attempt = await recordLevelAttempt(roundId, roundLevel, scoreOutOf10);
+        qualified = attempt.qualified;
+        if (qualified && roundLevel === 5) {
           await awardBadge(eliteBadgeId(roundId), eliteBadgeLabel(roundId), '🏆');
         }
       }
@@ -165,6 +180,8 @@ export default function BonusRoundScreen() {
         setGemsEarned(gems);
         setGemToastAmount(gems);
         setShowGemToast(true);
+      } else {
+        setGemsEarned(0);
       }
       const celebrations = await milestonesAfterBonusRound();
       if (celebrations.length > 0) {
@@ -179,6 +196,8 @@ export default function BonusRoundScreen() {
           },
         });
       }
+      setResultScore(scoreOutOf10);
+      setResultQualified(qualified);
       setResultTitle(title);
       setResultDetail(detail);
       setStage('result');
@@ -186,33 +205,137 @@ export default function BonusRoundScreen() {
     [roundId, roundLevel, celebrate],
   );
 
+  const buildQuizResultCopy = useCallback(
+    (score: number, gems: number, qualified: boolean) => {
+      const nextLevel = (roundLevel + 1) as RoundLevel;
+      if (score >= 10) {
+        return {
+          title: `${score} / 10`,
+          detail: `Perfecto. 🌟 +${gems} 💎`,
+        };
+      }
+      if (score >= LEVEL_QUALIFY_SCORE) {
+        return {
+          title: `${score} / 10`,
+          detail:
+            roundLevel < 5 && qualified
+              ? `¡Muy bien! Level ${nextLevel} is now unlocked.\n${gems} 💎 earned.`
+              : `¡Muy bien!\n${gems} 💎 earned.`,
+        };
+      }
+      if (score >= 5) {
+        return {
+          title: `${score} / 10`,
+          detail: `¡Buen intento! You need 7 or more to unlock the next level. Keep practising and try again.\n${gems} 💎 earned for attempting.`,
+        };
+      }
+      return {
+        title: `${score} / 10`,
+        detail: `¡Sigue intentándolo! Practice makes perfect.\nTry again when you're ready.\n${gems} 💎 earned for attempting.`,
+      };
+    },
+    [roundLevel],
+  );
+
+  const advanceQuiz = useCallback(
+    (nextScore: number) => {
+      if (quizAdvanceRef.current) {
+        clearTimeout(quizAdvanceRef.current);
+        quizAdvanceRef.current = null;
+      }
+      setQuizAwaitingNext(false);
+      if (quizIdx >= quizQuestions.length - 1) {
+        const total = quizQuestions.length || 10;
+        const gems = quizRoundGems(nextScore, total);
+        const scoreOutOf10 =
+          total === 10 ? nextScore : Math.round((nextScore / Math.max(1, total)) * 10);
+        const qualified = scoreOutOf10 >= LEVEL_QUALIFY_SCORE;
+        const copy = buildQuizResultCopy(scoreOutOf10, gems, qualified);
+        void finishRound(copy.title, copy.detail, gems, scoreOutOf10);
+        return;
+      }
+      setQuizIdx((i) => i + 1);
+      setQuizLocked(false);
+      setQuizSelected(null);
+    },
+    [quizIdx, quizQuestions.length, buildQuizResultCopy, finishRound],
+  );
+
   const submitQuizAnswer = useCallback(
-    async (selectedIndex: number) => {
+    (selectedIndex: number) => {
       if (quizLocked) return;
       setQuizLocked(true);
       if (timerRef.current) clearInterval(timerRef.current);
       const q = quizQuestions[quizIdx];
       if (!q) return;
-      const correct = selectedIndex === q.correctIndex;
+      const correct = selectedIndex >= 0 && selectedIndex === q.correctIndex;
       const nextScore = quizScore + (correct ? 1 : 0);
+      pendingQuizScoreRef.current = nextScore;
       setQuizScore(nextScore);
-      setTimeout(() => {
-        if (quizIdx >= quizQuestions.length - 1) {
-          const total = quizQuestions.length;
-          const gems = quizRoundGems(nextScore, total);
-          void finishRound(
-            `Quiz complete: ${nextScore}/${total}`,
-            correct ? '✅ Correct!' : `Answer: ${q.options[q.correctIndex]}`,
-            gems,
-          );
-        } else {
-          setQuizIdx((i) => i + 1);
-          setQuizLocked(false);
-        }
-      }, 800);
+      setQuizSelected(selectedIndex >= 0 ? selectedIndex : null);
+      setQuizAwaitingNext(true);
+
+      quizAdvanceRef.current = setTimeout(() => {
+        advanceQuiz(nextScore);
+      }, 1000);
     },
-    [quizLocked, quizQuestions, quizIdx, quizScore, finishRound],
+    [quizLocked, quizQuestions, quizIdx, quizScore, advanceQuiz],
   );
+
+  const retryQuizLevel = useCallback(async () => {
+    if (!roundId) return;
+    setStage('loading');
+    setResultScore(null);
+    setResultQualified(false);
+    try {
+      const cal = await buildRoundCalibration(roundId, roundLevel);
+      setCalibration(cal);
+      setQuizTimerSec(cal.quizTimerSec);
+      setQuizTimer(cal.quizTimerSec);
+      const exclude = [...usedQuizPromptsRef.current];
+      const qs = await generateQuizRound(cal, exclude);
+      usedQuizPromptsRef.current = [
+        ...exclude,
+        ...qs.map((q) => q.prompt),
+      ].slice(-80);
+      setQuizQuestions(qs);
+      setQuizIdx(0);
+      setQuizScore(0);
+      setQuizLocked(false);
+      setQuizSelected(null);
+      setQuizAwaitingNext(false);
+      setStage('play');
+    } catch {
+      Alert.alert('Could not load round', 'Check your connection and try again.', [
+        { text: 'OK', onPress: () => setStage('result') },
+      ]);
+    }
+  }, [roundId, roundLevel]);
+
+  const unlockNextLevel = useCallback(async () => {
+    if (!roundId || roundLevel >= 5 || unlockingNext) return;
+    const nextLevel = (roundLevel + 1) as RoundLevel;
+    setUnlockingNext(true);
+    try {
+      const result = await purchaseLevel(roundId, nextLevel);
+      if (!result.success) {
+        Alert.alert(
+          'Could not unlock',
+          result.error === 'Not enough gems'
+            ? 'Not enough gems — earn more and unlock from the Gem Shop.'
+            : result.error ?? 'Try again from the Gem Shop.',
+          [{ text: 'Gem Shop', onPress: () => router.replace('/gem-shop') }, { text: 'OK' }],
+        );
+        return;
+      }
+      router.replace({
+        pathname: '/bonus-round',
+        params: { round: roundId, level: String(nextLevel) },
+      });
+    } finally {
+      setUnlockingNext(false);
+    }
+  }, [roundId, roundLevel, unlockingNext, router]);
 
   const sendChat = useCallback(
     async (
@@ -269,10 +392,17 @@ export default function BonusRoundScreen() {
 
         switch (roundId) {
           case 'quiz': {
-            const qs = await generateQuizRound(cal);
+            const qs = await generateQuizRound(cal, usedQuizPromptsRef.current);
+            usedQuizPromptsRef.current = [
+              ...usedQuizPromptsRef.current,
+              ...qs.map((q) => q.prompt),
+            ].slice(-80);
             setQuizQuestions(qs);
             setQuizIdx(0);
             setQuizScore(0);
+            setQuizLocked(false);
+            setQuizSelected(null);
+            setQuizAwaitingNext(false);
             break;
           }
           case 'slang': {
@@ -343,6 +473,7 @@ export default function BonusRoundScreen() {
     return () => {
       stopJaviSpeech();
       if (timerRef.current) clearInterval(timerRef.current);
+      if (quizAdvanceRef.current) clearTimeout(quizAdvanceRef.current);
     };
   }, [roundId, roundLevel, router]);
 
@@ -375,7 +506,7 @@ export default function BonusRoundScreen() {
       setShadowFeedback(null);
       if (shadowIdx >= shadowSentences.length - 1) {
         const avg = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
-        void finishRound(`Shadowing: ${avg}%`, 'Great rhythm practice!', avg >= 70 ? 3 : 1);
+        void finishRound(`Shadowing: ${avg}%`, 'Great rhythm practice!', avg >= 70 ? 3 : 1, percentToLevelScore(avg));
       } else {
         setShadowIdx((i) => i + 1);
       }
@@ -417,7 +548,7 @@ export default function BonusRoundScreen() {
             english: slangContent.slangCard.english,
             exampleSpanish: slangContent.slangCard.exampleSpanish,
           });
-          void finishRound('Slang round complete!', 'Slang card saved to vocabulary 📚', 2);
+          void finishRound('Slang round complete!', 'Slang card saved to vocabulary 📚', 2, 10);
         },
       );
       return;
@@ -454,9 +585,9 @@ export default function BonusRoundScreen() {
           );
           await awardBadge('immersion', 'Inmersión', '🔇');
           const gems = immersionRoundGems(ev.score);
-          void finishRound(`Inmersión: ${ev.score}%`, ev.feedback, gems);
+          void finishRound(`Inmersión: ${ev.score}%`, ev.feedback, gems, percentToLevelScore(ev.score));
         } else {
-          void finishRound(`${def?.name ?? 'Round'} complete!`, 'Great discussion 🎉', 2);
+          void finishRound(`${def?.name ?? 'Round'} complete!`, 'Great discussion 🎉', 2, 10);
         }
       },
     );
@@ -490,6 +621,16 @@ export default function BonusRoundScreen() {
   }
 
   if (stage === 'result') {
+    const showTryAgain =
+      roundId === 'quiz' && resultScore != null && resultScore < LEVEL_QUALIFY_SCORE;
+    const showUnlockNext =
+      roundId === 'quiz' &&
+      resultQualified &&
+      resultScore != null &&
+      resultScore >= LEVEL_QUALIFY_SCORE &&
+      roundLevel < 5;
+    const nextLevelCost = showUnlockNext ? getLevelCost(roundId, (roundLevel + 1) as RoundLevel) : 0;
+
     return (
       <SafeAreaView style={styles.safeArea}>
         <StatusBar style="light" />
@@ -498,12 +639,39 @@ export default function BonusRoundScreen() {
           <Text style={styles.resultEmoji}>{def.emoji}</Text>
           <Text style={styles.resultTitle}>{resultTitle}</Text>
           <Text style={styles.resultDetail}>{resultDetail}</Text>
-          {roundLevel === 5 ? (
+          {roundLevel === 5 && resultQualified ? (
             <Text style={styles.eliteNote}>🏆 Elite {def.name} badge earned!</Text>
           ) : null}
           {gemsEarned > 0 ? <Text style={styles.gemsEarned}>+{gemsEarned} 💎</Text> : null}
-          <Pressable onPress={() => router.replace('/gem-shop')} style={styles.primaryBtn}>
-            <Text style={styles.primaryBtnText}>Back to Gem Shop</Text>
+          {showUnlockNext ? (
+            <Pressable
+              onPress={() => void unlockNextLevel()}
+              disabled={unlockingNext}
+              style={({ pressed }) => [
+                styles.primaryBtn,
+                unlockingNext && styles.primaryBtnDisabled,
+                pressed && !unlockingNext && styles.optionPressed,
+              ]}>
+              {unlockingNext ? (
+                <ActivityIndicator color="#0B0F14" />
+              ) : (
+                <Text style={styles.primaryBtnText}>
+                  Unlock Level {roundLevel + 1} — {nextLevelCost} 💎
+                </Text>
+              )}
+            </Pressable>
+          ) : null}
+          {showTryAgain ? (
+            <Pressable
+              onPress={() => void retryQuizLevel()}
+              style={({ pressed }) => [styles.primaryBtn, pressed && styles.optionPressed]}>
+              <Text style={styles.primaryBtnText}>Try again</Text>
+            </Pressable>
+          ) : null}
+          <Pressable
+            onPress={() => router.replace('/gem-shop')}
+            style={({ pressed }) => [styles.secondaryBtn, pressed && styles.optionPressed]}>
+            <Text style={styles.secondaryBtnText}>Back to Gem Shop</Text>
           </Pressable>
         </View>
       </SafeAreaView>
@@ -556,13 +724,24 @@ export default function BonusRoundScreen() {
                 <Text style={styles.quizPrompt}>{quizQuestions[quizIdx].prompt}</Text>
                 {quizQuestions[quizIdx].options.map((opt, i) => (
                   <Pressable
-                    key={opt}
+                    key={`${quizQuestions[quizIdx].id}-${opt}`}
                     disabled={quizLocked}
-                    onPress={() => void submitQuizAnswer(i)}
-                    style={({ pressed }) => [styles.optionBtn, pressed && styles.optionPressed]}>
+                    onPress={() => submitQuizAnswer(i)}
+                    style={({ pressed }) => [
+                      styles.optionBtn,
+                      quizSelected === i && styles.optionSelected,
+                      pressed && !quizLocked && styles.optionPressed,
+                    ]}>
                     <Text style={styles.optionText}>{opt}</Text>
                   </Pressable>
                 ))}
+                {quizAwaitingNext ? (
+                  <Pressable
+                    onPress={() => advanceQuiz(pendingQuizScoreRef.current)}
+                    style={({ pressed }) => [styles.primaryBtn, pressed && styles.optionPressed]}>
+                    <Text style={styles.primaryBtnText}>Next →</Text>
+                  </Pressable>
+                ) : null}
               </View>
             ) : null}
 
@@ -654,7 +833,12 @@ export default function BonusRoundScreen() {
                         roleplayContent.scenario,
                         withReply.map((m) => ({ role: m.role, content: m.text })),
                       );
-                      void finishRound(`Score: ${ev.score}%`, ev.feedback, ev.score >= 70 ? 3 : 1);
+                      void finishRound(
+                        `Score: ${ev.score}%`,
+                        ev.feedback,
+                        ev.score >= 70 ? 3 : 1,
+                        percentToLevelScore(ev.score),
+                      );
                     }
                   }}
                 />
@@ -721,6 +905,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
     padding: 16,
+  },
+  optionSelected: {
+    borderColor: palette.accent,
+    backgroundColor: 'rgba(255, 122, 89, 0.12)',
   },
   optionPressed: { borderColor: palette.accent },
   optionText: { fontSize: 16, fontWeight: '700', color: palette.text },

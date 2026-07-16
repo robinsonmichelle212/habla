@@ -31,7 +31,7 @@ const SESSION_MINUTES: Record<RoundLevel, string> = {
   5: '15',
 };
 
-const QUIZ_COUNTS: Record<RoundLevel, number> = { 1: 6, 2: 10, 3: 10, 4: 10, 5: 10 };
+const QUIZ_COUNTS: Record<RoundLevel, number> = { 1: 10, 2: 10, 3: 10, 4: 10, 5: 10 };
 const SHADOWING_COUNTS: Record<RoundLevel, number> = { 1: 5, 2: 8, 3: 10, 4: 10, 5: 10 };
 const CHAT_TURNS: Record<RoundLevel, number> = { 1: 2, 2: 4, 3: 5, 4: 6, 5: 7 };
 const QUIZ_TIMERS: Record<RoundLevel, number> = { 1: 20, 2: 15, 3: 15, 4: 12, 5: 10 };

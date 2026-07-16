@@ -38,9 +38,16 @@ export type QuizQuestion = {
   correctIndex: number;
 };
 
-export async function generateQuizRound(cal: RoundCalibration): Promise<QuizQuestion[]> {
+export async function generateQuizRound(
+  cal: RoundCalibration,
+  excludePrompts: string[] = [],
+): Promise<QuizQuestion[]> {
   const client = getClient();
   const count = cal.questionCount;
+  const excluded = excludePrompts
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .slice(0, 40);
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 2000,
@@ -53,18 +60,27 @@ Generate ${count} multiple choice questions in Spanish.
 Topics: Spanish geography, culture, food, history, famous people.
 Each question: prompt in Spanish, exactly 4 options, correctIndex 0-3.
 Adjust vocabulary, sentence length, grammar complexity, and cultural depth per calibration.
+${
+  excluded.length
+    ? `Do NOT repeat any of these previous questions (new prompts only):\n${excluded.map((p) => `- ${p}`).join('\n')}`
+    : ''
+}
 
 Return: { "questions": [{ "id":"1", "prompt":"...", "options":["a","b","c","d"], "correctIndex": 0 }] }`,
       },
     ],
   });
   const parsed = extractJson<{ questions: QuizQuestion[] }>(extractText(response));
-  return (parsed.questions ?? []).slice(0, count).map((q, i) => ({
-    id: String(q.id ?? i + 1),
-    prompt: q.prompt,
-    options: q.options,
-    correctIndex: Math.max(0, Math.min(3, q.correctIndex ?? 0)),
-  }));
+  const excludeSet = new Set(excluded.map((p) => p.toLowerCase()));
+  return (parsed.questions ?? [])
+    .filter((q) => !excludeSet.has(String(q.prompt ?? '').trim().toLowerCase()))
+    .slice(0, count)
+    .map((q, i) => ({
+      id: String(q.id ?? i + 1),
+      prompt: q.prompt,
+      options: q.options,
+      correctIndex: Math.max(0, Math.min(3, q.correctIndex ?? 0)),
+    }));
 }
 
 export type SlangExpression = {

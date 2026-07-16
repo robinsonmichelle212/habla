@@ -5,6 +5,7 @@ import {
   getAffordableNextLevels,
   getGemShopProgress,
   getGemShopStats,
+  LEVEL_QUALIFY_SCORE,
   getLevelCost,
   getRoundDef,
   getRoundShopState,
@@ -30,6 +31,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Modal,
   Platform,
   Pressable,
@@ -200,12 +202,63 @@ export default function GemShopScreen() {
     }
 
     if (shopState.kind === 'play') {
+      const nextLevel =
+        shopState.level < 5 ? ((shopState.level + 1) as RoundLevel) : null;
       return (
-        <Pressable
-          onPress={() => handlePlay(roundId, shopState.level)}
-          style={({ pressed }) => [styles.actionButton, styles.actionButtonPlay, pressed && styles.actionButtonPressed]}>
-          <Text style={styles.actionButtonText}>Play Level {shopState.level} ▶</Text>
-        </Pressable>
+        <View style={styles.unlockBlock}>
+          <Pressable
+            onPress={() => handlePlay(roundId, shopState.level)}
+            style={({ pressed }) => [
+              styles.actionButton,
+              styles.actionButtonPlay,
+              pressed && styles.actionButtonPressed,
+            ]}>
+            <Text style={styles.actionButtonText}>Play Level {shopState.level} ▶</Text>
+          </Pressable>
+          {shopState.highestScore > 0 ? (
+            <Text style={styles.bestScoreText}>Your best: {shopState.highestScore}/10</Text>
+          ) : null}
+          {nextLevel && !shopState.qualified ? (
+            <Pressable
+              onPress={() =>
+                Alert.alert(
+                  'Level locked 🔒',
+                  `Score 7 or more on Level ${shopState.level} to unlock Level ${nextLevel}`,
+                )
+              }
+              style={styles.lockedNextBtn}>
+              <Text style={styles.lockedNextText}>🔒 Level {nextLevel} locked</Text>
+              <Text style={styles.lockedHintText}>
+                Score {LEVEL_QUALIFY_SCORE}+ on Level {shopState.level} to unlock
+              </Text>
+              {shopState.highestScore > 0 ? (
+                <Text style={styles.bestScoreText}>Your best: {shopState.highestScore}/10</Text>
+              ) : null}
+            </Pressable>
+          ) : null}
+        </View>
+      );
+    }
+
+    if (shopState.kind === 'locked') {
+      return (
+        <View style={styles.unlockBlock}>
+          <Pressable
+            onPress={() =>
+              Alert.alert(
+                'Level locked 🔒',
+                `Score 7 or more on Level ${shopState.level} to unlock Level ${shopState.blockedLevel}`,
+              )
+            }
+            style={styles.lockedNextBtn}>
+            <Text style={styles.lockedNextText}>🔒 Level {shopState.blockedLevel} locked</Text>
+            <Text style={styles.lockedHintText}>
+              Score {LEVEL_QUALIFY_SCORE}+ on Level {shopState.level} to unlock Level{' '}
+              {shopState.blockedLevel}
+            </Text>
+            <Text style={styles.bestScoreText}>Your best: {shopState.highestScore}/10</Text>
+          </Pressable>
+        </View>
       );
     }
 
@@ -214,6 +267,9 @@ export default function GemShopScreen() {
         {shopState.previousCompletedLevel ? (
           <Text style={styles.completedNote}>
             You completed Level {shopState.previousCompletedLevel} ✅
+            {shopState.previousHighestScore > 0
+              ? ` · Best ${shopState.previousHighestScore}/10`
+              : ''}
           </Text>
         ) : null}
         <Pressable
@@ -598,6 +654,35 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.muted,
     textAlign: 'center',
+  },
+  bestScoreText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+  },
+  lockedNextBtn: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    backgroundColor: 'rgba(61, 70, 84, 0.35)',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 4,
+    alignItems: 'center',
+  },
+  lockedNextText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: palette.muted,
+    textAlign: 'center',
+  },
+  lockedHintText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    lineHeight: 16,
   },
   actionButton: {
     borderRadius: 12,
