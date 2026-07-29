@@ -1,6 +1,11 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import {
+  filterOutLockedGrammar,
+  isLockedGrammarLabel,
+  unlockedTopicsForWeek,
+} from '@/lib/curriculum-drill-gate';
+import {
   getWeekDefinition,
   resolveGrammarCurriculum,
   TOTAL_CURRICULUM_WEEKS,
@@ -74,25 +79,38 @@ export function buildMasteredPracticeArea(
   lessons: LessonHistoryEntry[],
   curriculum: GrammarCurriculumState,
 ): string {
+  const week = curriculum.currentWeek || 1;
+  const unlocked = unlockedTopicsForWeek(week);
+  const fallback =
+    unlocked.length > 1 ? unlocked[unlocked.length - 2] : curriculum.currentTopic || 'Present tense';
+
   if (curriculum.completedWeeks.length > 0) {
-    const lastCompleted = Math.max(...curriculum.completedWeeks);
-    return getWeekDefinition(lastCompleted).topic;
+    const completedUnlocked = curriculum.completedWeeks
+      .filter((w) => w <= week)
+      .sort((a, b) => b - a);
+    for (const completedWeek of completedUnlocked) {
+      const topic = getWeekDefinition(completedWeek).topic;
+      if (!isLockedGrammarLabel(topic, week)) return topic;
+    }
   }
 
   const recent = lessons.slice(-8);
   for (const lesson of recent) {
     if (!lesson.placeholder && (lesson.overallScore ?? 0) >= 75 && lesson.focusAreas[0]) {
-      return lesson.focusAreas[0];
+      if (!isLockedGrammarLabel(lesson.focusAreas[0], week)) {
+        return lesson.focusAreas[0];
+      }
     }
   }
 
   for (const lesson of recent) {
     if (lesson.breakdown.grammar.score >= 75) {
-      return lesson.breakdown.grammar.topic || 'Present tense';
+      const topic = lesson.breakdown.grammar.topic || fallback;
+      if (!isLockedGrammarLabel(topic, week)) return topic;
     }
   }
 
-  return 'Present tense';
+  return fallback;
 }
 
 export function buildInterleavedDrillPlan(
@@ -100,19 +118,51 @@ export function buildInterleavedDrillPlan(
   curriculum: GrammarCurriculumState,
   lessons: LessonHistoryEntry[],
   grammarTopicHint?: string,
+  coveredVocabThemes: string[] = [],
 ): {
   primary: string;
   secondary: string;
   mastered: string;
   preview: string;
 } {
-  const primary = weakAreas[0]?.label ?? grammarTopicHint ?? curriculum.currentTopic;
-  const secondary = weakAreas[1]?.label ?? weakAreas[0]?.label ?? 'General vocabulary';
-  const mastered = buildMasteredPracticeArea(lessons, curriculum);
-  const preview =
-    curriculum.currentWeek < TOTAL_CURRICULUM_WEEKS
-      ? getWeekDefinition(curriculum.currentWeek + 1).topic
-      : curriculum.currentTopic;
+  const week = curriculum.currentWeek || 1;
+  const currentTopic = curriculum.currentTopic || getWeekDefinition(week).topic;
+  const unlocked = unlockedTopicsForWeek(week);
+  const safeWeak = filterOutLockedGrammar(
+    weakAreas.map((w) => w.label).filter(Boolean),
+    week,
+    currentTopic,
+  );
+
+  const primary =
+    filterOutLockedGrammar(
+      [safeWeak[0], grammarTopicHint, currentTopic].filter(Boolean) as string[],
+      week,
+      currentTopic,
+    )[0] ?? currentTopic;
+
+  const previousUnlocked =
+    unlocked.length > 1 ? unlocked[unlocked.length - 2] : unlocked[0] ?? currentTopic;
+
+  const secondary =
+    filterOutLockedGrammar(
+      [safeWeak[1], safeWeak[0], previousUnlocked].filter(Boolean) as string[],
+      week,
+      previousUnlocked,
+    ).find((label) => label !== primary) ?? previousUnlocked;
+
+  const mastered = filterOutLockedGrammar(
+    [buildMasteredPracticeArea(lessons, curriculum)],
+    week,
+    previousUnlocked,
+  )[0];
+
+  // Never preview next week's (possibly locked) grammar — use covered vocab for the 20% slot.
+  const vocabTheme =
+    coveredVocabThemes[coveredVocabThemes.length - 1] ??
+    coveredVocabThemes[0] ??
+    VOCAB_THEMES[0];
+  const preview = `Vocabulary: ${vocabTheme}`;
 
   return { primary, secondary, mastered, preview };
 }

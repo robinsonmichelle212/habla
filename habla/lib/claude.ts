@@ -4,6 +4,12 @@ import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dn
 import { formatFocusTipsForDrillPrompt } from '@/lib/current-focus-tips';
 
 import { CORE_VOCABULARY_PROMPT } from '@/lib/core-vocabulary';
+import {
+  formatCurriculumGatePrompt,
+  formatVocabThemeGatePrompt,
+  resolveCurriculumDrillGate,
+  type CurriculumDrillGate,
+} from '@/lib/curriculum-drill-gate';
 import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
 import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
@@ -1396,12 +1402,16 @@ export async function generateDrills(
 ): Promise<DrillExerciseJson[]> {
   const anthropic = getClient();
   const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
 
   const system = `You are a Spanish tutor creating short drills for a B1 learner.
 Return ONLY valid JSON. No markdown.`;
 
   const user = `Create exactly 3 short exercises targeting ONLY these weakAreas and focusAreas.
 Keep each exercise short. Each exercise must be answerable with a short Spanish response.
+
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
 
 Return JSON exactly like:
 { "exercises": [ { "id": "1", "prompt": "...", "expectedAnswer": "..." }, ... ] }
@@ -1746,6 +1756,8 @@ export type QuickFireQuestionType =
   | 'conjugate'
   | 'choose_tense'
   | 'translate_tense'
+  | 'sentence_stem'
+  | 'substitution_drill'
   | 'reorder_words'
   | 'spot_structure_error'
   | 'complete_structure'
@@ -1864,7 +1876,8 @@ const GRAMMAR_DRILL_TYPES: QuickFireQuestionType[] = [
   'fill_blank',
   'correct_mistake',
   'choose_tense',
-  'translate_tense',
+  'sentence_stem',
+  'substitution_drill',
 ];
 
 export async function generateQuickFireQuestions(
@@ -1879,6 +1892,7 @@ export async function generateQuickFireQuestions(
 
   const anthropic = getClient();
   const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
   const errorDnaBlock =
     errorDnaTargets.length > 0
       ? `
@@ -1891,6 +1905,9 @@ For those 2 questions set "targetsErrorDna": true.`
 Return ONLY valid JSON. No markdown. No extra keys.`;
 
   const user = `Generate exactly ${count} quick-fire Spanish practice questions for a B1 learner.
+
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
 
 Target these prioritised weak areas (focus most on highest priority): ${JSON.stringify(prioritizedWeakAreas)}
 ${errorDnaBlock}
@@ -1976,17 +1993,20 @@ export async function generateInterleavedPracticeQuestions(
   plan: InterleavedDrillPlan,
   errorDnaTargets: ErrorDNAInput[] = [],
   focusTips?: FocusTipsDrillInput | null,
+  gateOverride?: CurriculumDrillGate | null,
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
   const count = 10;
+  const gate = gateOverride ?? (await resolveCurriculumDrillGate());
 
   const errorDnaBlock =
     errorDnaTargets.length > 0
       ? `
 Up to 2 questions may target these recurring user errors:
 ${formatErrorDnaForDrillPrompt(errorDnaTargets)}
-For those set "targetsErrorDna": true.`
+For those set "targetsErrorDna": true.
+Error DNA questions must still stay within unlocked grammar topics only.`
       : '';
 
   const focusTipsBlock =
@@ -1997,7 +2017,8 @@ ${formatFocusTipsForDrillPrompt(focusTips.tips)}
 Grammar focus: ${focusTips.grammarFocus}
 
 Generate drill questions that specifically target these exact areas. At least 4 of the ${count} questions must directly address one of these tips.
-For those questions set "targetsFocusTip": true.`
+For those questions set "targetsFocusTip": true.
+Skip any tip that requires grammar outside the unlocked list.`
       : '';
 
   const system = `You are Javi, a Spanish tutor creating interleaved B1 drill questions.
@@ -2007,11 +2028,15 @@ ${CORE_VOCABULARY_PROMPT}`;
 
   const user = `Generate exactly ${count} interleaved Spanish practice questions using INTERLEAVING — mix topics within one session.
 
-Distribution (each question MUST include a short focusLabel):
-- 4 questions on PRIMARY weak area: "${plan.primary}"
-- 3 questions on SECONDARY weak area: "${plan.secondary}"
-- 2 questions on MASTERED area (retrieval practice / spaced review): "${plan.mastered}"
-- 1 PREVIEW question on next grammar topic: "${plan.preview}"
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
+
+Distribution (each question MUST include a short focusLabel) — stay within unlocked topics only:
+- 4 questions on PRIMARY (current / weak) area: "${plan.primary}"
+- 3 questions on SECONDARY (previously covered unlocked) area: "${plan.secondary}"
+- 2 questions on MASTERED unlocked area (retrieval practice): "${plan.mastered}"
+- 1 question on covered vocabulary / fluency: "${plan.preview}"
+Do NOT preview or introduce next-week grammar that is not unlocked.
 
 ${errorDnaBlock}
 ${focusTipsBlock}
@@ -2080,6 +2105,7 @@ export async function generateGrammarCurriculumQuestions(
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
 
   const system = `You are Javi, a Spanish tutor creating grammar quick-fire drills for a B1 learner.
 Return ONLY valid JSON. No markdown. No extra keys.
@@ -2091,30 +2117,67 @@ ${CORE_VOCABULARY_PROMPT}`;
       ? `
 Exactly 2 of the ${count} questions MUST target these recurring user errors (one question each for the top 2):
 ${formatErrorDnaForDrillPrompt(errorDnaTargets)}
-For those 2 questions set "targetsErrorDna": true.`
+For those 2 questions set "targetsErrorDna": true.
+Stay within unlocked grammar topics only.`
       : '';
 
   const user = `Generate exactly ${count} grammar drill questions for curriculum week ${grammarContext.weekNumber}.
+
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
 
 Grammar topic: ${grammarContext.topic}
 Focus verbs: ${grammarContext.focusVerbs.join(', ')}
 Contrast week (preterite vs imperfect): ${grammarContext.includesContrast ? 'yes' : 'no'}
 ${errorDnaBlock}
 
-Use ONLY this week's topic and focus verbs. Vocabulary must be top-1000 Spanish words only.
+Use ONLY this week's topic and previously unlocked topics from the list above. Vocabulary must be top-1000 Spanish words only.
 
-Question types (use 2 of each when count is 10):
-- conjugate: "Conjugate 'tener' in the preterite, first person singular" → tuve
-- fill_blank: "Ayer yo ___ (ir) al mercado" → fui
-- correct_mistake: "Ayer yo voy al mercado" → Ayer fui al mercado (or fui)
-- choose_tense: "Which tense? I used to go to the market every Sunday" → imperfect / imperfecto
-- translate_tense: "I couldn't find the keys" (translate using ${grammarContext.topic}) → No pude encontrar las llaves
+Generate exactly ${count} questions in this order so the drill flows recognition → correction → choice → production → automation:
+
+Questions 1-3 (recognition): 3 conjugation OR fill-in-blank questions.
+Questions 4-5 (correction): 2 correct-the-mistake questions.
+Question 6 (choice): 1 choose-the-tense question.
+Questions 7-8 (production): 2 sentence-stem completion questions.
+Questions 9-10 (automation): 2 substitution drill questions (two-part question).
+
+Sentence stem format (sentence_stem):
+Show a sentence stem in Spanish, using ONLY the current curriculum week's grammar focus and high-frequency vocabulary:
+Use the correct tense that matches the grammar focus (grammarContext.topic). Example (preterite week): "Ayer fui a..."
+Instruction below (Spanish): "Complete with 3 different endings"
+User types 3 completions separated by commas:
+"al mercado, a casa, a trabajar"
+Rules for stems:
+- The 3 completions must be grammatically correct and make sense with the stem.
+- They must be varied (do not repeat the same noun/ending).
+- expectedAnswer MUST be exactly the 3 correct completions separated by commas, like: "al mercado, a casa, a trabajar"
+
+Substitution drill format (substitution_drill):
+Show one complete base sentence that matches the current grammar focus (grammarContext.topic).
+Example (preterite week): "Ayer fui al mercado."
+Then the user must rewrite it twice, changing ONLY the requested element each time (subject/time/verb/object):
+Part 1: "Now say the same sentence but change the subject to: ella"
+User types: "Ayer fue al mercado."
+Part 2: "Now change the subject to: nosotros"
+User types: "Ayer fuimos al mercado."
+Rules for substitution drills:
+- Use the same base sentence for both parts.
+- For each substitution drill, only one element should be changing across the two parts (pick from the rotation list below).
+- The two substitution drills should use different rotation elements so the automation feels varied.
+- Make the substitution obvious (learner should easily see what changed).
+- expectedAnswer MUST be the two correct rewritten sentences separated by a comma, like: "Ayer fue al mercado, Ayer fuimos al mercado"
+
+Substitution drill rotation (apply across the 2 substitution drills):
+- Change subject pronoun: yo → tú → él → nosotros
+- Change time reference: ayer → la semana pasada → el año pasado
+- Change verb: fui → comí → trabajé → estudié
+- Change object: mercado → trabajo → casa → restaurante
 
 Rules:
-- Short prompts. Brief answers (1–6 words usually).
+- Short prompts. Brief answers usually.
 - expectedAnswer is the primary correct answer.
 - acceptableAnswers: optional array of valid variants.
-- Rotate types evenly.
+- Use the exact question order above. Keep types consistent with each range.
 
 Return JSON exactly:
 {
@@ -2148,9 +2211,19 @@ Valid type values: ${GRAMMAR_DRILL_TYPES.join(', ')}`;
     .slice(0, count)
     .map((q, i) => ({
       id: String(q.id ?? i + 1),
-      type: GRAMMAR_DRILL_TYPES.includes(q.type as QuickFireQuestionType)
-        ? (q.type as QuickFireQuestionType)
-        : GRAMMAR_DRILL_TYPES[i % GRAMMAR_DRILL_TYPES.length],
+      type: (() => {
+        const parsedType = q.type as QuickFireQuestionType;
+        const isConjugateOrFill = parsedType === 'conjugate' || parsedType === 'fill_blank';
+        if (i <= 2) {
+          if (isConjugateOrFill) return parsedType;
+          return i % 2 === 0 ? 'conjugate' : 'fill_blank';
+        }
+        if (i === 3 || i === 4) return parsedType === 'correct_mistake' ? parsedType : 'correct_mistake';
+        if (i === 5) return parsedType === 'choose_tense' ? parsedType : 'choose_tense';
+        if (i === 6 || i === 7)
+          return parsedType === 'sentence_stem' ? parsedType : 'sentence_stem';
+        return parsedType === 'substitution_drill' ? parsedType : 'substitution_drill';
+      })(),
       prompt: q.prompt.trim(),
       expectedAnswer: q.expectedAnswer.trim(),
       acceptableAnswers: Array.isArray(q.acceptableAnswers)
@@ -2168,6 +2241,7 @@ export async function generateWordOrderDrillQuestions(
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
 
   const errorDnaBlock =
     errorDnaTargets.length > 0
@@ -2182,6 +2256,10 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
 
   const user = `Generate exactly ${count} word-order drill questions for a B1 Spanish learner.
 Rotate through ALL 7 subtypes below — use each at least once when count is 10; for ${count} questions distribute evenly.
+
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
+Sentence grammar must only use unlocked tenses/topics above.
 ${errorDnaBlock}
 
 SUBTYPES (set wordOrderSubtype and constructionTag on every question):
@@ -2289,6 +2367,7 @@ export async function generateFluencyDrillQuestions(
 ): Promise<QuickFireQuestion[]> {
   const anthropic = getClient();
   const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
   const errorDnaBlock =
     errorDnaTargets.length > 0
       ? `
@@ -2312,6 +2391,12 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
 
 Every question must be open-ended and designed to make the learner speak freely in Spanish.
 Focus on conversational flow — not grammar tables, translations, or single correct answers.
+
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
+Prompts and expected learner responses must only require unlocked grammar.
+Prefer scenarios from covered vocab themes.
+
 Target weak areas: ${JSON.stringify(prioritizedWeakAreas)}
 ${errorDnaBlock}
 
@@ -2327,10 +2412,10 @@ Mix these question types across the set (use all five; repeat as needed to reach
    Example: "Estás en un restaurante y el camarero te pregunta qué quieres. ¿Qué dices?"
 
 4) story_completion
-   Example: "Ayer fui al mercado y de repente... Continúa la historia."
+   Example: "Hoy voy al mercado y de repente... Continúa la historia." (use only unlocked tenses)
 
 5) reaction_question
-   Example: "¿Cómo reaccionarías si te dijeran que tienes que mudarte a España mañana?"
+   Example: "¿Qué dices si un amigo cancela los planes a última hora?"
 
 Rules:
 - Ask the question in Spanish.
@@ -2339,6 +2424,7 @@ Rules:
 - Do not provide choices.
 - Do not ask for a translation or a specific grammatical form.
 - Tie to weak areas where possible.
+- Do not require locked tenses (e.g. no subjunctive/perfect/imperative unless unlocked).
 - "expectedAnswer" must always be "Open spoken response".
 - "acceptableAnswers" must be omitted or empty.
 
@@ -2755,6 +2841,7 @@ export async function generatePracticeExercises(
 ): Promise<DrillExerciseJson[]> {
   const anthropic = getClient();
   const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
 
   const system = `You are Javi, a warm Spanish tutor in a mobile app.
 You create targeted B1 practice exercises.
@@ -2766,10 +2853,14 @@ Return ONLY valid JSON. No markdown. No extra keys.`;
 
 Drill type: ${drillTypeToHumanLabel(drillType)}
 
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
+
 Rules:
 - Each exercise must be answerable with a short Spanish response.
 - Keep prompts clear and specific to the prioritised weak areas.
 - Do not include any English in the prompts.
+- Never use locked grammar topics.
 
 Return JSON exactly:
 { "exercises": [ { "id": "1", "prompt": "...", "expectedAnswer": "..." }, ... ] }`;

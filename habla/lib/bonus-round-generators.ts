@@ -5,7 +5,13 @@ import {
   levelContentGuide,
   type RoundCalibration,
 } from '@/lib/bonus-round-calibration';
-import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
+import {
+  formatCurriculumGatePrompt,
+  formatVocabThemeGatePrompt,
+  resolveCurriculumDrillGate,
+  type CurriculumDrillGate,
+} from '@/lib/curriculum-drill-gate';
+import { getWeekDefinition } from '@/lib/grammar-curriculum';
 
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
@@ -31,6 +37,14 @@ function calibrationBlock(cal: RoundCalibration): string {
   return `Calibration:\n${calibrationJsonBlock(cal)}\n\nLevel guide: ${levelContentGuide(cal)}\nSession length: ${cal.sessionMinutes} minutes.`;
 }
 
+async function curriculumGateBlock(): Promise<{ gate: CurriculumDrillGate; block: string }> {
+  const gate = await resolveCurriculumDrillGate();
+  return {
+    gate,
+    block: `${formatCurriculumGatePrompt(gate)}\n${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}`,
+  };
+}
+
 export type QuizQuestion = {
   id: string;
   prompt: string;
@@ -44,6 +58,7 @@ export async function generateQuizRound(
 ): Promise<QuizQuestion[]> {
   const client = getClient();
   const count = cal.questionCount;
+  const { block: gateBlock } = await curriculumGateBlock();
   const excluded = excludePrompts
     .map((p) => p.trim())
     .filter(Boolean)
@@ -56,10 +71,12 @@ export async function generateQuizRound(
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Generate ${count} multiple choice questions in Spanish.
 Topics: Spanish geography, culture, food, history, famous people.
 Each question: prompt in Spanish, exactly 4 options, correctIndex 0-3.
 Adjust vocabulary, sentence length, grammar complexity, and cultural depth per calibration.
+Quiz prompts and options must only use unlocked grammar topics.
 ${
   excluded.length
     ? `Do NOT repeat any of these previous questions (new prompts only):\n${excluded.map((p) => `- ${p}`).join('\n')}`
@@ -101,6 +118,7 @@ const SLANG_COUNTS = { 1: 3, 2: 5, 3: 7, 4: 8, 5: 10 } as const;
 export async function generateSlangRound(cal: RoundCalibration): Promise<SlangRoundContent> {
   const exprCount = SLANG_COUNTS[cal.roundLevel];
   const client = getClient();
+  const { block: gateBlock } = await curriculumGateBlock();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 1600,
@@ -109,9 +127,11 @@ export async function generateSlangRound(cal: RoundCalibration): Promise<SlangRo
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Generate a slang round with ${exprCount} expressions (Spain primary, Argentine equivalent noted).
 Include drill: situation in Spanish, 4 slang options, correctIndex.
 Include slangCard: one key phrase to save to vocabulary.
+Example sentences and drill prompts must only use unlocked grammar.
 
 Return JSON:
 {
@@ -147,6 +167,7 @@ export type RoleplayRoundContent = {
 export async function generateRoleplayRound(cal: RoundCalibration): Promise<RoleplayRoundContent> {
   const scenario = ROLEPLAY_SCENARIOS[Math.floor(Math.random() * ROLEPLAY_SCENARIOS.length)];
   const client = getClient();
+  const { block: gateBlock } = await curriculumGateBlock();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 800,
@@ -155,8 +176,10 @@ export async function generateRoleplayRound(cal: RoundCalibration): Promise<Role
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Role play scenario: ${scenario}
 Match pace, patience, register, and complexity to the level guide.
+Opening line, character speech, and goals must only use unlocked grammar.
 Return JSON: { "scenario": "...", "characterName": "...", "characterRole": "...", "openingLine": "Spanish in character", "goals": ["goal1","goal2"] }`,
       },
     ],
@@ -192,8 +215,8 @@ export type ShadowingSentence = {
 };
 
 export async function generateShadowingRound(cal: RoundCalibration): Promise<ShadowingSentence[]> {
-  const curriculum = await resolveGrammarCurriculum();
-  const week = getWeekDefinition(curriculum.currentWeek);
+  const { gate, block: gateBlock } = await curriculumGateBlock();
+  const week = getWeekDefinition(gate.weekNumber);
   const count = cal.questionCount;
   const client = getClient();
   const response = await client.messages.create({
@@ -204,9 +227,10 @@ export async function generateShadowingRound(cal: RoundCalibration): Promise<Sha
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Generate ${count} Spanish sentences for shadowing practice, progressively longer.
 Grammar focus: ${week.topic}. Use focus verbs: ${week.focusVerbs.join(', ')}.
-Match speed and complexity to level guide.
+Only use unlocked grammar topics. Match speed and complexity to level guide.
 Return: { "sentences": [{ "id":"1", "spanish":"...", "english":"..." }] }`,
       },
     ],
@@ -257,6 +281,7 @@ export type CultureRoundContent = {
 export async function generateCultureRound(cal: RoundCalibration): Promise<CultureRoundContent> {
   const topic = CULTURE_TOPICS[Math.floor(Math.random() * CULTURE_TOPICS.length)];
   const client = getClient();
+  const { block: gateBlock } = await curriculumGateBlock();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 1200,
@@ -265,7 +290,9 @@ export async function generateCultureRound(cal: RoundCalibration): Promise<Cultu
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Culture deep dive topic: ${topic}
+Presentation and discussion prompts must only use unlocked grammar.
 Return JSON:
 {
   "topic": "...",
@@ -303,6 +330,7 @@ const MUSIC_ROTATION = [
 export async function generateMusicRound(cal: RoundCalibration): Promise<MusicRoundContent> {
   const pick = MUSIC_ROTATION[Math.floor(Math.random() * MUSIC_ROTATION.length)];
   const client = getClient();
+  const { block: gateBlock } = await curriculumGateBlock();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 1600,
@@ -311,8 +339,10 @@ export async function generateMusicRound(cal: RoundCalibration): Promise<MusicRo
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Music round: ${pick.artist} — ${pick.song}
-Return JSON with context, verses as text (fewer/simpler at level 1), lineByLine explanations, vocabDrill (5 words), theme.`,
+Return JSON with context, verses as text (fewer/simpler at level 1), lineByLine explanations, vocabDrill (5 words), theme.
+Explanations and drills must only reference unlocked grammar.`,
       },
     ],
   });
@@ -341,6 +371,7 @@ const FILM_ROTATION = [
 export async function generateFilmRound(cal: RoundCalibration): Promise<FilmRoundContent> {
   const title = FILM_ROTATION[Math.floor(Math.random() * FILM_ROTATION.length)];
   const client = getClient();
+  const { block: gateBlock } = await curriculumGateBlock();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 1600,
@@ -349,9 +380,11 @@ export async function generateFilmRound(cal: RoundCalibration): Promise<FilmRoun
       {
         role: 'user',
         content: `${calibrationBlock(cal)}
+${gateBlock}
 Film/TV round: ${title}
 Describe a scene in Spanish, key dialogue as text, vocabulary, discussion questions, Spain vs Argentina dialect notes.
 Match dialogue complexity and cultural depth to level guide.
+Dialogue and discussion must only use unlocked grammar.
 Return JSON.`,
       },
     ],
@@ -361,14 +394,16 @@ Return JSON.`,
 
 export async function generateImmersionOpening(cal: RoundCalibration): Promise<string> {
   const client = getClient();
+  const { block: gateBlock } = await curriculumGateBlock();
   const response = await client.messages.create({
     model: DEFAULT_MODEL,
     max_tokens: 400,
-    system: `You are Javi. IMMERSION MODE: Spanish ONLY. No English. No Translate line. ${calibrationBlock(cal)}`,
+    system: `You are Javi. IMMERSION MODE: Spanish ONLY. No English. No Translate line. ${calibrationBlock(cal)}
+${gateBlock}`,
     messages: [
       {
         role: 'user',
-        content: 'Open an immersion lesson warmly in 2-3 Spanish sentences. Ask a question to start conversation.',
+        content: 'Open an immersion lesson warmly in 2-3 Spanish sentences. Ask a question to start conversation. Use only unlocked grammar.',
       },
     ],
   });

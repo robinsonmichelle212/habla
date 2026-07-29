@@ -33,6 +33,7 @@ import {
   queueMilestoneQuizzesFromCelebrations,
 } from '@/lib/milestone-celebration-quiz';
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
+import { getCoveredVocabThemesFromStorage } from '@/lib/lesson-focus';
 import {
   DRILL_KIND_EMOJI,
   DRILL_OVERRIDE_OPTIONS,
@@ -375,11 +376,13 @@ export default function PracticeScreen() {
       const errorDnaTargets = await getTopErrorDNA(2);
       const focusTipsForDrill = await getActiveFocusTipsForDrill();
       const lessonHistory = await getLessonHistory();
+      const coveredVocabThemes = await getCoveredVocabThemesFromStorage();
       const drillPlan = buildInterleavedDrillPlan(
         priorityWeakAreas,
         curriculum,
         lessonHistory,
         grammarTopicHint,
+        coveredVocabThemes,
       );
       const interleavedPlan =
         effectiveDrill === 'grammar'
