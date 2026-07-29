@@ -1,7 +1,7 @@
 import type { ErrorDNAItem } from '@/lib/error-dna';
 import type { LessonHistoryEntry, PriorityWeakArea } from '@/lib/practice-storage';
 
-export type PracticeDrillKind = 'grammar' | 'vocabulary' | 'fluency' | 'word-order';
+export type PracticeDrillKind = 'grammar' | 'writing' | 'fluency' | 'word-order';
 
 export type DrillSelection = {
   drill: PracticeDrillKind;
@@ -15,14 +15,14 @@ export const DRILL_OVERRIDE_OPTIONS: {
   emoji: string;
 }[] = [
   { id: 'grammar', label: 'Grammar', emoji: '📚' },
-  { id: 'vocabulary', label: 'Vocabulary', emoji: '🔤' },
+  { id: 'writing', label: 'Writing', emoji: '✍️' },
   { id: 'fluency', label: 'Fluency', emoji: '🗣️' },
   { id: 'word-order', label: 'Word Order', emoji: '🔀' },
 ];
 
 export const DRILL_KIND_EMOJI: Record<PracticeDrillKind, string> = {
   grammar: '📚',
-  vocabulary: '🔤',
+  writing: '✍️',
   fluency: '🗣️',
   'word-order': '🔀',
 };
@@ -31,8 +31,8 @@ export function drillDisplayTitle(drill: PracticeDrillKind, grammarTopicHint?: s
   switch (drill) {
     case 'grammar':
       return grammarTopicHint ? `Grammar drill · ${grammarTopicHint}` : 'Grammar drill';
-    case 'vocabulary':
-      return 'Vocabulary drill';
+    case 'writing':
+      return 'Writing drill ✍️';
     case 'fluency':
       return 'Fluency drill';
     case 'word-order':
@@ -40,11 +40,13 @@ export function drillDisplayTitle(drill: PracticeDrillKind, grammarTopicHint?: s
   }
 }
 
-const ROTATION_ORDER: PracticeDrillKind[] = ['grammar', 'vocabulary', 'fluency', 'word-order'];
+const ROTATION_ORDER: PracticeDrillKind[] = ['grammar', 'writing', 'fluency', 'word-order'];
 
-function classifyWeakArea(label: string): 'grammar' | 'vocabulary' | 'fluency' | 'structure' {
+function classifyWeakArea(label: string): 'grammar' | 'writing' | 'fluency' | 'structure' {
   const lower = label.toLowerCase();
-  if (/vocab|word choice|lexical|words?\b|theme/i.test(lower)) return 'vocabulary';
+  if (/writ|rewrite|compose|producti|vocab|word choice|lexical|words?\b|theme/i.test(lower)) {
+    return 'writing';
+  }
   if (/fluency|flow|natural|rhythm|speaking/i.test(lower)) return 'fluency';
   if (/word order|structure|syntax|sentence order|clause/i.test(lower)) return 'structure';
   return 'grammar';
@@ -80,12 +82,12 @@ function rotateDrill(rotateIndex: number): PracticeDrillKind {
   return ROTATION_ORDER[((rotateIndex % ROTATION_ORDER.length) + ROTATION_ORDER.length) % ROTATION_ORDER.length];
 }
 
-function formatWeakAreaReason(label: string, kind: 'grammar' | 'vocabulary'): string {
+function formatWeakAreaReason(label: string, kind: 'grammar' | 'writing'): string {
   const area = label.toLowerCase();
   if (kind === 'grammar') {
     return `Your ${area} need work based on your last 3 lessons.`;
   }
-  return `Your vocabulary in ${area} needs practice based on your last 3 lessons.`;
+  return `Your writing in ${area} needs practice based on your last 3 lessons.`;
 }
 
 export function selectPracticeDrill(input: {
@@ -127,11 +129,11 @@ export function selectPracticeDrill(input: {
         reason: formatWeakAreaReason(topWeak.label, 'grammar'),
       };
     }
-    if (kind === 'vocabulary') {
+    if (kind === 'writing') {
       return {
-        drill: 'vocabulary',
-        topicLabel: 'Vocabulary drill',
-        reason: formatWeakAreaReason(topWeak.label, 'vocabulary'),
+        drill: 'writing',
+        topicLabel: 'Writing drill ✍️',
+        reason: formatWeakAreaReason(topWeak.label, 'writing'),
       };
     }
     if (kind === 'fluency') {
@@ -144,13 +146,21 @@ export function selectPracticeDrill(input: {
   }
 
   if (scores && !scoresAreSimilar(scores)) {
+    const writingCombined = Math.min(scores.writing, scores.vocabulary);
     const fluency = scores.fluency;
-    const others = [scores.grammar, scores.vocabulary, scores.writing];
-    if (fluency < Math.min(...others)) {
+    const others = [scores.grammar, writingCombined];
+    if (fluency < Math.min(...others, writingCombined)) {
       return {
         drill: 'fluency',
         topicLabel: 'Fluency drill',
         reason: 'Your fluency score is your lowest skill in recent lessons — let\'s build natural flow.',
+      };
+    }
+    if (writingCombined < scores.grammar && writingCombined < fluency) {
+      return {
+        drill: 'writing',
+        topicLabel: 'Writing drill ✍️',
+        reason: 'Your writing score needs practice based on recent lessons — time pressure builds fluency.',
       };
     }
   }
@@ -159,7 +169,7 @@ export function selectPracticeDrill(input: {
     const drill = rotateDrill(rotateIndex);
     const labels: Record<PracticeDrillKind, string> = {
       grammar: grammarTopicHint ? `Grammar drill · ${grammarTopicHint}` : 'Grammar drill',
-      vocabulary: 'Vocabulary drill',
+      writing: 'Writing drill ✍️',
       fluency: 'Fluency drill',
       'word-order': 'Word order drill',
     };
@@ -181,7 +191,7 @@ export function selectPracticeDrill(input: {
   const drill = rotateDrill(rotateIndex);
   const topicLabels: Record<PracticeDrillKind, string> = {
     grammar: grammarTopicHint ? `Grammar drill · ${grammarTopicHint}` : 'Grammar drill',
-    vocabulary: 'Vocabulary drill',
+    writing: 'Writing drill ✍️',
     fluency: 'Fluency drill',
     'word-order': 'Word order drill',
   };
@@ -202,10 +212,10 @@ export function drillSelectionForOverride(
         topicLabel: drillDisplayTitle('grammar', grammarTopicHint),
         reason: 'Javi will target your grammar patterns.',
       };
-    case 'vocabulary':
+    case 'writing':
       return {
-        topicLabel: drillDisplayTitle('vocabulary'),
-        reason: 'Javi will target your vocabulary patterns.',
+        topicLabel: drillDisplayTitle('writing'),
+        reason: 'Javi will target your writing under time pressure.',
       };
     case 'fluency':
       return {

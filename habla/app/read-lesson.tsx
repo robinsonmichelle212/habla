@@ -670,8 +670,14 @@ const styles = StyleSheet.create({
     padding: 14,
     gap: 8,
   },
-  questionPrompt: { fontSize: 16, fontWeight: '800', color: palette.text, lineHeight: 22 },
-  questionHint: { fontSize: 13, fontWeight: '600', color: palette.muted },
+  questionPrompt: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: palette.text,
+    lineHeight: 24,
+    flexShrink: 0,
+  },
+  questionHint: { fontSize: 13, fontWeight: '600', color: palette.muted, marginTop: 4, lineHeight: 18 },
   input: {
     backgroundColor: palette.background,
     borderRadius: 12,

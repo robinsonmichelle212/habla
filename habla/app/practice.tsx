@@ -3,15 +3,8 @@ import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-ta
 import { useDemoMode } from '@/contexts/demo-mode-context';
 import { DEMO_DRILLS } from '@/lib/demo-mode';
 import {
-  buildSavedVocabQuestions,
-  checkSavedVocabAnswer,
-  getActiveVocabulary,
-  getSavedVocabulary,
-  mixPracticeQuestions,
   practiceQuestionId,
   practiceQuestionPrompt,
-  recordVocabDrillAnswer,
-  VOCAB_DRILL_SLOTS,
   type PracticeQuestion,
   type VocabMasteryEvent,
 } from '@/lib/saved-vocabulary';
@@ -19,6 +12,8 @@ import {
   generateInterleavedPracticeQuestions,
   generateFluencyDrillQuestions,
   generateWordOrderDrillQuestions,
+  generateWritingDrillQuestions,
+  evaluateWritingDrillBatch,
   evaluateFluencyDrillResponse,
   type PrioritizedWeakAreaInput,
   type QuickFireQuestion,
@@ -70,6 +65,24 @@ import {
   stopVoiceRecording,
 } from '@/lib/voice-recording';
 import { transcribeSpanishAudio } from '@/lib/whisper';
+import {
+  WRITING_DRILL_SECONDS,
+  cacheWritingDrillQuestions,
+  clearPendingWritingDrillEvaluation,
+  consumeWritingFocusQueue,
+  getCachedWritingDrillQuestions,
+  getOfflineWritingDrillQuestions,
+  getPendingWritingDrillEvaluations,
+  hasSeenWritingDrillIntro,
+  markWritingDrillIntroSeen,
+  queueWritingTypesForGrammarFocus,
+  resolveWritingDrillGate,
+  savePendingWritingDrillEvaluation,
+  writingDrillScore,
+  writingTimerBarColor,
+  type WritingDrillEvaluationItem,
+  type WritingDrillQuestionType,
+} from '@/lib/writing-drill';
 import { useRecordingCountdown } from '@/hooks/use-recording-countdown';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
@@ -135,19 +148,22 @@ const DEMO_FLUENCY_QUESTIONS: QuickFireQuestion[] = [
 }));
 
 function parseDrillParam(value: string | undefined): PracticeDrillKind | null {
-  if (value === 'grammar' || value === 'vocabulary' || value === 'fluency' || value === 'word-order') {
+  if (value === 'vocabulary') return 'writing';
+  if (value === 'grammar' || value === 'writing' || value === 'fluency' || value === 'word-order') {
     return value;
   }
   return null;
 }
 
-type ScreenStage = 'choose' | 'loading' | 'drill' | 'result';
+type ScreenStage = 'choose' | 'loading' | 'drill' | 'evaluating' | 'pending_offline' | 'result';
 
 type AnswerRecord = {
   practiceQuestion: PracticeQuestion;
   userAnswer: string;
   correct: boolean;
+  partialCredit?: boolean;
   feedback?: string;
+  modelAnswer?: string;
 };
 
 type FlashState = 'correct' | 'incorrect' | null;
@@ -161,9 +177,15 @@ export default function PracticeScreen() {
   const { celebrate } = useMilestoneCelebration();
   const { enabled: demoMode } = useDemoMode();
   const didAutoStartRef = useRef(false);
-  const activeDrillRef = useRef<PracticeDrillKind>('vocabulary');
+  const activeDrillRef = useRef<PracticeDrillKind>('writing');
   const voiceStateRef = useRef<VoiceButtonState>('idle');
   const handleFluencyPressOutRef = useRef<() => Promise<void>>(async () => {});
+  const answerRef = useRef('');
+  const resultsRef = useRef<AnswerRecord[]>([]);
+  const questionIdxRef = useRef(0);
+  const writingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const writingSubmittingRef = useRef(false);
+  const submitWritingAnswerRef = useRef<(overrideAnswer?: string) => void>(() => {});
 
   const initialDrill = parseDrillParam(typeof drill === 'string' ? drill : undefined);
 
@@ -198,6 +220,8 @@ export default function PracticeScreen() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [heardText, setHeardText] = useState<string | null>(null);
   const [fluencyFeedback, setFluencyFeedback] = useState<string | null>(null);
+  const [writingSecondsLeft, setWritingSecondsLeft] = useState(WRITING_DRILL_SECONDS);
+  const [writingPendingNote, setWritingPendingNote] = useState<string | null>(null);
   const fluencyCountdown = useRecordingCountdown(
     voiceState === 'recording',
     FLUENCY_RECORDING_SECONDS,
@@ -207,7 +231,9 @@ export default function PracticeScreen() {
   );
 
   const currentQuestion = questions[questionIdx];
-  const wrongResults = results.filter((r) => !r.correct);
+  const wrongResults = results.filter((r) => !r.correct && !r.partialCredit);
+  const isWritingDrill = activeDrillRef.current === 'writing';
+  const writingReviewResults = isWritingDrill ? results : [];
 
   const displayDrillSelection = useMemo((): DrillSelection | null => {
     if (isUserOverride && manualDrillOverride) {
@@ -239,6 +265,13 @@ export default function PracticeScreen() {
     }
   };
 
+  const clearWritingTimer = () => {
+    if (writingTimerRef.current) {
+      clearInterval(writingTimerRef.current);
+      writingTimerRef.current = null;
+    }
+  };
+
   const setVoiceStateSafe = useCallback((next: VoiceButtonState) => {
     voiceStateRef.current = next;
     setVoiceState(next);
@@ -247,7 +280,40 @@ export default function PracticeScreen() {
   useEffect(() => {
     return () => {
       clearAdvanceTimer();
+      clearWritingTimer();
       void ensureRecordingStopped();
+    };
+  }, []);
+
+  useEffect(() => {
+    answerRef.current = answer;
+  }, [answer]);
+
+  useEffect(() => {
+    resultsRef.current = results;
+  }, [results]);
+
+  useEffect(() => {
+    questionIdxRef.current = questionIdx;
+  }, [questionIdx]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      if (!(await checkIsOnline())) return;
+      const pending = await getPendingWritingDrillEvaluations();
+      if (!pending.length || cancelled) return;
+      for (const session of pending) {
+        try {
+          await evaluateWritingDrillBatch(session.questions, session.answers);
+          await clearPendingWritingDrillEvaluation(session.id);
+        } catch {
+          // Keep pending until a later online session.
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -322,6 +388,9 @@ export default function PracticeScreen() {
     setVoiceError(null);
     setHeardText(null);
     setFluencyFeedback(null);
+    setWritingSecondsLeft(WRITING_DRILL_SECONDS);
+    setWritingPendingNote(null);
+    writingSubmittingRef.current = false;
     didAwardRef.current = false;
   };
 
@@ -338,6 +407,13 @@ export default function PracticeScreen() {
 
     try {
       if (demoMode) {
+        if (effectiveDrill === 'writing') {
+          const gate = await resolveWritingDrillGate();
+          const demoQs = getOfflineWritingDrillQuestions(gate);
+          setQuestions(demoQs.map((question) => ({ kind: 'writing' as const, question })));
+          setStage('drill');
+          return;
+        }
         const source = effectiveDrill === 'fluency' ? DEMO_FLUENCY_QUESTIONS : DEMO_DRILLS;
         const demoQuestions: PracticeQuestion[] = source.map((d) => ({
           kind: 'quick' as const,
@@ -399,20 +475,23 @@ export default function PracticeScreen() {
           return [];
         }
         const drillQueue = await getMilestoneQuizDrillQueue();
+        const writingFocusQueue = await consumeWritingFocusQueue();
+        const combinedTips = [
+          ...(focusTipsForDrill?.tips ?? []),
+          ...drillQueue,
+          ...writingFocusQueue,
+        ];
         const batch = await generateInterleavedPracticeQuestions(
           interleavedPlan,
           errorDnaTargets,
-          focusTipsForDrill
+          combinedTips.length
             ? {
-                tips: [...focusTipsForDrill.tips, ...drillQueue],
-                grammarFocus: focusTipsForDrill.grammarFocus,
+                tips: combinedTips,
+                grammarFocus:
+                  focusTipsForDrill?.grammarFocus ??
+                  (drillQueue.length ? 'Milestone quiz review' : grammarTopicHint ?? weekDef.topic),
               }
-            : drillQueue.length
-              ? {
-                  tips: drillQueue,
-                  grammarFocus: 'Milestone quiz review',
-                }
-              : null,
+            : null,
         );
         if (batch.length) {
           await cachePracticeQuestions(effectiveDrill, grammarWeek, batch);
@@ -493,10 +572,10 @@ export default function PracticeScreen() {
           setStage('choose');
           Alert.alert(
             'Fluency drill needs internet',
-            'Fluency drill needs internet for voice recognition. Switch to Grammar or Vocabulary drill instead? Or try later when online.',
+            'Fluency drill needs internet for voice recognition. Switch to Grammar or Writing drill instead? Or try later when online.',
             [
               { text: 'Grammar', onPress: () => void startQuickFire('grammar') },
-              { text: 'Vocabulary', onPress: () => void startQuickFire('vocabulary') },
+              { text: 'Writing', onPress: () => void startQuickFire('writing') },
               { text: 'Try later', style: 'cancel' },
             ],
           );
@@ -521,53 +600,43 @@ export default function PracticeScreen() {
         return;
       }
 
-      if (!online) {
-        const offlineBatch = await getCachedOrFallback('vocabulary', null);
-        if (offlineBatch?.length) {
-          setQuestions(
-            offlineBatch.slice(0, TOTAL_QUESTIONS).map((question) => ({ kind: 'quick' as const, question })),
-          );
-          setStage('drill');
-          return;
+      if (effectiveDrill === 'writing') {
+        const gate = await resolveWritingDrillGate();
+        let writingQs = online ? await generateWritingDrillQuestions(errorDnaTargets) : null;
+
+        if (!writingQs?.length) {
+          writingQs =
+            (await getCachedWritingDrillQuestions()) ?? getOfflineWritingDrillQuestions(gate);
+        } else {
+          await cacheWritingDrillQuestions(writingQs);
         }
 
-        const savedWords = await getSavedVocabulary();
-        const activeWords = getActiveVocabulary(savedWords);
-        const vocabBatch = buildSavedVocabQuestions(activeWords, Math.min(TOTAL_QUESTIONS, activeWords.length));
-        if (vocabBatch.length < 1) {
-          Alert.alert(
-            'Offline',
-            'No saved vocabulary drill yet. Connect once while online or save words from lessons.',
-          );
+        if (!writingQs.length) {
+          Alert.alert('Could not load questions', 'Try again in a moment.');
           setStage('choose');
           return;
         }
+
+        if (!(await hasSeenWritingDrillIntro())) {
+          Alert.alert(
+            'Writing drill ✍️',
+            '30 segundos por pregunta.\nEscribe por instinto.\nLa velocidad construye la fluidez.',
+          );
+          await markWritingDrillIntroSeen();
+        }
+
         setQuestions(
-          vocabBatch.map((question) => ({ kind: 'vocab' as const, question })),
+          writingQs.slice(0, TOTAL_QUESTIONS).map((question) => ({
+            kind: 'writing' as const,
+            question,
+          })),
         );
         setStage('drill');
         return;
       }
 
-      const savedWords = await getSavedVocabulary();
-      const activeWords = getActiveVocabulary(savedWords);
-      const vocabCount = Math.min(VOCAB_DRILL_SLOTS, activeWords.length);
-      const weakCount = TOTAL_QUESTIONS - vocabCount;
-      const interleavedBatch = online
-        ? await loadInterleavedBatch()
-        : (await getCachedPracticeQuestions('vocabulary', null)) ?? [];
-      const weakBatch = interleavedBatch.slice(0, weakCount);
-      const vocabBatch = buildSavedVocabQuestions(activeWords, vocabCount);
-      const mixed = mixPracticeQuestions(weakBatch, vocabBatch);
-
-      if (mixed.length < 1) {
-        Alert.alert('Could not load questions', 'Try again in a moment.');
-        setStage('choose');
-        return;
-      }
-      await cachePracticeQuestions('vocabulary', null, interleavedBatch);
-      setQuestions(mixed.slice(0, TOTAL_QUESTIONS));
-      setStage('drill');
+      Alert.alert('Could not load questions', 'Unknown drill type.');
+      setStage('choose');
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Something went wrong.';
       Alert.alert('Could not load questions', message);
@@ -596,9 +665,86 @@ export default function PracticeScreen() {
     setStage('result');
   }, []);
 
+  const finishWritingDrill = useCallback(
+    async (finalResults: AnswerRecord[]) => {
+      clearWritingTimer();
+      writingSubmittingRef.current = false;
+      setLocked(true);
+      setStage('evaluating');
+
+      const writingQuestions = finalResults
+        .filter((r) => r.practiceQuestion.kind === 'writing')
+        .map((r) => (r.practiceQuestion as Extract<PracticeQuestion, { kind: 'writing' }>).question);
+      const answers = finalResults.map((r) => r.userAnswer);
+
+      const online = demoMode ? false : await checkIsOnline();
+
+      if (!online) {
+        if (!demoMode) {
+          await savePendingWritingDrillEvaluation({
+            id: `writing-${Date.now()}`,
+            savedAt: Date.now(),
+            questions: writingQuestions,
+            answers,
+          });
+        }
+        const localResults: AnswerRecord[] = finalResults.map((r) => ({
+          ...r,
+          correct: Boolean(r.userAnswer.trim()),
+          partialCredit: false,
+          feedback: r.userAnswer.trim()
+            ? 'Respuesta guardada para revisión.'
+            : 'Sin respuesta.',
+          modelAnswer:
+            r.practiceQuestion.kind === 'writing'
+              ? r.practiceQuestion.question.expectedAnswer
+              : r.practiceQuestion.question.expectedAnswer,
+        }));
+        setResults(localResults);
+        setScore(writingDrillScore(localResults));
+        setWritingPendingNote(
+          'Tus respuestas han sido guardadas.\nJavi las revisará pronto. ⏳',
+        );
+        setStage(demoMode ? 'result' : 'pending_offline');
+        return;
+      }
+
+      try {
+        const evaluations = await evaluateWritingDrillBatch(writingQuestions, answers);
+        const merged: AnswerRecord[] = finalResults.map((r, i) => {
+          const evaluation: WritingDrillEvaluationItem | undefined = evaluations[i];
+          return {
+            ...r,
+            correct: evaluation?.correct === true,
+            partialCredit: evaluation?.partialCredit === true,
+            feedback: evaluation?.feedback,
+            modelAnswer: evaluation?.modelAnswer,
+          };
+        });
+        setResults(merged);
+        setScore(writingDrillScore(merged));
+        setWritingPendingNote(null);
+        setStage('result');
+      } catch {
+        await savePendingWritingDrillEvaluation({
+          id: `writing-${Date.now()}`,
+          savedAt: Date.now(),
+          questions: writingQuestions,
+          answers,
+        });
+        setWritingPendingNote(
+          'Tus respuestas han sido guardadas.\nJavi las revisará pronto. ⏳',
+        );
+        setStage('pending_offline');
+      }
+    },
+    [demoMode],
+  );
+
   const advanceQuestion = useCallback(
     (finalResults: AnswerRecord[]) => {
       clearAdvanceTimer();
+      clearWritingTimer();
       setFlash(null);
       setShowCorrectAnswer(null);
       setVocabExample(null);
@@ -608,35 +754,67 @@ export default function PracticeScreen() {
       setVoiceStateSafe('idle');
       setLocked(false);
       setAnswer('');
+      answerRef.current = '';
+      writingSubmittingRef.current = false;
 
-      if (questionIdx >= TOTAL_QUESTIONS - 1) {
+      if (questionIdxRef.current >= TOTAL_QUESTIONS - 1) {
+        if (activeDrillRef.current === 'writing') {
+          void finishWritingDrill(finalResults);
+          return;
+        }
         finishDrill(finalResults);
         return;
       }
 
       setQuestionIdx((i) => i + 1);
+      if (activeDrillRef.current === 'writing') {
+        setWritingSecondsLeft(WRITING_DRILL_SECONDS);
+      }
     },
-    [finishDrill, questionIdx, setVoiceStateSafe],
+    [finishDrill, finishWritingDrill, setVoiceStateSafe],
+  );
+
+  const submitWritingAnswer = useCallback(
+    (overrideAnswer?: string) => {
+      const q = questions[questionIdxRef.current];
+      if (!q || q.kind !== 'writing') return;
+      if (writingSubmittingRef.current) return;
+      writingSubmittingRef.current = true;
+      clearWritingTimer();
+
+      const trimmed = (overrideAnswer ?? answerRef.current).trim();
+      const record: AnswerRecord = {
+        practiceQuestion: q,
+        userAnswer: trimmed,
+        correct: false,
+      };
+      const nextResults = [...resultsRef.current, record];
+      resultsRef.current = nextResults;
+      setResults(nextResults);
+      setLocked(true);
+      setAnswer('');
+      answerRef.current = '';
+      advanceQuestion(nextResults);
+    },
+    [advanceQuestion, questions],
   );
 
   const submitAnswer = async () => {
-    if (!currentQuestion || locked || !answer.trim()) return;
+    if (!currentQuestion || locked) return;
+
+    if (currentQuestion.kind === 'writing') {
+      if (!answer.trim() && writingSecondsLeft > 0) return;
+      submitWritingAnswer(answer);
+      return;
+    }
+
+    if (!answer.trim()) return;
 
     const trimmed = answer.trim();
-    let correct = false;
-
-    if (currentQuestion.kind === 'quick') {
-      correct = checkQuickFireAnswer(currentQuestion.question, trimmed);
-    } else {
-      correct = checkSavedVocabAnswer(currentQuestion.question, trimmed);
-      const mastery = await recordVocabDrillAnswer(currentQuestion.question.spanish, correct);
-      if (mastery) {
-        setMasteryEvent(mastery);
-        if (Platform.OS !== 'web') {
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      }
-    }
+    const correct =
+      currentQuestion.kind === 'quick'
+        ? checkQuickFireAnswer(currentQuestion.question, trimmed)
+        : false;
 
     const record: AnswerRecord = {
       practiceQuestion: currentQuestion,
@@ -657,21 +835,35 @@ export default function PracticeScreen() {
     setLocked(true);
     setFlash(correct ? 'correct' : 'incorrect');
     if (!correct) {
-      const reveal =
-        currentQuestion.kind === 'quick'
-          ? currentQuestion.question.expectedAnswer
-          : currentQuestion.question.expectedAnswer;
-      setShowCorrectAnswer(reveal);
-    }
-    if (currentQuestion.kind === 'vocab') {
-      const q = currentQuestion.question;
-      setVocabExample(`${q.exampleSpanish}\n${q.exampleEnglish}`);
+      setShowCorrectAnswer(currentQuestion.question.expectedAnswer);
     }
 
     advanceTimerRef.current = setTimeout(() => {
       advanceQuestion(nextResults);
     }, AUTO_ADVANCE_MS);
   };
+
+  useEffect(() => {
+    if (stage !== 'drill' || activeDrillRef.current !== 'writing' || locked) {
+      return;
+    }
+
+    setWritingSecondsLeft(WRITING_DRILL_SECONDS);
+    clearWritingTimer();
+    writingTimerRef.current = setInterval(() => {
+      setWritingSecondsLeft((prev) => {
+        if (prev <= 1) {
+          clearWritingTimer();
+          // Defer so state update finishes before submit.
+          setTimeout(() => submitWritingAnswer(answerRef.current), 0);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearWritingTimer();
+  }, [stage, questionIdx, locked, submitWritingAnswer]);
 
   const recordFluencyResult = useCallback(
     (transcription: string, correct: boolean, feedback: string) => {
@@ -719,10 +911,10 @@ export default function PracticeScreen() {
       setStage('choose');
       Alert.alert(
         'Fluency drill needs internet',
-        'Fluency drill needs internet for voice recognition. Switch to Grammar or Vocabulary drill instead? Or try later when online.',
+        'Fluency drill needs internet for voice recognition. Switch to Grammar or Writing drill instead? Or try later when online.',
         [
           { text: 'Grammar', onPress: () => void startQuickFire('grammar') },
-          { text: 'Vocabulary', onPress: () => void startQuickFire('vocabulary') },
+          { text: 'Writing', onPress: () => void startQuickFire('writing') },
           { text: 'Try later', style: 'cancel' },
         ],
       );
@@ -778,10 +970,10 @@ export default function PracticeScreen() {
           setStage('choose');
           Alert.alert(
             'Fluency drill needs internet',
-            'The connection dropped. Switch to Grammar or Vocabulary drill instead? Or try later when online.',
+            'The connection dropped. Switch to Grammar or Writing drill instead? Or try later when online.',
             [
               { text: 'Grammar', onPress: () => void startQuickFire('grammar') },
-              { text: 'Vocabulary', onPress: () => void startQuickFire('vocabulary') },
+              { text: 'Writing', onPress: () => void startQuickFire('writing') },
               { text: 'Try later', style: 'cancel' },
             ],
           );
@@ -826,12 +1018,16 @@ export default function PracticeScreen() {
     if (didAwardRef.current) return;
     didAwardRef.current = true;
 
-    const finalScore = results.filter((r) => r.correct).length;
+    const finalScore =
+      activeDrillRef.current === 'writing'
+        ? writingDrillScore(results)
+        : results.filter((r) => r.correct).length;
     const gems = demoMode
       ? 0
       : activeDrillRef.current === 'fluency'
         ? gemsForFluencyDrill(finalScore)
-        : gemsForPracticeDrill(finalScore, TOTAL_QUESTIONS);
+        : gemsForPracticeDrill(Math.round(finalScore), TOTAL_QUESTIONS);
+    setScore(finalScore);
     setGemsEarned(gems);
     if (gems > 0) {
       setGemToastAmount(gems);
@@ -855,7 +1051,9 @@ export default function PracticeScreen() {
           weakAreasDrilled:
             activeDrillRef.current === 'word-order'
               ? ['Word order']
-              : priorityWeakAreas.map((w) => w.label),
+              : activeDrillRef.current === 'writing'
+                ? ['Writing']
+                : priorityWeakAreas.map((w) => w.label),
           gemsEarned: gems,
           type: 'practice',
         });
@@ -1057,15 +1255,60 @@ export default function PracticeScreen() {
           {stage === 'loading' ? (
             <View style={styles.loadingCard}>
               <ActivityIndicator color={palette.accent} size="large" />
-              <Text style={styles.loadingText}>Loading 10 questions…</Text>
+              <Text style={styles.loadingText}>
+                {activeDrillRef.current === 'writing'
+                  ? 'Preparando 10 preguntas…'
+                  : 'Loading 10 questions…'}
+              </Text>
+            </View>
+          ) : null}
+
+          {stage === 'evaluating' ? (
+            <View style={styles.loadingCard}>
+              <ActivityIndicator color={palette.accent} size="large" />
+              <Text style={styles.loadingText}>Javi está revisando tus respuestas…</Text>
+            </View>
+          ) : null}
+
+          {stage === 'pending_offline' ? (
+            <View style={styles.resultWrap}>
+              <Text style={styles.resultTitle}>Escritura guardada</Text>
+              <Text style={styles.pendingNote}>
+                {writingPendingNote ??
+                  'Tus respuestas han sido guardadas.\nJavi las revisará pronto. ⏳'}
+              </Text>
+              <Pressable
+                onPress={goHome}
+                style={({ pressed }) => [styles.homeButton, pressed && styles.homeButtonPressed]}>
+                <Text style={styles.homeButtonText}>Volver al inicio</Text>
+              </Pressable>
             </View>
           ) : null}
 
           {stage === 'drill' && currentQuestion ? (
             <View style={styles.drillWrap}>
-              <Text style={styles.questionMeta}>
-                Question {questionIdx + 1} of {TOTAL_QUESTIONS}
-              </Text>
+              {isWritingDrill ? (
+                <>
+                  <View style={styles.writingTimerTrack}>
+                    <View
+                      style={[
+                        styles.writingTimerFill,
+                        {
+                          width: `${Math.max(0, (writingSecondsLeft / WRITING_DRILL_SECONDS) * 100)}%`,
+                          backgroundColor: writingTimerBarColor(writingSecondsLeft),
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text style={styles.questionMeta}>
+                    Pregunta {questionIdx + 1} de {TOTAL_QUESTIONS}
+                  </Text>
+                </>
+              ) : (
+                <Text style={styles.questionMeta}>
+                  Question {questionIdx + 1} of {TOTAL_QUESTIONS}
+                </Text>
+              )}
 
               <View
                 style={[
@@ -1076,16 +1319,25 @@ export default function PracticeScreen() {
                       ? styles.flashAmberCard
                       : styles.flashRedCard),
                 ]}>
-                {currentQuestion.kind === 'quick' && currentQuestion.question.targetsFocusTip ? (
-                  <Text style={styles.focusTipLabel}>🎯 Javi&apos;s focus area</Text>
-                ) : currentQuestion.kind === 'quick' && currentQuestion.question.focusLabel ? (
-                  <Text style={styles.focusLabel}>{currentQuestion.question.focusLabel}</Text>
-                ) : null}
-                {currentQuestion.kind === 'quick' && currentQuestion.question.targetsErrorDna ? (
-                  <Text style={styles.javiWatchingLabel}>Javi&apos;s watching this one 👀</Text>
-                ) : null}
-                <Text style={styles.questionType}>{formatPracticeQuestionType(currentQuestion)}</Text>
-                <Text style={styles.questionPrompt}>{practiceQuestionPrompt(currentQuestion)}</Text>
+                {currentQuestion.kind === 'writing' ? (
+                  <>
+                    <Text style={styles.questionType}>{currentQuestion.question.instruction}</Text>
+                    <Text style={styles.questionPrompt}>{currentQuestion.question.prompt}</Text>
+                  </>
+                ) : (
+                  <>
+                    {currentQuestion.kind === 'quick' && currentQuestion.question.targetsFocusTip ? (
+                      <Text style={styles.focusTipLabel}>🎯 Javi&apos;s focus area</Text>
+                    ) : currentQuestion.kind === 'quick' && currentQuestion.question.focusLabel ? (
+                      <Text style={styles.focusLabel}>{currentQuestion.question.focusLabel}</Text>
+                    ) : null}
+                    {currentQuestion.kind === 'quick' && currentQuestion.question.targetsErrorDna ? (
+                      <Text style={styles.javiWatchingLabel}>Javi&apos;s watching this one 👀</Text>
+                    ) : null}
+                    <Text style={styles.questionType}>{formatPracticeQuestionType(currentQuestion)}</Text>
+                    <Text style={styles.questionPrompt}>{practiceQuestionPrompt(currentQuestion)}</Text>
+                  </>
+                )}
 
                 {flash ? (
                   <View style={styles.flashRow}>
@@ -1144,7 +1396,7 @@ export default function PracticeScreen() {
                     style={styles.input}
                     value={answer}
                     onChangeText={setAnswer}
-                    placeholder="Type your answer…"
+                    placeholder={isWritingDrill ? 'Escribe aquí…' : 'Type your answer…'}
                     placeholderTextColor={palette.muted}
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -1153,13 +1405,13 @@ export default function PracticeScreen() {
                   />
                   <Pressable
                     onPress={submitAnswer}
-                    disabled={!answer.trim()}
+                    disabled={!answer.trim() && !isWritingDrill}
                     style={({ pressed }) => [
                       styles.submitButton,
-                      !answer.trim() && styles.submitButtonDisabled,
-                      pressed && answer.trim() && styles.submitButtonPressed,
+                      !answer.trim() && !isWritingDrill && styles.submitButtonDisabled,
+                      pressed && (answer.trim() || isWritingDrill) && styles.submitButtonPressed,
                     ]}>
-                    <Text style={styles.submitButtonText}>Go</Text>
+                    <Text style={styles.submitButtonText}>{isWritingDrill ? 'Listo' : 'Go'}</Text>
                   </Pressable>
                 </View>
               ) : null}
@@ -1170,21 +1422,59 @@ export default function PracticeScreen() {
             <View style={styles.resultWrap}>
               <Text style={styles.resultTitle}>
                 {activeDrillRef.current === 'fluency'
-                  ? fluencyDrillEncouragement(score)
-                  : practiceDrillEncouragement(score, TOTAL_QUESTIONS)}
+                  ? fluencyDrillEncouragement(Math.round(score))
+                  : activeDrillRef.current === 'writing'
+                    ? practiceDrillEncouragement(Math.round(score), TOTAL_QUESTIONS)
+                    : practiceDrillEncouragement(score, TOTAL_QUESTIONS)}
               </Text>
               <Text style={styles.scoreBig}>
-                {score}/{TOTAL_QUESTIONS}
+                {Number.isInteger(score) ? score : score.toFixed(1)}/{TOTAL_QUESTIONS}
               </Text>
 
               <View style={styles.gemCard}>
-                <Text style={styles.gemLabel}>Gems earned</Text>
+                <Text style={styles.gemLabel}>
+                  {isWritingDrill ? 'Gemas ganadas' : 'Gems earned'}
+                </Text>
                 <Text style={styles.gemValue}>💎 {gemsEarned}</Text>
               </View>
 
-              <Text style={styles.streakNote}>🔥 Streak maintained!</Text>
+              {writingPendingNote && isWritingDrill ? (
+                <Text style={styles.pendingNote}>{writingPendingNote}</Text>
+              ) : (
+                <Text style={styles.streakNote}>
+                  {isWritingDrill ? '🔥 ¡Racha mantenida!' : '🔥 Streak maintained!'}
+                </Text>
+              )}
 
-              {wrongResults.length ? (
+              {isWritingDrill && writingReviewResults.length ? (
+                <View style={styles.reviewCard}>
+                  <Text style={styles.reviewTitle}>Revisión</Text>
+                  {writingReviewResults.map((r, i) => {
+                    const q =
+                      r.practiceQuestion.kind === 'writing'
+                        ? r.practiceQuestion.question
+                        : null;
+                    return (
+                      <View
+                        key={`${practiceQuestionId(r.practiceQuestion)}-${i}`}
+                        style={styles.reviewRow}>
+                        <Text style={styles.reviewPrompt}>
+                          {q ? `${q.instruction}\n${q.prompt}` : practiceQuestionPrompt(r.practiceQuestion)}
+                        </Text>
+                        <Text style={styles.reviewWrong}>
+                          Tú: {r.userAnswer || '(sin respuesta)'}
+                        </Text>
+                        <Text style={styles.reviewRight}>
+                          ✓ {r.modelAnswer ?? q?.expectedAnswer ?? r.practiceQuestion.question.expectedAnswer}
+                        </Text>
+                        {r.feedback ? (
+                          <Text style={styles.writingFeedback}>{r.feedback}</Text>
+                        ) : null}
+                      </View>
+                    );
+                  })}
+                </View>
+              ) : wrongResults.length ? (
                 <View style={styles.reviewCard}>
                   <Text style={styles.reviewTitle}>Review mistakes</Text>
                   {wrongResults.map((r, i) => {
@@ -1209,11 +1499,40 @@ export default function PracticeScreen() {
               {savingRewards ? (
                 <ActivityIndicator color={palette.muted} style={{ marginTop: 12 }} />
               ) : (
-                <Pressable
-                  onPress={goHome}
-                  style={({ pressed }) => [styles.homeButton, pressed && styles.homeButtonPressed]}>
-                  <Text style={styles.homeButtonText}>Back to Home</Text>
-                </Pressable>
+                <>
+                  {isWritingDrill ? (
+                    <Pressable
+                      onPress={() => {
+                        const weakTypes = writingReviewResults
+                          .filter((r) => !r.correct)
+                          .map((r) =>
+                            r.practiceQuestion.kind === 'writing'
+                              ? r.practiceQuestion.question.type
+                              : null,
+                          )
+                          .filter((t): t is WritingDrillQuestionType => Boolean(t));
+                        void queueWritingTypesForGrammarFocus(weakTypes).then(() => {
+                          Alert.alert(
+                            'Listo',
+                            'Javi añadirá estos tipos de escritura a tu próximo drill de gramática.',
+                          );
+                        });
+                      }}
+                      style={({ pressed }) => [
+                        styles.practiceMoreButton,
+                        pressed && styles.homeButtonPressed,
+                      ]}>
+                      <Text style={styles.practiceMoreButtonText}>Practicar más</Text>
+                    </Pressable>
+                  ) : null}
+                  <Pressable
+                    onPress={goHome}
+                    style={({ pressed }) => [styles.homeButton, pressed && styles.homeButtonPressed]}>
+                    <Text style={styles.homeButtonText}>
+                      {isWritingDrill ? 'Volver al inicio' : 'Back to Home'}
+                    </Text>
+                  </Pressable>
+                </>
               )}
             </View>
           ) : null}
@@ -1224,6 +1543,9 @@ export default function PracticeScreen() {
 }
 
 function formatPracticeQuestionType(q: PracticeQuestion): string {
+  if (q.kind === 'writing') {
+    return q.question.instruction;
+  }
   if (q.kind === 'quick' && q.question.wordOrderSubtype) {
     return formatWordOrderQuestionType(q.question);
   }
@@ -1316,6 +1638,45 @@ const styles = StyleSheet.create({
   progressFill: {
     height: 4,
     backgroundColor: palette.accent,
+  },
+  writingTimerTrack: {
+    height: 4,
+    backgroundColor: palette.surfaceBorder,
+    borderRadius: 2,
+    overflow: 'hidden',
+    marginBottom: 12,
+  },
+  writingTimerFill: {
+    height: 4,
+    borderRadius: 2,
+  },
+  pendingNote: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    lineHeight: 24,
+    marginBottom: 18,
+  },
+  writingFeedback: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: palette.blue,
+    marginTop: 4,
+  },
+  practiceMoreButton: {
+    marginTop: 12,
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  practiceMoreButtonText: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.accent,
   },
   card: {
     backgroundColor: palette.surface,

@@ -394,7 +394,8 @@ export const WEAK_AREA_DRILL_SLOTS = 7;
 
 export type PracticeQuestion =
   | { kind: 'quick'; question: import('@/lib/claude').QuickFireQuestion }
-  | { kind: 'vocab'; question: SavedVocabQuestion };
+  | { kind: 'vocab'; question: SavedVocabQuestion }
+  | { kind: 'writing'; question: import('@/lib/writing-drill').WritingDrillQuestion };
 
 function shuffle<T>(items: T[]): T[] {
   const arr = [...items];
@@ -415,9 +416,12 @@ export function mixPracticeQuestions(
 }
 
 export function practiceQuestionPrompt(p: PracticeQuestion): string {
-  return p.kind === 'quick' ? p.question.prompt : p.question.prompt;
+  if (p.kind === 'writing') {
+    return `${p.question.instruction}\n${p.question.prompt}`;
+  }
+  return p.question.prompt;
 }
 
 export function practiceQuestionId(p: PracticeQuestion): string {
-  return p.kind === 'quick' ? p.question.id : p.question.id;
+  return p.question.id;
 }

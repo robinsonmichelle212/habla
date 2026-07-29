@@ -10,12 +10,18 @@ import {
   resolveCurriculumDrillGate,
   type CurriculumDrillGate,
 } from '@/lib/curriculum-drill-gate';
+import type {
+  WritingDrillEvaluationItem,
+  WritingDrillQuestion,
+} from '@/lib/writing-drill';
 import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
 import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 import type { SpanishWrappedReport } from '@/lib/wrapped-data';
 import {
   READ_TEXT_TYPE_LABELS,
+  READ_SHORT_QUESTION_RULES,
+  enforceMaxTenSpanishWords,
   type ReadComprehensionEvaluation,
   type ReadDifficultySpec,
   type ReadTextType,
@@ -49,7 +55,7 @@ export function lessonKindToLessonType(kind: LessonKindId): LessonType {
   }
 }
 
-export type PracticeDrillType = 'grammar' | 'vocabulary' | 'fluency';
+export type PracticeDrillType = 'grammar' | 'writing' | 'fluency';
 
 export type JaviMessage = { role: 'user' | 'assistant'; content: string };
 
@@ -138,7 +144,10 @@ PHASE 1 — EXPLAIN (warm-up messages):
 - This is a reading comprehension lesson. The learner has read an authentic Spanish text.
 - Discuss the text, introduce 2–3 vocabulary items from it using memorable keyword mnemonics.
 - Add cultural context where relevant. Ask for opinions and personal connections.
-- Do NOT read the full text aloud — reading comprehension is the skill.`;
+- Do NOT read the full text aloud — reading comprehension is the skill.
+
+${READ_SHORT_QUESTION_RULES}
+When you ask a discussion question, ask exactly ONE short Spanish question (≤10 words).`;
   }
 }
 
@@ -444,8 +453,8 @@ function drillTypeToHumanLabel(drillType: PracticeDrillType): string {
   switch (drillType) {
     case 'grammar':
       return 'Grammar drill';
-    case 'vocabulary':
-      return 'Vocabulary drill';
+    case 'writing':
+      return 'Writing drill';
     case 'fluency':
       return 'Fluency drill';
   }
@@ -2525,6 +2534,207 @@ Return JSON exactly:
   };
 }
 
+export async function generateWritingDrillQuestions(
+  errorDnaTargets: ErrorDNAInput[] = [],
+): Promise<WritingDrillQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
+  const errorHints = errorDnaTargets
+    .map((t) => t.error?.trim())
+    .filter(Boolean)
+    .slice(0, 4);
+
+  const system = `You are Javi, a Spanish tutor creating a timed writing drill.
+Return ONLY valid JSON. No markdown. No extra keys.
+CRITICAL: Every instruction and prompt must be 100% Spanish. Zero English words.`;
+
+  const user = `Generate exactly 10 writing drill questions for curriculum week ${gate.weekNumber}.
+
+${formatCurriculumGatePrompt(gate)}
+${formatVocabThemeGatePrompt(gate.coveredVocabThemes)}
+
+${
+  errorHints.length
+    ? `Prefer correct_rewrite errors drawn from these recurring learner mistakes:\n${errorHints.map((e) => `- ${e}`).join('\n')}`
+    : ''
+}
+
+Generate exactly 10 questions in this order:
+1-3: rewrite_past — instruction "Escribe esta frase en pasado:" + present-tense Spanish sentence. expectedAnswer = correct past rewrite (preterite/imperfect only if unlocked).
+4-5: complete_sentence — instruction "Completa la frase:" + Spanish sentence with ___. expectedAnswer = missing word/phrase.
+6-7: free_response — instruction "Responde en 1-2 frases:" + personal Spanish question about immediate real life. expectedAnswer = a short natural model answer (not the only answer).
+8-9: correct_rewrite — instruction "Hay un error en esta frase. Corrígelo y reescríbela:" + Spanish sentence with one clear error. expectedAnswer = corrected sentence.
+10: order_words — instruction "Ordena estas palabras para formar una frase correcta:" + 5-6 Spanish words separated by " / ". expectedAnswer = correct sentence.
+
+Rules:
+- Spanish only in instruction and prompt fields.
+- High-frequency vocabulary from covered themes only.
+- Never use locked grammar/tenses.
+- Keep prompts short so the learner can write under a 30-second timer.
+
+Return JSON exactly:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "rewrite_past",
+      "instruction": "Escribe esta frase en pasado:",
+      "prompt": "...",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."]
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 2200,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as {
+    questions?: WritingDrillQuestion[];
+  };
+  if (!Array.isArray(parsed.questions)) return [];
+
+  const orderTypes: WritingDrillQuestion['type'][] = [
+    'rewrite_past',
+    'rewrite_past',
+    'rewrite_past',
+    'complete_sentence',
+    'complete_sentence',
+    'free_response',
+    'free_response',
+    'correct_rewrite',
+    'correct_rewrite',
+    'order_words',
+  ];
+
+  const defaultInstructions: Record<WritingDrillQuestion['type'], string> = {
+    rewrite_past: 'Escribe esta frase en pasado:',
+    complete_sentence: 'Completa la frase:',
+    free_response: 'Responde en 1-2 frases:',
+    correct_rewrite: 'Hay un error en esta frase. Corrígelo y reescríbela:',
+    order_words: 'Ordena estas palabras para formar una frase correcta:',
+  };
+
+  return parsed.questions
+    .filter((q) => q && typeof q.prompt === 'string' && typeof q.expectedAnswer === 'string')
+    .slice(0, 10)
+    .map((q, i) => {
+      const type = orderTypes[i] ?? 'free_response';
+      return {
+        id: String(q.id ?? i + 1),
+        type,
+        instruction:
+          typeof q.instruction === 'string' && q.instruction.trim()
+            ? q.instruction.trim()
+            : defaultInstructions[type],
+        prompt: q.prompt.trim(),
+        expectedAnswer: q.expectedAnswer.trim(),
+        acceptableAnswers: Array.isArray(q.acceptableAnswers)
+          ? q.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+          : undefined,
+      };
+    });
+}
+
+export async function evaluateWritingDrillBatch(
+  questions: WritingDrillQuestion[],
+  answers: string[],
+): Promise<WritingDrillEvaluationItem[]> {
+  const anthropic = getClient();
+  const model = getModel();
+  const gate = await resolveCurriculumDrillGate();
+
+  const payload = questions.map((q, i) => ({
+    id: q.id,
+    type: q.type,
+    instruction: q.instruction,
+    prompt: q.prompt,
+    expectedAnswer: q.expectedAnswer,
+    acceptableAnswers: q.acceptableAnswers ?? [],
+    userAnswer: answers[i] ?? '',
+  }));
+
+  const system = `You are Javi evaluating a timed Spanish writing drill.
+Return ONLY valid JSON. No markdown.
+Feedback must be ONE short sentence in Spanish only — never English.`;
+
+  const user = `Evaluate all ${payload.length} responses in one batch.
+
+${formatCurriculumGatePrompt(gate)}
+
+For each item:
+- correct: true if the answer is solid (grammar + meaning). Free responses: true when relevant, grammatical enough, and shows vocabulary range.
+- partialCredit: true when not fully correct but clearly on the right track (e.g. right tense but small error, or 1 of 2 sentences good). Never both correct and partialCredit true.
+- feedback: maximum one short Spanish sentence.
+- modelAnswer: the best short Spanish model answer (use expectedAnswer when suitable).
+
+Items:
+${JSON.stringify(payload)}
+
+Return JSON exactly:
+{
+  "results": [
+    {
+      "questionId": "1",
+      "correct": true,
+      "partialCredit": false,
+      "feedback": "Muy bien, usaste el pretérito correctamente.",
+      "modelAnswer": "..."
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1800,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as {
+    results?: WritingDrillEvaluationItem[];
+  };
+  const results = Array.isArray(parsed.results) ? parsed.results : [];
+
+  return questions.map((q, i) => {
+    const match =
+      results.find((r) => String(r.questionId) === String(q.id)) ?? results[i];
+    const userAnswer = (answers[i] ?? '').trim();
+    if (!match) {
+      return {
+        questionId: q.id,
+        correct: false,
+        partialCredit: Boolean(userAnswer),
+        feedback: userAnswer
+          ? 'Buen intento — revisa la gramática otra vez.'
+          : 'No respondiste a tiempo.',
+        modelAnswer: q.expectedAnswer,
+      };
+    }
+    const correct = match.correct === true;
+    return {
+      questionId: q.id,
+      correct,
+      partialCredit: !correct && match.partialCredit === true,
+      feedback:
+        typeof match.feedback === 'string' && match.feedback.trim()
+          ? match.feedback.trim()
+          : correct
+            ? '¡Muy bien!'
+            : 'Revisa esta respuesta.',
+      modelAnswer:
+        typeof match.modelAnswer === 'string' && match.modelAnswer.trim()
+          ? match.modelAnswer.trim()
+          : q.expectedAnswer,
+    };
+  });
+}
+
 function readTextTypePromptBlock(textType: ReadTextType): string {
   switch (textType) {
     case 'news':
@@ -2586,11 +2796,19 @@ Return JSON exactly:
 }
 
 Rules:
-- Exactly 2-3 comprehension questions testing understanding (not just memory): gist, opinion, personal connection.
+- Exactly 2-3 comprehension questions testing understanding (not just memory): gist, detail, opinion, or personal connection.
 - vocabularyHighlights: exactly 3 useful words from the text.
 - grammarPatterns: 1-2 patterns worth noticing.
 - culturalNote: only if text involves Spanish culture, food, places or people.
-- Authentic natural Spanish. Not political.`;
+- Authentic natural Spanish. Not political.
+
+${READ_SHORT_QUESTION_RULES}
+
+Comprehension question format rules:
+- promptSpanish: maximum 10 words, one idea, simple ¿Qué/Por qué/Cómo/Cuándo/Dónde/Has…? structure.
+- Do NOT put compound questions joined with "y".
+- Prefer omitting promptEnglish; if included keep it under 8 English words.
+- Examples: "¿De qué trata el texto?", "¿Qué pasó al final?", "¿Quién es el personaje principal?"`;
 
   const response = await anthropic.messages.create({
     model,
@@ -2623,7 +2841,7 @@ Rules:
           .slice(0, 3)
           .map((q, i) => ({
             id: String(q.id ?? i + 1),
-            promptSpanish: String(q.promptSpanish).trim(),
+            promptSpanish: enforceMaxTenSpanishWords(String(q.promptSpanish).trim()),
             promptEnglish: q.promptEnglish ? String(q.promptEnglish).trim() : undefined,
           }))
       : [],
@@ -2699,13 +2917,17 @@ export async function generateReadDiscussionOpening(
 
 The learner has read the text and answered comprehension questions. Start the voice discussion phase.
 Introduce 2-3 vocabulary words from the text using keyword mnemonics: ${vocabList}
-Ask an opinion question related to the topic. End with Translate: line.`;
+
+${READ_SHORT_QUESTION_RULES}
+Ask exactly ONE short opinion question related to the topic (≤10 Spanish words).
+Keep the whole opening to 2 short Spanish sentences + one short question + Translate: line.`;
 
   const user = `Text read: "${session.title}"
 Topic: ${session.topic}
 Type: ${READ_TEXT_TYPE_LABELS[session.textType]}
 
-Open the discussion warmly in Spanish. Reference the text without re-reading it all.`;
+Open the discussion warmly in Spanish. Reference the text without re-reading it all.
+End with one short question like "¿Qué opinas del tema?"`;
 
   const response = await anthropic.messages.create({
     model,
@@ -2731,9 +2953,12 @@ READING DISCUSSION — continue the conversation about this text:
 Title: ${session.title}
 Topic: ${session.topic}
 
-Keep responses to 2-3 Spanish sentences + Translate: line.
+Keep responses to 1-2 short Spanish sentences + Translate: line.
 Discuss cultural context, opinions, and vocabulary from the text.
-If slang or informal expressions appear, explain them briefly.`;
+If slang or informal expressions appear, explain them briefly.
+
+${READ_SHORT_QUESTION_RULES}
+Ask at most one follow-up question per reply, maximum 10 Spanish words, one idea only.`;
 
   const response = await anthropic.messages.create({
     model,

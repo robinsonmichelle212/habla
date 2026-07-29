@@ -138,3 +138,58 @@ export type ReadComprehensionEvaluation = {
   feedback: string;
   responses: { questionId: string; feedback: string; score: number }[];
 };
+
+/** Injected into every Read with Javi question-generation prompt. */
+export const READ_SHORT_QUESTION_RULES = `CRITICAL: All discussion questions must be maximum 10 words in Spanish.
+One idea per question only.
+Use simple direct question structures.
+Never combine two questions into one.
+The user must be able to read and understand the full question at a glance.
+Short questions get better responses than long questions.
+
+Same rules for comprehension-check questions:
+- Maximum 10 words in Spanish
+- One idea only
+- Simple structure only: ¿Qué…? ¿Por qué…? ¿Cómo…? ¿Cuándo…? ¿Dónde…? ¿Has…?
+
+Good examples:
+- "¿De qué trata el texto?"
+- "¿Qué pasó al final?"
+- "¿Quién es el personaje principal?"
+- "¿Dónde tiene lugar la historia?"
+- "¿Qué opinas del tema?"
+
+Bad (too long / compound — never do this):
+- "¿Puedes explicarme con más detalle qué opinas sobre el tema principal del texto y cómo se relaciona con tu vida personal?"`;
+
+/** Count Spanish words (punctuation-insensitive). */
+export function countSpanishWords(text: string): number {
+  return text
+    .trim()
+    .replace(/[¿?¡!.,;:'"«»()]/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean).length;
+}
+
+/**
+ * Soft safety net: if Claude returns an overlong question, keep the first
+ * clause / first 10 words so the UI stays glanceable.
+ */
+export function enforceMaxTenSpanishWords(question: string): string {
+  const trimmed = question.trim();
+  if (!trimmed) return trimmed;
+  if (countSpanishWords(trimmed) <= 10) return trimmed;
+
+  const firstClause = trimmed.split(/\s+y\s+/i)[0]?.trim() ?? trimmed;
+  if (countSpanishWords(firstClause) <= 10 && firstClause.length >= 8) {
+    return firstClause.endsWith('?') ? firstClause : `${firstClause}?`;
+  }
+
+  const words = trimmed
+    .replace(/[¿?¡!]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 10);
+  return `¿${words.join(' ').replace(/^¿/, '')}?`.replace(/\?\?+$/, '?');
+}
