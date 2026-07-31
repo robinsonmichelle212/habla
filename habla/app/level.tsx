@@ -3,6 +3,10 @@ import { ErrorDnaSection } from '@/components/error-dna-section';
 import { MilestonesSection } from '@/components/milestones-section';
 import { MilestoneQuizPendingSection } from '@/components/milestone-quiz-pending-section';
 import { ResetCurriculumModal } from '@/components/reset-curriculum-modal';
+import {
+  ThemedVocabularyReference,
+  themedVocabularySummary,
+} from '@/components/themed-vocabulary-reference';
 import { useDemoMode } from '@/contexts/demo-mode-context';
 import {
   getArchivedErrorDNA,
@@ -19,25 +23,16 @@ import {
 } from '@/lib/grammar-curriculum';
 import { getMilestoneHistory, MILESTONE_DEFINITIONS } from '@/lib/milestones';
 import {
-  getCoveredVocabThemesFromStorage,
   getCoveredYourDayTopicsFromStorage,
-  VOCAB_THEMES,
   YOUR_DAY_TOPICS,
 } from '@/lib/lesson-focus';
 import {
-  getActiveVocabulary,
-  getMasteredVocabulary,
   getSavedVocabulary,
   getVocabStats,
-  vocabSourceLabel,
   type SavedVocabWord,
   type VocabStats,
 } from '@/lib/saved-vocabulary';
 import {
-  averageScoreForTopic,
-} from '@/lib/level-progress';
-import {
-  getCoveredVocabThemes,
   getLessonHistory,
 } from '@/lib/practice-storage';
 import {
@@ -79,13 +74,6 @@ function isCovered(topic: string, coveredSet: Set<string>): boolean {
   return coveredSet.has(topic.toLowerCase());
 }
 
-function scoreColor(score: number | null): string {
-  if (score == null) return palette.muted;
-  if (score >= 80) return palette.green;
-  if (score >= 65) return palette.amber;
-  return palette.red;
-}
-
 export default function LevelScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -94,7 +82,6 @@ export default function LevelScreen() {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [milestonesAchieved, setMilestonesAchieved] = useState(0);
   const [grammarCurriculum, setGrammarCurriculum] = useState<GrammarCurriculumState | null>(null);
-  const [vocabCovered, setVocabCovered] = useState<Set<string>>(new Set());
   const [yourDayCovered, setYourDayCovered] = useState<Set<string>>(new Set());
   const [history, setHistory] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
   const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
@@ -126,7 +113,6 @@ export default function LevelScreen() {
         try {
           const [
             lessonHistory,
-            vocabStorage,
             yourDayStorage,
             curriculum,
             stats,
@@ -139,7 +125,6 @@ export default function LevelScreen() {
             onboardingProfile,
           ] = await Promise.all([
             getLessonHistory(),
-            getCoveredVocabThemesFromStorage(),
             getCoveredYourDayTopicsFromStorage(),
             resolveGrammarCurriculum(),
             getVocabStats(),
@@ -153,16 +138,10 @@ export default function LevelScreen() {
           ]);
           if (cancelled) return;
 
-          const vocabFromHistory = getCoveredVocabThemes(lessonHistory);
-
-          const vocabSet = new Set(
-            [...vocabStorage, ...vocabFromHistory].map((t) => t.toLowerCase()),
-          );
           const yourDaySet = new Set(yourDayStorage.map((t) => t.toLowerCase()));
 
           setHistory(lessonHistory);
           setGrammarCurriculum(curriculum);
-          setVocabCovered(vocabSet);
           setYourDayCovered(yourDaySet);
           setVocabStats(stats);
           setSavedWords(words);
@@ -199,16 +178,13 @@ export default function LevelScreen() {
     });
   };
 
-  const vocabCoveredCount = VOCAB_THEMES.filter((t) => isCovered(t, vocabCovered)).length;
   const yourDayCoveredCount = YOUR_DAY_TOPICS.filter((t) => isCovered(t, yourDayCovered)).length;
   const grammarDaysLeft = grammarCurriculum ? daysRemainingInWeek(grammarCurriculum) : 0;
   const errorDnaSummary =
     errorDna.length > 0
       ? `${errorDna.length} recurring pattern${errorDna.length === 1 ? '' : 's'} tracked`
       : 'No patterns tracked yet';
-  const vocabularySummary = vocabStats
-    ? `${vocabStats.saved} words saved · ${vocabStats.mastered} mastered`
-    : 'Save words during lessons';
+  const vocabularySummary = themedVocabularySummary(history, vocabStats?.saved ?? savedWords.length);
   const grammarSummary = grammarCurriculum
     ? `Week ${grammarCurriculum.currentWeek} of ${TOTAL_CURRICULUM_WEEKS} — ${grammarCurriculum.currentTopic} · ${grammarDaysLeft} day${grammarDaysLeft === 1 ? '' : 's'} left`
     : `${TOTAL_CURRICULUM_WEEKS}-week grammar path`;
@@ -269,20 +245,12 @@ export default function LevelScreen() {
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection
-            title="Vocabulary Dashboard"
+            title="Vocabulary 📚"
             summary={vocabularySummary}
             expanded={!!expandedSections.vocabulary}
             onToggle={() => toggleSection('vocabulary')}>
-            <VocabSection
-              covered={vocabCovered}
-              coveredCount={vocabCoveredCount}
-              history={history}
-              embedded
-            />
+            <ThemedVocabularyReference savedWords={savedWords} history={history} />
             <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} embedded />
-            {vocabStats ? (
-              <SavedVocabularySection stats={vocabStats} words={savedWords} embedded />
-            ) : null}
           </CollapsibleProfileSection>
 
           <CollapsibleProfileSection
@@ -432,49 +400,6 @@ function SettingsSection({
   );
 }
 
-function VocabSection({
-  covered,
-  coveredCount,
-  history,
-  embedded = false,
-}: {
-  covered: Set<string>;
-  coveredCount: number;
-  history: Awaited<ReturnType<typeof getLessonHistory>>;
-  embedded?: boolean;
-}) {
-  return (
-    <View style={embedded ? styles.embeddedBlock : styles.section}>
-      {!embedded ? <Text style={styles.sectionTitle}>Vocabulary progress</Text> : null}
-      <View style={styles.card}>
-        <ProgressBarLabel count={coveredCount} total={VOCAB_THEMES.length} label="themes covered" />
-        <View style={styles.progressTrack}>
-          <View
-            style={[styles.progressFill, { width: `${(coveredCount / VOCAB_THEMES.length) * 100}%` }]}
-          />
-        </View>
-        <View style={styles.topicList}>
-          {VOCAB_THEMES.map((theme) => {
-            const done = isCovered(theme, covered);
-            const avg = done ? averageScoreForTopic(history, theme, 'vocabulary') : null;
-            return (
-              <View key={theme} style={styles.topicRow}>
-                <Text style={styles.topicIcon}>{done ? '✅' : '⬜'}</Text>
-                <Text style={styles.topicLabel} numberOfLines={2}>
-                  {theme}
-                </Text>
-                {done && avg != null ? (
-                  <Text style={[styles.topicScore, { color: scoreColor(avg) }]}>{avg}%</Text>
-                ) : null}
-              </View>
-            );
-          })}
-        </View>
-      </View>
-    </View>
-  );
-}
-
 function YourDaySection({
   covered,
   coveredCount,
@@ -515,103 +440,11 @@ function YourDaySection({
   );
 }
 
-function SavedVocabularySection({
-  stats,
-  words,
-  embedded = false,
-}: {
-  stats: VocabStats;
-  words: SavedVocabWord[];
-  embedded?: boolean;
-}) {
-  const active = getActiveVocabulary(words);
-  const mastered = getMasteredVocabulary(words);
-
-  return (
-    <View style={embedded ? styles.embeddedBlock : styles.section}>
-      {!embedded ? <Text style={styles.sectionTitle}>Saved vocabulary</Text> : null}
-      <View style={styles.card}>
-        <View style={styles.statGrid}>
-          <StatBox label="Words saved" value={String(stats.saved)} />
-          <StatBox label="Mastered" value={String(stats.mastered)} valueColor={palette.green} />
-          <StatBox label="In progress" value={String(stats.inProgress)} valueColor={palette.amber} />
-        </View>
-        <Text style={styles.vocabStreakLine}>
-          Longest mastery streak: {stats.longestMasteryStreak} word
-          {stats.longestMasteryStreak === 1 ? '' : 's'} in a row
-        </Text>
-
-        {active.length ? (
-          <>
-            <Text style={styles.listHeader}>Active words</Text>
-            {active.map((w) => (
-              <VocabWordRow key={w.spanish} word={w} />
-            ))}
-          </>
-        ) : (
-          <Text style={styles.mutedListText}>
-            Save words during a lesson to drill them in practice.
-          </Text>
-        )}
-
-        {mastered.length ? (
-          <>
-            <Text style={[styles.listHeader, { marginTop: 16 }]}>Mastered</Text>
-            {mastered.map((w) => (
-              <VocabWordRow key={`m-${w.spanish}`} word={w} mastered />
-            ))}
-          </>
-        ) : null}
-      </View>
-    </View>
-  );
-}
-
-function VocabWordRow({ word, mastered = false }: { word: SavedVocabWord; mastered?: boolean }) {
-  const progress = mastered ? 5 : word.consecutiveCorrect;
-  return (
-    <View style={styles.vocabWordRow}>
-      <View style={styles.vocabWordTop}>
-        <Text style={styles.vocabSpanish}>{word.spanish}</Text>
-        <Text style={[styles.vocabBadge, mastered ? styles.vocabBadgeMastered : styles.vocabBadgeActive]}>
-          {mastered ? '✅ Mastered' : `${progress}/5`}
-        </Text>
-      </View>
-      <Text style={styles.vocabEnglish}>{word.english}</Text>
-      {word.exampleSpanish ? (
-        <Text style={styles.vocabExample}>{word.exampleSpanish}</Text>
-      ) : null}
-      <Text style={styles.vocabMeta}>
-        {word.difficulty}
-        {vocabSourceLabel(word) ? ` · ${vocabSourceLabel(word)}` : ''}
-        {' · '}seen {word.timesSeen}× · {word.timesCorrect} correct
-      </Text>
-    </View>
-  );
-}
-
 function ProgressBarLabel({ count, total, label }: { count: number; total: number; label: string }) {
   return (
     <Text style={styles.progressLabel}>
       {count} of {total} {label}
     </Text>
-  );
-}
-
-function StatBox({
-  label,
-  value,
-  valueColor = palette.text,
-}: {
-  label: string;
-  value: string;
-  valueColor?: string;
-}) {
-  return (
-    <View style={styles.statBox}>
-      <Text style={[styles.statValue, { color: valueColor }]}>{value}</Text>
-      <Text style={styles.statLabel}>{label}</Text>
-    </View>
   );
 }
 
