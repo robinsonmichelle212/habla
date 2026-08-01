@@ -97,6 +97,37 @@ export function previousMonthKey(from: Date = new Date()): MonthKey {
   return monthKeyFromDate(d);
 }
 
+/** Display month for a wrap = the month after the data month (July Wrapped uses June data). */
+export function wrapDisplayMonthKey(dataMonthKey: MonthKey): MonthKey {
+  const { year, monthIndex } = parseMonthKey(dataMonthKey);
+  return monthKeyFromDate(new Date(year, monthIndex + 1, 1));
+}
+
+export function dataMonthKeyForDisplayMonth(displayMonthKey: MonthKey): MonthKey {
+  const { year, monthIndex } = parseMonthKey(displayMonthKey);
+  return monthKeyFromDate(new Date(year, monthIndex - 1, 1));
+}
+
+export function currentMonthKey(from: Date = new Date()): MonthKey {
+  return monthKeyFromDate(from);
+}
+
+export function parseMonthKeyParts(monthKey: MonthKey): { year: number; monthIndex: number } {
+  return parseMonthKey(monthKey);
+}
+
+/** Short month name for titles, e.g. "July". */
+export function monthNameOnly(monthKey: MonthKey): string {
+  const [y, m] = monthKey.split('-').map(Number);
+  if (!y || !m) return monthKey;
+  return new Date(y, m - 1, 1).toLocaleString(undefined, { month: 'long' });
+}
+
+export function wrappedCardTitle(report: Pick<SpanishWrappedReport, 'monthKey' | 'monthLabel'>): string {
+  const displayKey = wrapDisplayMonthKey(report.monthKey);
+  return `${monthNameOnly(displayKey)} Wrapped 🎉`;
+}
+
 export function nextMonthFirstDay(from: Date = new Date()): Date {
   return new Date(from.getFullYear(), from.getMonth() + 1, 1);
 }
@@ -456,8 +487,8 @@ export async function buildWrappedReport(
 
   return {
     monthKey,
-    monthLabel: monthLabel(monthKey),
-    generatedAt: formatLocalDate(),
+    monthLabel: monthLabel(wrapDisplayMonthKey(monthKey)),
+    generatedAt: new Date().toISOString(),
     seenAt: null,
 
     totalLessons: monthLessons.length,

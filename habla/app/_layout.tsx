@@ -61,7 +61,7 @@ function WrappedBootstrap() {
       await scheduleWrappedMonthlyNotification();
       const created = await ensurePreviousMonthWrapped();
       if (created) {
-        await notifyWrappedReadyNow();
+        await notifyWrappedReadyNow(created.monthKey);
       }
     })();
 

@@ -19,8 +19,8 @@ import {
 } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import { getWrappedForMonth, loadOrGenerateWrapped } from '@/lib/wrapped-storage';
-import { previousMonthKey } from '@/lib/wrapped-data';
+import { getWrappedForMonth, loadOrGenerateWrapped, emptyWrappedMessage } from '@/lib/wrapped-storage';
+import { monthNameOnly, previousMonthKey, wrappedCardTitle } from '@/lib/wrapped-data';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 const SLIDE_HEIGHT = SCREEN_HEIGHT * 0.92;
@@ -133,11 +133,12 @@ export default function WrappedScreen() {
   }
 
   if (!report) {
+    const dataMonth = typeof month === 'string' && month ? month : previousMonthKey();
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.empty}>
           <Text style={styles.emptyTitle}>No Wrapped yet</Text>
-          <Text style={styles.emptyText}>Complete lessons this month to unlock your recap.</Text>
+          <Text style={styles.emptyText}>{emptyWrappedMessage(dataMonth)}</Text>
           <Pressable onPress={() => router.back()} style={styles.closeBtn}>
             <Text style={styles.closeBtnText}>Go back</Text>
           </Pressable>
@@ -147,6 +148,7 @@ export default function WrappedScreen() {
   }
 
   const activeSummary = `${report.totalDaysActive} days of Spanish. Here's what you achieved.`;
+  const dataMonthName = monthNameOnly(report.monthKey);
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
@@ -164,7 +166,7 @@ export default function WrappedScreen() {
         <Slide index={0} bg="#1a0f14">
           <Text style={styles.coverEmoji}>🇪🇸</Text>
           <Text style={styles.coverTitle}>Your Spanish Wrapped</Text>
-          <Text style={styles.coverMonth}>{report.monthLabel}</Text>
+          <Text style={styles.coverMonth}>{wrappedCardTitle(report)}</Text>
           <Text style={styles.coverSub}>{activeSummary}</Text>
           <Text style={styles.logo}>Habla</Text>
         </Slide>
@@ -196,7 +198,7 @@ export default function WrappedScreen() {
         <Slide index={3} bg="#0f141a">
           <Text style={styles.slideTitle}>Your improvement</Text>
           <Text style={styles.bodyLine}>
-            You started {report.monthLabel.split(' ')[0]} at {report.averageScoreStart}%.
+            You started {dataMonthName} at {report.averageScoreStart}%.
           </Text>
           <Text style={styles.bodyLine}>You ended at {report.averageScoreEnd}%.</Text>
           <Text style={styles.improvement}>

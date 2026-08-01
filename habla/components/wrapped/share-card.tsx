@@ -1,4 +1,4 @@
-import type { SpanishWrappedReport } from '@/lib/wrapped-data';
+import { wrappedCardTitle, type SpanishWrappedReport } from '@/lib/wrapped-data';
 import { forwardRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -19,7 +19,7 @@ export const WrappedShareCard = forwardRef<View, Props>(function WrappedShareCar
     <View ref={ref} style={styles.card} collapsable={false}>
       <Text style={styles.brand}>Habla 🇪🇸</Text>
       <Text style={styles.headline}>I&apos;ve been learning Spanish with Habla</Text>
-      <Text style={styles.month}>{report.monthLabel}</Text>
+      <Text style={styles.month}>{wrappedCardTitle(report)}</Text>
 
       <View style={styles.statsRow}>
         <View style={styles.stat}>

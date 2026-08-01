@@ -1,7 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { monthLabel, previousMonthKey } from '@/lib/wrapped-data';
+import { monthNameOnly, previousMonthKey, wrapDisplayMonthKey } from '@/lib/wrapped-data';
 
 const WRAPPED_NOTIFICATION_ID = 'spanish-wrapped-monthly';
 
@@ -33,18 +33,21 @@ export async function scheduleWrappedMonthlyNotification(): Promise<void> {
   });
 }
 
-export async function notifyWrappedReadyNow(): Promise<void> {
+export async function notifyWrappedReadyNow(dataMonthKey?: string): Promise<void> {
   if (Platform.OS === 'web') return;
 
   const { status } = await Notifications.getPermissionsAsync();
   if (status !== 'granted') return;
 
-  const monthKey = previousMonthKey();
+  const dataKey = dataMonthKey ?? previousMonthKey();
+  const displayKey = wrapDisplayMonthKey(dataKey);
+  const titleMonth = monthNameOnly(displayKey);
+
   await Notifications.scheduleNotificationAsync({
     content: {
-      title: `🎉 Your Spanish Wrapped for ${monthLabel(monthKey)} is ready!`,
-      body: 'See your lessons, streak, and improvement this month.',
-      data: { type: 'wrapped', monthKey },
+      title: `🎉 Your ${titleMonth} Wrapped is ready!`,
+      body: 'See your lessons, streak, and improvement.',
+      data: { type: 'wrapped', monthKey: dataKey },
     },
     trigger: null,
   });

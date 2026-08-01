@@ -18,8 +18,14 @@ import {
 } from '@/lib/practice-storage';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { hasLastSummary } from '@/lib/last-summary-storage';
-import { buildWrappedTeaser, monthLabel } from '@/lib/wrapped-data';
-import { getUnreadWrappedMonth, getWrappedHistory } from '@/lib/wrapped-storage';
+import { buildWrappedTeaser, currentMonthKey, monthNameOnly, previousMonthKey, wrappedCardTitle } from '@/lib/wrapped-data';
+import {
+  generateCurrentWrappedNow,
+  getMostRecentWrapped,
+  getUnreadWrappedMonth,
+  getWrappedHistory,
+  isWrappedOverdue,
+} from '@/lib/wrapped-storage';
 import * as Haptics from 'expo-haptics';
 import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
@@ -27,6 +33,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
+  Alert,
   Platform,
   Pressable,
   ScrollView,
@@ -44,7 +51,10 @@ export default function ProgressScreen() {
   const [lessons, setLessons] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
   const [drills, setDrills] = useState<Awaited<ReturnType<typeof getDrillHistory>>>([]);
   const [wrappedHistory, setWrappedHistory] = useState<Awaited<ReturnType<typeof getWrappedHistory>>>([]);
+  const [latestWrapped, setLatestWrapped] = useState<Awaited<ReturnType<typeof getMostRecentWrapped>>>(null);
   const [unreadWrapped, setUnreadWrapped] = useState<string | null>(null);
+  const [wrappedOverdue, setWrappedOverdue] = useState(false);
+  const [generatingWrapped, setGeneratingWrapped] = useState(false);
   const [selectedBandId, setSelectedBandId] = useState<LevelBandId | null>(null);
   const [todaysScoreInfo, setTodaysScoreInfo] = useState<TodayScoreInfo>({
     score: null,
@@ -84,18 +94,23 @@ export default function ProgressScreen() {
       void (async () => {
         try {
           await recoverUnregisteredSessions();
-          const [lessonHistory, drillHistory, wraps, unread, lastSummary] = await Promise.all([
-            getLessonHistory(),
-            getDrillHistory(),
-            getWrappedHistory(),
-            getUnreadWrappedMonth(),
-            hasLastSummary(),
-          ]);
+          const [lessonHistory, drillHistory, wraps, unread, lastSummary, latest, overdue] =
+            await Promise.all([
+              getLessonHistory(),
+              getDrillHistory(),
+              getWrappedHistory(),
+              getUnreadWrappedMonth(),
+              hasLastSummary(),
+              getMostRecentWrapped(),
+              isWrappedOverdue(),
+            ]);
           if (cancelled) return;
           setLessons(lessonHistory);
           setDrills(drillHistory);
           setWrappedHistory(wraps);
+          setLatestWrapped(latest);
           setUnreadWrapped(unread);
+          setWrappedOverdue(overdue);
           setShowLastSummaryLink(lastSummary);
           setTodaysScoreInfo(getTodayScoreInfo(lessonHistory, drillHistory));
           setTopScoreWeek(getTopScoreThisWeek(lessonHistory, drillHistory));
@@ -197,12 +212,14 @@ export default function ProgressScreen() {
               <Pressable
                 onPress={() => router.push({ pathname: '/wrapped', params: { month: unreadWrapped } })}
                 style={styles.wrappedPromo}>
-                <Text style={styles.wrappedPromoTitle}>Your Spanish Wrapped is ready 🎉</Text>
-                <Text style={styles.wrappedPromoText}>Tap to open {monthLabel(unreadWrapped)}</Text>
+                <Text style={styles.wrappedPromoTitle}>
+                  {latestWrapped ? wrappedCardTitle(latestWrapped) : 'Your Spanish Wrapped is ready 🎉'}
+                </Text>
+                <Text style={styles.wrappedPromoText}>Tap to open your monthly recap</Text>
               </Pressable>
             ) : null}
 
-            {wrappedTeaser && wrappedHistory.length === 0 && !unreadWrapped ? (
+            {wrappedTeaser && !latestWrapped && !unreadWrapped ? (
               <View style={styles.wrappedTeaser}>
                 <Text style={styles.wrappedTeaserTitle}>Your first Wrapped is coming</Text>
                 <Text style={styles.wrappedTeaserText}>
@@ -213,20 +230,70 @@ export default function ProgressScreen() {
               </View>
             ) : null}
 
-            {wrappedHistory.length > 0 ? (
+            {latestWrapped && !unreadWrapped ? (
               <View style={styles.wrappedHistorySection}>
-                <Text style={styles.wrappedHistoryTitle}>Spanish Wrapped</Text>
-                {wrappedHistory.map((w) => (
-                  <Pressable
-                    key={w.monthKey}
-                    onPress={() => router.push({ pathname: '/wrapped', params: { month: w.monthKey } })}
-                    style={styles.wrappedHistoryRow}>
-                    <Text style={styles.wrappedHistoryMonth}>{w.monthLabel}</Text>
-                    <Text style={styles.wrappedHistoryMeta}>
-                      {w.totalLessons} lessons · +{w.improvementPercent}% · {w.levelAtEnd}
-                    </Text>
-                  </Pressable>
-                ))}
+                <Pressable
+                  onPress={() =>
+                    router.push({ pathname: '/wrapped', params: { month: latestWrapped.monthKey } })
+                  }
+                  style={styles.wrappedHistoryRow}>
+                  <Text style={styles.wrappedHistoryMonth}>{wrappedCardTitle(latestWrapped)}</Text>
+                  <Text style={styles.wrappedHistoryMeta}>
+                    {latestWrapped.totalLessons} lessons · +{latestWrapped.improvementPercent}% ·{' '}
+                    {latestWrapped.levelAtEnd}
+                  </Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {wrappedOverdue ? (
+              <View style={styles.wrappedOverdueCard}>
+                <Text style={styles.wrappedOverdueText}>
+                  Your {monthNameOnly(currentMonthKey())} Wrapped is overdue
+                </Text>
+                <Pressable
+                  disabled={generatingWrapped}
+                  onPress={() => {
+                    void (async () => {
+                      setGeneratingWrapped(true);
+                      try {
+                        const created = await generateCurrentWrappedNow();
+                        if (!created) {
+                          Alert.alert(
+                            'No Wrapped yet',
+                            `No lessons recorded in ${monthNameOnly(previousMonthKey())}.\nStart learning to see your Wrapped next month! 🎉`,
+                          );
+                          setWrappedOverdue(false);
+                          return;
+                        }
+                        const [latest, unread, wraps] = await Promise.all([
+                          getMostRecentWrapped(),
+                          getUnreadWrappedMonth(),
+                          getWrappedHistory(),
+                        ]);
+                        setLatestWrapped(latest);
+                        setUnreadWrapped(unread);
+                        setWrappedHistory(wraps);
+                        setWrappedOverdue(false);
+                        if (Platform.OS !== 'web') {
+                          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                        }
+                      } finally {
+                        setGeneratingWrapped(false);
+                      }
+                    })();
+                  }}
+                  style={({ pressed }) => [
+                    styles.generateNowButton,
+                    pressed && styles.generateNowButtonPressed,
+                    generatingWrapped && styles.generateNowButtonDisabled,
+                  ]}>
+                  {generatingWrapped ? (
+                    <ActivityIndicator color="#0B0F14" />
+                  ) : (
+                    <Text style={styles.generateNowButtonText}>Generate now</Text>
+                  )}
+                </Pressable>
               </View>
             ) : null}
 
@@ -412,5 +479,32 @@ const styles = StyleSheet.create({
   },
   wrappedHistoryMonth: { fontSize: 15, fontWeight: '900', color: progressPalette.text },
   wrappedHistoryMeta: { fontSize: 13, fontWeight: '600', color: progressPalette.muted },
+  wrappedOverdueCard: {
+    backgroundColor: progressPalette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: progressPalette.surfaceBorder,
+    padding: 14,
+    marginBottom: 20,
+    gap: 10,
+  },
+  wrappedOverdueText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: progressPalette.muted,
+  },
+  generateNowButton: {
+    backgroundColor: '#A78BFA',
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  generateNowButtonPressed: { opacity: 0.85 },
+  generateNowButtonDisabled: { opacity: 0.6 },
+  generateNowButtonText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0B0F14',
+  },
   loadingWrap: { paddingVertical: 60, alignItems: 'center' },
 });
