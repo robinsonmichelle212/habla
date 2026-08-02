@@ -1,6 +1,20 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
+import {
+  buildConditionalSets,
+  buildEssentialGerundSet,
+  buildEssentialParticipleSet,
+  buildFutureSets,
+  buildImperativeSets,
+  buildImperfectSets,
+  buildPerfectSet,
+  buildPresentSets,
+  buildPreteriteVsImperfectSet,
+  buildReflexiveSets,
+  buildSerVsEstarSet,
+  buildSubjunctiveSets,
+} from '@/lib/memory-palace-tenses';
 
 const HISTORY_KEY = 'memoryPalaceHistory';
 
@@ -25,12 +39,33 @@ export type MemoryPalaceVerbSet = {
   slots: PalaceSlot[];
 };
 
+export type MemoryPalaceGroupKind = 'standard' | 'combined' | 'skip';
+
 export type MemoryPalaceWeekGroup = {
   id: string;
   weekLabel: string;
+  /** Short tense name for list UI, e.g. "Present tense" */
+  tenseLabel: string;
   minWeek: number;
   maxWeek: number;
   verbSets: MemoryPalaceVerbSet[];
+  kind: MemoryPalaceGroupKind;
+  /** Shown when kind === 'skip' and this is the current week */
+  skipMessage?: string;
+  /** e.g. "unlocks in Week 9" */
+  unlockHint: string;
+};
+
+export type MemoryPalaceGroupView = MemoryPalaceWeekGroup & {
+  unlocked: boolean;
+  isCurrent: boolean;
+};
+
+export type MemoryPalaceCatalog = {
+  currentWeek: number;
+  groups: MemoryPalaceGroupView[];
+  /** Skip message for the current curriculum week, if any */
+  currentSkipMessage: string | null;
 };
 
 const KETTLE = { itemEmoji: '🫖', itemName: 'the kettle' };
@@ -1003,66 +1038,183 @@ function buildIrregularPastParticiplePalace(name: string): MemoryPalaceVerbSet {
   };
 }
 
-export const MEMORY_PALACE_GROUPS: MemoryPalaceWeekGroup[] = [
-  {
-    id: 'week-3-4-preterite',
-    weekLabel: 'Week 3–4: Preterite irregulars',
-    minWeek: 3,
-    maxWeek: 4,
-    verbSets: [], // filled by buildVerbSetsForUser
-  },
-  {
-    id: 'week-21-22-gerund',
-    weekLabel: 'Week 21–22: Present participle (gerund)',
-    minWeek: 21,
-    maxWeek: 22,
-    verbSets: [],
-  },
-  {
-    id: 'week-23-24-past-participle',
-    weekLabel: 'Week 23–24: Past participle',
-    minWeek: 23,
-    maxWeek: 24,
-    verbSets: [],
-  },
-];
+export const SKIP_PALACE_MESSAGE =
+  'No hay palacio para esta semana — ¡sigue practicando con los verbos anteriores!';
 
 export function buildVerbSetsForUser(name: string): MemoryPalaceWeekGroup[] {
   const learnerName = name.trim() || 'friend';
+  const preteriteSets = [
+    buildIrPreterite(learnerName),
+    buildEstarPreterite(learnerName),
+    buildTenerPreterite(learnerName),
+    buildHacerPreterite(learnerName),
+    buildPoderPreterite(learnerName),
+    buildQuererPreterite(learnerName),
+    buildSaberPreterite(learnerName),
+    buildDarPreterite(learnerName),
+    buildVenirPreterite(learnerName),
+  ];
+
   return [
     {
+      id: 'week-1-2-present',
+      weekLabel: 'Week 1–2: Present tense',
+      tenseLabel: 'Present tense',
+      minWeek: 1,
+      maxWeek: 2,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 1',
+      verbSets: buildPresentSets(learnerName),
+    },
+    {
       id: 'week-3-4-preterite',
-      weekLabel: 'Week 3–4: Preterite irregulars',
+      weekLabel: 'Week 3–4: Preterite',
+      tenseLabel: 'Preterite',
       minWeek: 3,
       maxWeek: 4,
-      verbSets: [
-        buildIrPreterite(learnerName),
-        buildEstarPreterite(learnerName),
-        buildTenerPreterite(learnerName),
-        buildHacerPreterite(learnerName),
-        buildPoderPreterite(learnerName),
-        buildQuererPreterite(learnerName),
-        buildSaberPreterite(learnerName),
-        buildDarPreterite(learnerName),
-        buildVenirPreterite(learnerName),
-      ],
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 3',
+      verbSets: preteriteSets,
+    },
+    {
+      id: 'week-5-6-imperfect',
+      weekLabel: 'Week 5–6: Imperfect',
+      tenseLabel: 'Imperfect',
+      minWeek: 5,
+      maxWeek: 6,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 5',
+      verbSets: buildImperfectSets(learnerName),
+    },
+    {
+      id: 'week-7-8-contrast',
+      weekLabel: 'Week 7–8: Preterite vs Imperfect',
+      tenseLabel: 'Preterite vs Imperfect',
+      minWeek: 7,
+      maxWeek: 8,
+      kind: 'combined',
+      unlockHint: 'unlocks in Week 7',
+      verbSets: [buildPreteriteVsImperfectSet(learnerName)],
+    },
+    {
+      id: 'week-9-10-future',
+      weekLabel: 'Week 9–10: Future tense',
+      tenseLabel: 'Future tense',
+      minWeek: 9,
+      maxWeek: 10,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 9',
+      verbSets: buildFutureSets(learnerName),
+    },
+    {
+      id: 'week-11-12-conditional',
+      weekLabel: 'Week 11–12: Conditional',
+      tenseLabel: 'Conditional',
+      minWeek: 11,
+      maxWeek: 12,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 11',
+      verbSets: buildConditionalSets(learnerName),
+    },
+    {
+      id: 'week-13-14-subjunctive',
+      weekLabel: 'Week 13–14: Present subjunctive',
+      tenseLabel: 'Present subjunctive',
+      minWeek: 13,
+      maxWeek: 14,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 13',
+      verbSets: buildSubjunctiveSets(learnerName),
+    },
+    {
+      id: 'week-15-16-ser-estar',
+      weekLabel: 'Week 15–16: Ser vs Estar',
+      tenseLabel: 'Ser vs Estar',
+      minWeek: 15,
+      maxWeek: 16,
+      kind: 'combined',
+      unlockHint: 'unlocks in Week 15',
+      verbSets: [buildSerVsEstarSet(learnerName)],
+    },
+    {
+      id: 'week-17-18-por-para',
+      weekLabel: 'Week 17–18: Por vs Para',
+      tenseLabel: 'Por vs Para',
+      minWeek: 17,
+      maxWeek: 18,
+      kind: 'skip',
+      unlockHint: 'no palace this week',
+      skipMessage: SKIP_PALACE_MESSAGE,
+      verbSets: [],
+    },
+    {
+      id: 'week-19-20-reflexive',
+      weekLabel: 'Week 19–20: Reflexive verbs',
+      tenseLabel: 'Reflexive verbs',
+      minWeek: 19,
+      maxWeek: 20,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 19',
+      verbSets: buildReflexiveSets(learnerName),
     },
     {
       id: 'week-21-22-gerund',
       weekLabel: 'Week 21–22: Present participle (gerund)',
+      tenseLabel: 'Present participle',
       minWeek: 21,
       maxWeek: 22,
-      verbSets: [buildGerundPalace(learnerName), buildIrregularGerundPalace(learnerName)],
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 21',
+      verbSets: [
+        buildEssentialGerundSet(learnerName),
+        buildGerundPalace(learnerName),
+        buildIrregularGerundPalace(learnerName),
+      ],
     },
     {
       id: 'week-23-24-past-participle',
       weekLabel: 'Week 23–24: Past participle',
+      tenseLabel: 'Past participle',
       minWeek: 23,
       maxWeek: 24,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 23',
       verbSets: [
+        buildEssentialParticipleSet(learnerName),
         buildPastParticiplePalace(learnerName),
         buildIrregularPastParticiplePalace(learnerName),
       ],
+    },
+    {
+      id: 'week-25-26-perfect',
+      weekLabel: 'Week 25–26: Perfect tenses',
+      tenseLabel: 'Perfect tenses',
+      minWeek: 25,
+      maxWeek: 26,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 25',
+      verbSets: [buildPerfectSet(learnerName)],
+    },
+    {
+      id: 'week-27-29-prepositions',
+      weekLabel: 'Week 27–29: Prepositions',
+      tenseLabel: 'Prepositions',
+      minWeek: 27,
+      maxWeek: 29,
+      kind: 'skip',
+      unlockHint: 'no palace these weeks',
+      skipMessage: SKIP_PALACE_MESSAGE,
+      verbSets: [],
+    },
+    {
+      id: 'week-30-imperative',
+      weekLabel: 'Week 30: Imperative',
+      tenseLabel: 'Imperative',
+      minWeek: 30,
+      maxWeek: 30,
+      kind: 'standard',
+      unlockHint: 'unlocks in Week 30',
+      verbSets: buildImperativeSets(learnerName),
     },
   ];
 }
@@ -1072,10 +1224,20 @@ export function isWeekGroupUnlocked(
   currentWeek: number,
   completedWeeks: number[],
 ): boolean {
+  if (group.kind === 'skip') return false;
   if (currentWeek >= group.minWeek) return true;
-  return completedWeeks.some((w) => w >= group.minWeek);
+  return completedWeeks.some((w) => w >= group.minWeek && w <= group.maxWeek);
 }
 
+export function isCurrentPalaceGroup(group: MemoryPalaceWeekGroup, currentWeek: number): boolean {
+  return currentWeek >= group.minWeek && currentWeek <= group.maxWeek;
+}
+
+export function getAllPalaceVerbIds(): string[] {
+  return buildVerbSetsForUser('friend').flatMap((g) => g.verbSets.map((v) => v.id));
+}
+
+/** Legacy id list — prefer getAllPalaceVerbIds(). */
 export const MEMORY_PALACE_VERB_IDS = [
   'ir_preterite',
   'estar_preterite',
@@ -1148,14 +1310,15 @@ function parseHistoryEntries(raw: string | null): MemoryPalaceHistoryEntry[] {
   }
 }
 
-/** Merge new verb catalog entries without overwriting existing progress. */
+/** Merge newly unlocked catalog verb ids into history without resetting progress. */
 export async function ensureMemoryPalaceHistoryMerged(): Promise<void> {
   const raw = await AsyncStorage.getItem(HISTORY_KEY);
   const history = parseHistoryEntries(raw);
   const byId = new Map(history.map((entry) => [entry.verbId, entry]));
+  const catalogIds = getAllPalaceVerbIds();
 
   let changed = false;
-  for (const verbId of MEMORY_PALACE_VERB_IDS) {
+  for (const verbId of catalogIds) {
     if (!byId.has(verbId)) {
       byId.set(verbId, defaultHistoryEntry(verbId));
       changed = true;
@@ -1177,7 +1340,11 @@ export async function ensureMemoryPalaceHistoryMerged(): Promise<void> {
 
   if (!changed) return;
 
-  const merged = MEMORY_PALACE_VERB_IDS.map((verbId) => byId.get(verbId) ?? defaultHistoryEntry(verbId));
+  const catalogSet = new Set(catalogIds);
+  const merged = [
+    ...catalogIds.map((verbId) => byId.get(verbId) ?? defaultHistoryEntry(verbId)),
+    ...Array.from(byId.values()).filter((entry) => !catalogSet.has(entry.verbId)),
+  ];
   await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
 }
 
@@ -1203,11 +1370,11 @@ export async function markMemoryPalaceVisited(verbSetId: string): Promise<void> 
     timesCompleted: (existing?.timesCompleted ?? 0) + 1,
   });
 
+  const catalogIds = getAllPalaceVerbIds();
+  const catalogSet = new Set(catalogIds);
   const merged = [
-    ...MEMORY_PALACE_VERB_IDS.map((verbId) => byId.get(verbId) ?? defaultHistoryEntry(verbId)),
-    ...Array.from(byId.values()).filter(
-      (entry) => !MEMORY_PALACE_VERB_IDS.includes(entry.verbId as (typeof MEMORY_PALACE_VERB_IDS)[number]),
-    ),
+    ...catalogIds.map((verbId) => byId.get(verbId) ?? defaultHistoryEntry(verbId)),
+    ...Array.from(byId.values()).filter((entry) => !catalogSet.has(entry.verbId)),
   ];
   await AsyncStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
 }
@@ -1267,14 +1434,31 @@ export function freeRecallConfirm(slot: PalaceSlot): string {
   return `✅ Yes — ${slot.itemName}: ${slot.answer}. Let it stick.`;
 }
 
-export async function getUnlockedPalaceGroups(
-  name: string,
-): Promise<{ groups: MemoryPalaceWeekGroup[]; currentWeek: number }> {
+/**
+ * Full palace catalog for the UI: unlocked + locked groups, current week first.
+ * Uses resolveGrammarCurriculum (canonical week storage).
+ */
+export async function getUnlockedPalaceGroups(name: string): Promise<MemoryPalaceCatalog> {
   await ensureMemoryPalaceHistoryMerged();
   const curriculum = await resolveGrammarCurriculum();
+  const currentWeek = Math.max(1, Math.min(30, curriculum.currentWeek || 1));
   const allGroups = buildVerbSetsForUser(name);
-  const groups = allGroups.filter((g) =>
-    isWeekGroupUnlocked(g, curriculum.currentWeek, curriculum.completedWeeks),
-  );
-  return { groups, currentWeek: curriculum.currentWeek };
+
+  const views: MemoryPalaceGroupView[] = allGroups.map((group) => ({
+    ...group,
+    unlocked: isWeekGroupUnlocked(group, currentWeek, curriculum.completedWeeks),
+    isCurrent: isCurrentPalaceGroup(group, currentWeek),
+  }));
+
+  views.sort((a, b) => {
+    if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
+    if (a.unlocked !== b.unlocked) return a.unlocked ? -1 : 1;
+    return a.minWeek - b.minWeek;
+  });
+
+  const current = views.find((g) => g.isCurrent);
+  const currentSkipMessage =
+    current?.kind === 'skip' ? current.skipMessage ?? SKIP_PALACE_MESSAGE : null;
+
+  return { groups: views, currentWeek, currentSkipMessage };
 }

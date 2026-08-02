@@ -1,4 +1,5 @@
 import { AppTextInput } from '@/components/app-text-input';
+import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { getUserName } from '@/lib/onboarding-storage';
 import {
   buildVerbSetsForUser,
@@ -12,6 +13,7 @@ import {
   markMemoryPalaceVisited,
   quizRetryMessage,
   quizSuccessMessage,
+  type MemoryPalaceGroupView,
   type MemoryPalaceVerbSet,
   type PalaceSlot,
   walkthroughRetryMessage,
@@ -22,6 +24,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -126,7 +130,9 @@ export default function MemoryPalaceScreen() {
 
   const [loading, setLoading] = useState(true);
   const [userName, setUserName] = useState('friend');
-  const [groups, setGroups] = useState<ReturnType<typeof buildVerbSetsForUser>>([]);
+  const [groups, setGroups] = useState<MemoryPalaceGroupView[]>([]);
+  const [currentWeek, setCurrentWeek] = useState(1);
+  const [currentSkipMessage, setCurrentSkipMessage] = useState<string | null>(null);
   const [visited, setVisited] = useState<string[]>([]);
 
   const [verbSet, setVerbSet] = useState<MemoryPalaceVerbSet | null>(null);
@@ -138,6 +144,14 @@ export default function MemoryPalaceScreen() {
   const [javiLine, setJaviLine] = useState('');
   const [promptReady, setPromptReady] = useState(false);
   const [promptKey, setPromptKey] = useState(0);
+  const sessionScrollRef = useRef<ScrollView>(null);
+  const scrollToEnd = useKeyboardScrollToEnd(sessionScrollRef, [
+    phase,
+    stepIndex,
+    stepMode,
+    promptReady,
+    answer,
+  ]);
 
   const leavePalace = useCallback(() => {
     if (verbSetId) {
@@ -152,8 +166,10 @@ export default function MemoryPalaceScreen() {
       setLoading(true);
       const name = (await getUserName()) ?? 'friend';
       setUserName(name);
-      const { groups: unlocked } = await getUnlockedPalaceGroups(name);
-      setGroups(unlocked);
+      const catalog = await getUnlockedPalaceGroups(name);
+      setGroups(catalog.groups);
+      setCurrentWeek(catalog.currentWeek);
+      setCurrentSkipMessage(catalog.currentSkipMessage);
       setVisited(await getMemoryPalaceHistory());
       setLoading(false);
     })();
@@ -296,20 +312,57 @@ export default function MemoryPalaceScreen() {
           <Text style={styles.title}>Memory Palace 🏛️</Text>
           <Text style={styles.subtitle}>Walk through your kitchen and meet your verbs.</Text>
           <Text style={styles.explainer}>
-            Each item in your kitchen holds a conjugation. Visit each one. Let the scene stick. Come back
-            whenever a verb won&apos;t stay in your head. Read quietly — type your answers. No rush.
+            Verb sets unlock with your grammar curriculum. Current week: {currentWeek}. Visit each
+            conjugation, let the scene stick, and come back whenever a verb won&apos;t stay.
           </Text>
 
-          {groups.length === 0 ? (
-            <View style={styles.emptyCard}>
-              <Text style={styles.emptyText}>
-                Reach Week 3 in your grammar curriculum to unlock your first palace scenes.
-              </Text>
+          {currentSkipMessage ? (
+            <View style={styles.skipCard}>
+              <Text style={styles.skipText}>{currentSkipMessage}</Text>
             </View>
-          ) : (
-            groups.map((group) => (
-              <View key={group.id} style={styles.groupBlock}>
-                <Text style={styles.groupTitle}>{group.weekLabel}</Text>
+          ) : null}
+
+          {groups.map((group) => {
+            const verbCount = group.verbSets.length;
+            const visitedCount = group.verbSets.filter((vs) => visited.includes(vs.id)).length;
+            const allVisited = verbCount > 0 && visitedCount === verbCount;
+
+            if (group.kind === 'skip') {
+              if (!group.isCurrent) return null;
+              return (
+                <View key={group.id} style={[styles.groupBlock, styles.groupCurrent]}>
+                  <Text style={styles.groupTitle}>
+                    Esta semana 🔵 · {group.tenseLabel}
+                  </Text>
+                  <Text style={styles.lockedHint}>{group.skipMessage}</Text>
+                </View>
+              );
+            }
+
+            if (!group.unlocked) {
+              return (
+                <View key={group.id} style={styles.groupBlockLocked}>
+                  <Text style={styles.groupTitleLocked}>
+                    🔒 {group.tenseLabel}
+                    {verbCount ? ` — ${verbCount} verbs` : ''}
+                  </Text>
+                  <Text style={styles.lockedHint}>{group.unlockHint}</Text>
+                </View>
+              );
+            }
+
+            return (
+              <View
+                key={group.id}
+                style={[styles.groupBlock, group.isCurrent && styles.groupCurrent]}>
+                <Text style={styles.groupTitle}>
+                  {group.isCurrent ? 'Esta semana 🔵 · ' : allVisited ? '✅ ' : ''}
+                  {group.tenseLabel}
+                  {verbCount ? ` — ${verbCount} verbs` : ''}
+                </Text>
+                {group.kind === 'combined' ? (
+                  <Text style={styles.combinedHint}>Combined practice for this topic</Text>
+                ) : null}
                 {group.verbSets.map((vs) => {
                   const done = visited.includes(vs.id);
                   return (
@@ -329,8 +382,8 @@ export default function MemoryPalaceScreen() {
                   );
                 })}
               </View>
-            ))
-          )}
+            );
+          })}
         </ScrollView>
       </SafeAreaView>
     );
@@ -355,100 +408,118 @@ export default function MemoryPalaceScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      <View style={[styles.sessionWrap, { paddingBottom: Math.max(insets.bottom, 16) }]}>
-        <View style={styles.headerRow}>
-          <Text style={styles.sessionMeta}>
-            {verbSet.verbLabel} · {phaseLabel} · {phase === 'complete' ? '—' : `${stepIndex + 1}/6`}
-          </Text>
-          <Pressable onPress={leavePalace} style={styles.leaveBtn}>
-            <Text style={styles.leaveBtnText}>Leave palace 🚪</Text>
-          </Pressable>
-        </View>
-
-        <ScrollView contentContainerStyle={styles.sessionScroll} showsVerticalScrollIndicator={false}>
-          <View style={styles.javiCard}>
-            <Text style={styles.javiLabel}>Javi · calm guide</Text>
-            <TypingText
-              key={promptKey}
-              text={javiLine}
-              animate
-              msPerWord={msPerWord}
-              onComplete={handlePromptComplete}
-              style={styles.javiText}
-            />
-            {phase !== 'complete' && !promptReady ? (
-              <Text style={styles.javiHint}>Read slowly. Let the image form.</Text>
-            ) : phase !== 'complete' ? (
-              <Text style={styles.javiHint}>Take your time. Type the conjugation when you&apos;re ready.</Text>
-            ) : null}
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}
+        keyboardVerticalOffset={80}>
+        <View style={[styles.sessionWrap, { paddingBottom: Math.max(insets.bottom, 16) }]}>
+          <View style={styles.headerRow}>
+            <Text style={styles.sessionMeta}>
+              {verbSet.verbLabel} · {phaseLabel} · {phase === 'complete' ? '—' : `${stepIndex + 1}/6`}
+            </Text>
+            <Pressable onPress={leavePalace} style={styles.leaveBtn}>
+              <Text style={styles.leaveBtnText}>Leave palace 🚪</Text>
+            </Pressable>
           </View>
 
-          {!promptReady && phase !== 'complete' && stepMode === 'prompt' ? (
-            <View style={styles.waitingCard}>
-              <Text style={styles.waitingText}>Reading the scene…</Text>
-            </View>
-          ) : null}
-
-          {showInput ? (
-            <View style={styles.inputCard}>
-              <Text style={styles.inputLabel}>
-                {phase === 'free-recall'
-                  ? `${currentSlot.itemEmoji} ${currentSlot.itemName}`
-                  : 'Your answer'}
-              </Text>
-              <AppTextInput
-                style={styles.input}
-                value={answer}
-                onChangeText={setAnswer}
-                placeholder="Type the conjugation…"
-                placeholderTextColor={palette.muted}
-                autoCapitalize="none"
-                autoCorrect={false}
-                onSubmitEditing={submitAnswer}
+          <ScrollView
+            ref={sessionScrollRef}
+            contentContainerStyle={[styles.sessionScroll, { flexGrow: 1 }]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            <View style={styles.javiCard}>
+              <Text style={styles.javiLabel}>Javi · calm guide</Text>
+              <TypingText
+                key={promptKey}
+                text={javiLine}
+                animate
+                msPerWord={msPerWord}
+                onComplete={handlePromptComplete}
+                style={styles.javiText}
               />
-              <Pressable
-                onPress={submitAnswer}
-                disabled={!answer.trim()}
-                style={[styles.primaryBtn, !answer.trim() && styles.primaryBtnDisabled]}>
-                <Text style={styles.primaryBtnText}>Check</Text>
-              </Pressable>
-            </View>
-          ) : null}
-
-          {stepMode === 'feedback' && feedback ? (
-            <View
-              style={[
-                styles.feedbackCard,
-                feedback.startsWith('✅') ? styles.feedbackGood : styles.feedbackWarm,
-              ]}>
-              <Text style={styles.feedbackText}>{feedback}</Text>
-              {!feedback.startsWith('✅') ? (
-                <Pressable
-                  onPress={() => {
-                    setStepMode('prompt');
-                    setPromptReady(false);
-                    setPromptKey((k) => k + 1);
-                  }}
-                  style={styles.retryBtn}>
-                  <Text style={styles.retryBtnText}>Try again</Text>
-                </Pressable>
+              {phase !== 'complete' && !promptReady ? (
+                <Text style={styles.javiHint}>Read slowly. Let the image form.</Text>
+              ) : phase !== 'complete' ? (
+                <Text style={styles.javiHint}>
+                  Take your time. Type the conjugation when you&apos;re ready.
+                </Text>
               ) : null}
             </View>
-          ) : null}
 
-          {phase === 'complete' && promptReady ? (
-            <Pressable onPress={leavePalace} style={styles.primaryBtn}>
-              <Text style={styles.primaryBtnText}>Return to palace hall</Text>
-            </Pressable>
-          ) : null}
-        </ScrollView>
-      </View>
+            {!promptReady && phase !== 'complete' && stepMode === 'prompt' ? (
+              <View style={styles.waitingCard}>
+                <Text style={styles.waitingText}>Reading the scene…</Text>
+              </View>
+            ) : null}
+
+            {showInput ? (
+              <View style={styles.inputCard}>
+                <Text style={styles.inputLabel}>
+                  {phase === 'free-recall' && currentSlot
+                    ? `${currentSlot.itemEmoji} ${currentSlot.itemName}`
+                    : 'Your answer'}
+                </Text>
+                <AppTextInput
+                  style={styles.input}
+                  value={answer}
+                  onChangeText={setAnswer}
+                  placeholder="Type the conjugation…"
+                  placeholderTextColor={palette.muted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  multiline
+                  scrollEnabled
+                  blurOnSubmit={false}
+                  textAlignVertical="top"
+                  onFocus={() => scrollToEnd()}
+                  onSubmitEditing={submitAnswer}
+                />
+                <Pressable
+                  onPress={submitAnswer}
+                  disabled={!answer.trim()}
+                  style={[styles.primaryBtn, !answer.trim() && styles.primaryBtnDisabled]}>
+                  <Text style={styles.primaryBtnText}>Check</Text>
+                </Pressable>
+              </View>
+            ) : null}
+
+            {stepMode === 'feedback' && feedback ? (
+              <View
+                style={[
+                  styles.feedbackCard,
+                  feedback.startsWith('✅') ? styles.feedbackGood : styles.feedbackWarm,
+                ]}>
+                <Text style={styles.feedbackText}>{feedback}</Text>
+                {!feedback.startsWith('✅') ? (
+                  <Pressable
+                    onPress={() => {
+                      setStepMode('prompt');
+                      setPromptReady(false);
+                      setPromptKey((k) => k + 1);
+                    }}
+                    style={styles.retryBtn}>
+                    <Text style={styles.retryBtnText}>Try again</Text>
+                  </Pressable>
+                ) : null}
+              </View>
+            ) : null}
+
+            {phase === 'complete' && promptReady ? (
+              <Pressable onPress={leavePalace} style={styles.primaryBtn}>
+                <Text style={styles.primaryBtnText}>Return to palace hall</Text>
+              </Pressable>
+            ) : null}
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.background },
+  flex: { flex: 1 },
   scroll: { padding: 20, gap: 16 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 16 },
   headerRow: {
@@ -465,6 +536,19 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 16, fontWeight: '700', color: palette.muted, lineHeight: 22 },
   explainer: { fontSize: 14, fontWeight: '600', color: palette.muted, lineHeight: 21 },
   groupBlock: { gap: 8, marginTop: 8 },
+  groupCurrent: {
+    borderWidth: 1,
+    borderColor: palette.accent,
+    borderRadius: 16,
+    padding: 12,
+    backgroundColor: 'rgba(255, 122, 89, 0.08)',
+  },
+  groupBlockLocked: {
+    gap: 4,
+    marginTop: 8,
+    opacity: 0.72,
+    paddingVertical: 8,
+  },
   groupTitle: {
     fontSize: 12,
     fontWeight: '900',
@@ -472,6 +556,37 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     letterSpacing: 0.6,
     marginBottom: 4,
+  },
+  groupTitleLocked: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.muted,
+  },
+  lockedHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 18,
+  },
+  combinedHint: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: palette.amber,
+    marginBottom: 4,
+  },
+  skipCard: {
+    backgroundColor: palette.amberBg,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    padding: 14,
+    marginTop: 8,
+  },
+  skipText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 20,
   },
   verbRow: {
     flexDirection: 'row',
@@ -547,6 +662,8 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: palette.text,
+    minHeight: 48,
+    maxHeight: 120,
   },
   primaryBtn: {
     backgroundColor: palette.accent,

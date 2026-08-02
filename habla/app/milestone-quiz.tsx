@@ -1,4 +1,5 @@
 import { AppTextInput } from '@/components/app-text-input';
+import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { addGems } from '@/lib/gems';
 import {
   calculateMilestoneQuizGems,
@@ -25,6 +26,7 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -76,6 +78,8 @@ export default function MilestoneQuizScreen() {
   const [gemsEarned, setGemsEarned] = useState(0);
   const didSpeakIntro = useRef(false);
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollRef = useRef<ScrollView>(null);
+  const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [stage, questionIdx, feedback, textAnswer]);
 
   const clearAdvanceTimer = () => {
     if (advanceTimer.current) {
@@ -281,9 +285,19 @@ export default function MilestoneQuizScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
-      <ScrollView
-        contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 24) }]}
-        showsVerticalScrollIndicator={false}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.flex}
+        keyboardVerticalOffset={80}>
+        <ScrollView
+          ref={scrollRef}
+          contentContainerStyle={[
+            styles.scroll,
+            { flexGrow: 1, paddingBottom: Math.max(insets.bottom, 24) },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          showsVerticalScrollIndicator={false}>
         {stage === 'intro' ? (
           <View style={styles.block}>
             <Text style={styles.eyebrow}>One more thing before you go... 🎉</Text>
@@ -339,7 +353,12 @@ export default function MilestoneQuizScreen() {
                     placeholderTextColor={palette.muted}
                     autoCapitalize="none"
                     autoCorrect={false}
+                    multiline
+                    scrollEnabled
+                    blurOnSubmit={false}
                     editable={!locked}
+                    textAlignVertical="top"
+                    onFocus={() => scrollToEnd()}
                     onSubmitEditing={() => {
                       if (textAnswer.trim()) submitAnswer(textAnswer.trim());
                     }}
@@ -437,12 +456,14 @@ export default function MilestoneQuizScreen() {
           </View>
         ) : null}
       </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: palette.background },
+  flex: { flex: 1 },
   scroll: { padding: 20 },
   block: { gap: 16 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24, gap: 12 },
@@ -536,6 +557,8 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: palette.text,
+    minHeight: 48,
+    maxHeight: 120,
   },
   submitBtn: {
     backgroundColor: palette.accent,

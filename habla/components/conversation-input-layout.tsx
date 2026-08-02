@@ -21,12 +21,19 @@ const palette = {
   promptBg: '#1A2029',
 };
 
+/** Keep input clear of the keyboard (user request: ≥20px). */
+export const KEYBOARD_INPUT_GAP = 20;
+const INPUT_MAX_HEIGHT = 120;
+
 export function useKeyboardScrollToEnd(
   scrollRef: RefObject<ScrollView | null>,
   deps: unknown[] = [],
 ) {
   const scrollToEnd = useCallback(() => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 50);
+    // Wait for keyboard + layout so the focused input stays above the keyboard.
+    const run = () => scrollRef.current?.scrollToEnd({ animated: true });
+    setTimeout(run, 50);
+    setTimeout(run, 280);
   }, [scrollRef]);
 
   useEffect(() => {
@@ -42,6 +49,24 @@ export function useKeyboardScrollToEnd(
   return scrollToEnd;
 }
 
+export function WritingPromptCard({
+  prompt,
+  loading = false,
+}: {
+  prompt?: string | null;
+  loading?: boolean;
+}) {
+  return (
+    <View style={styles.promptPin}>
+      {loading ? (
+        <ActivityIndicator color={palette.muted} size="small" />
+      ) : (
+        <Text style={styles.promptText}>{prompt?.trim() || '—'}</Text>
+      )}
+    </View>
+  );
+}
+
 type DockProps = {
   prompt?: string | null;
   promptLoading?: boolean;
@@ -55,6 +80,7 @@ type DockProps = {
   footer?: ReactNode;
   trailingAction?: ReactNode;
   bottomInset?: number;
+  /** When true, prompt renders in the dock (prefer putting prompt in ScrollView instead). */
   showPrompt?: boolean;
   showResponseLabel?: boolean;
 };
@@ -71,25 +97,17 @@ export function ConversationInputDock({
   onInputFocus,
   footer,
   trailingAction,
-  bottomInset = 12,
-  showPrompt = true,
+  bottomInset = KEYBOARD_INPUT_GAP,
+  showPrompt = false,
   showResponseLabel,
 }: DockProps) {
   const localInputRef = useRef<import('react-native').TextInput>(null);
   const resolvedInputRef = inputRef ?? localInputRef;
-  const shouldShowResponseLabel = showResponseLabel ?? Boolean(showPrompt && prompt);
+  const shouldShowResponseLabel = showResponseLabel ?? true;
 
   return (
-    <View style={[styles.dock, { paddingBottom: bottomInset }]}>
-      {showPrompt ? (
-        <View style={styles.promptPin}>
-          {promptLoading ? (
-            <ActivityIndicator color={palette.muted} size="small" />
-          ) : (
-            <Text style={styles.promptText}>{prompt?.trim() || '—'}</Text>
-          )}
-        </View>
-      ) : null}
+    <View style={[styles.dock, { paddingBottom: Math.max(bottomInset, KEYBOARD_INPUT_GAP) }]}>
+      {showPrompt ? <WritingPromptCard prompt={prompt} loading={promptLoading} /> : null}
       {shouldShowResponseLabel ? <Text style={styles.responseLabel}>{responseLabel}</Text> : null}
       <View style={styles.inputRow}>
         <AppTextInput
@@ -101,6 +119,7 @@ export function ConversationInputDock({
           placeholderTextColor={palette.muted}
           multiline
           scrollEnabled
+          blurOnSubmit={false}
           editable={inputEditable}
           textAlignVertical="top"
           onFocus={() => onInputFocus?.()}
@@ -121,14 +140,21 @@ type LayoutProps = DockProps & {
   showInput?: boolean;
 };
 
+/**
+ * Long prompts/explanations scroll with content; the text input stays docked
+ * above the keyboard via KeyboardAvoidingView.
+ */
 export function ConversationInputLayout({
   children,
   scrollRef: externalScrollRef,
   scrollToEndDeps = [],
   contentContainerStyle,
-  keyboardVerticalOffset = 0,
+  keyboardVerticalOffset = 80,
   showInput = true,
   bottomInset,
+  prompt,
+  promptLoading,
+  showPrompt = true,
   ...dockProps
 }: LayoutProps) {
   const internalScrollRef = useRef<ScrollView>(null);
@@ -143,14 +169,23 @@ export function ConversationInputLayout({
       <ScrollView
         ref={scrollRef}
         style={styles.scroll}
-        contentContainerStyle={contentContainerStyle}
+        contentContainerStyle={[styles.scrollContentGrow, contentContainerStyle]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         showsVerticalScrollIndicator={false}>
         {children}
+        {showPrompt ? (
+          <View style={styles.promptInScroll}>
+            <WritingPromptCard prompt={prompt} loading={promptLoading} />
+          </View>
+        ) : null}
+        {/* Spacer so scrollToEnd leaves the input clear of the keyboard edge */}
+        <View style={{ height: KEYBOARD_INPUT_GAP }} />
       </ScrollView>
       {showInput ? (
         <ConversationInputDock
           {...dockProps}
+          showPrompt={false}
           bottomInset={bottomInset}
           onInputFocus={() => scrollToEnd()}
         />
@@ -162,6 +197,8 @@ export function ConversationInputLayout({
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   scroll: { flex: 1 },
+  scrollContentGrow: { flexGrow: 1 },
+  promptInScroll: { marginTop: 8, marginBottom: 4 },
   dock: {
     paddingHorizontal: 20,
     paddingTop: 10,
@@ -199,7 +236,7 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     minHeight: 80,
-    maxHeight: 150,
+    maxHeight: INPUT_MAX_HEIGHT,
     backgroundColor: palette.surface,
     borderRadius: 14,
     borderWidth: 1,

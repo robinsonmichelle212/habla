@@ -24,6 +24,10 @@ import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activit
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { hasLastSummary } from '@/lib/last-summary-storage';
 import { getCrashLog, logCrashBreadcrumb } from '@/lib/crash-breadcrumb';
+import {
+  homeRecommendationPreview,
+  resolveLessonNudge,
+} from '@/lib/lesson-type-nudge';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getStreakState } from '@/lib/streak';
 
@@ -57,6 +61,7 @@ export default function HomeScreen() {
   const [greeting, setGreeting] = useState<string | null>(null);
   const [activityDays, setActivityDays] = useState<DailyActivityDay[]>([]);
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
+  const [javiRecommendation, setJaviRecommendation] = useState<string | null>(null);
   const titleTapCountRef = useRef(0);
   const titleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -100,7 +105,7 @@ export default function HomeScreen() {
           console.log('Last crash breadcrumbs:', crashLog);
 
           await recoverUnregisteredSessions();
-          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary] =
+          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary, nudge] =
             await Promise.all([
               getStreakState(),
               getTotalGems(),
@@ -109,6 +114,7 @@ export default function HomeScreen() {
               getUserName(),
               getLast7DaysActivity(),
               hasLastSummary(),
+              resolveLessonNudge(),
             ]);
           if (cancelled) return;
 
@@ -119,6 +125,7 @@ export default function HomeScreen() {
           setGreeting(name ? timeBasedGreeting(name) : null);
           setActivityDays(weekActivity);
           setShowLastSummaryLink(lastSummary);
+          setJaviRecommendation(homeRecommendationPreview(nudge));
 
           await refreshShopBadge(gems);
         } finally {
@@ -295,6 +302,9 @@ export default function HomeScreen() {
               accessibilityLabel="Start today's lesson">
               <Text style={styles.primaryButtonText}>Start Today&apos;s Lesson</Text>
             </Pressable>
+            {javiRecommendation ? (
+              <Text style={styles.javiRecommendation}>{javiRecommendation}</Text>
+            ) : null}
 
             <Pressable
               onPress={() => {
@@ -488,6 +498,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
     color: '#0B0F14',
+  },
+  javiRecommendation: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    marginTop: -4,
+    marginBottom: 2,
+    paddingHorizontal: 8,
   },
   secondaryButton: {
     backgroundColor: palette.surface,

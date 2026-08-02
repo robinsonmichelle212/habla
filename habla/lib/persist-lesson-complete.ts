@@ -15,6 +15,7 @@ import { DEMO_DAILY_CHALLENGE } from '@/lib/demo-mode';
 import { addGems, calculateLessonGems, getTotalGems } from '@/lib/gems';
 import { clearLessonCheckpoint } from '@/lib/lesson-checkpoint';
 import { lessonFocusLabel } from '@/lib/lesson-focus';
+import { lessonKindFromHistoryLabel, recordLessonTypeCompletion } from '@/lib/lesson-type-nudge';
 import type { LessonSessionState } from '@/lib/lesson-session';
 import { saveLastSummary } from '@/lib/last-summary-storage';
 import { getLevelBarometer } from '@/lib/level-progress';
@@ -153,6 +154,17 @@ export async function persistLessonComplete(
         }),
       );
       await logCrashBreadcrumb('lesson_history_saved');
+
+      const trackedKind =
+        session.lessonFocus?.kind ??
+        lessonKindFromHistoryLabel(lessonTypeLabel(lessonType));
+      if (trackedKind && trackedKind !== 'vocabulary') {
+        const week =
+          session.lessonFocus?.kind === 'grammar'
+            ? session.lessonFocus.weekNumber
+            : undefined;
+        await recordLessonTypeCompletion(trackedKind, week).catch(() => {});
+      }
 
       await clearLessonCheckpoint().catch(() => {});
 

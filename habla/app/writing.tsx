@@ -481,9 +481,9 @@ export default function WritingScreen() {
           inputPlaceholder="Write your response in Spanish..."
           inputEditable={!submitting}
           footer={submitFooter}
-          bottomInset={Math.max(insets.bottom, 12)}
+          bottomInset={Math.max(insets.bottom, 20)}
           scrollToEndDeps={[conversation.length, taskPrompt, loadingTask]}
-          contentContainerStyle={styles.scrollContent}>
+          contentContainerStyle={[styles.scrollContent, { flexGrow: 1 }]}>
           {conversationContent}
         </ConversationInputLayout>
       )}

@@ -704,9 +704,9 @@ export default function BonusRoundScreen() {
                 : 'Your response…'
           }
           inputEditable={!chatSending}
-          bottomInset={Math.max(insets.bottom, 12)}
+          bottomInset={Math.max(insets.bottom, 20)}
           scrollToEndDeps={[chatMessages, chatSending]}
-          contentContainerStyle={[styles.scroll, { paddingBottom: 16 }]}
+          contentContainerStyle={[styles.scroll, { flexGrow: 1, paddingBottom: 16 }]}
           footer={textChatFooter}>
           {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
           {chatBubbleNodes}
@@ -714,8 +714,13 @@ export default function BonusRoundScreen() {
       ) : (
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.flex}>
-          <ScrollView contentContainerStyle={[styles.scroll, { paddingBottom: insets.bottom + 100 }]}>
+          style={styles.flex}
+          keyboardVerticalOffset={80}>
+          <ScrollView
+            contentContainerStyle={[styles.scroll, { flexGrow: 1, paddingBottom: insets.bottom + 100 }]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
             {roundId === 'quiz' && quizQuestions[quizIdx] ? (
               <View style={styles.quizWrap}>
                 <Text style={styles.quizMeta}>

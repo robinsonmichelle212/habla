@@ -1,3 +1,5 @@
+import { AppTextInput } from '@/components/app-text-input';
+import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { LessonTimer } from '@/components/lesson-timer';
 import { ReadTextView } from '@/components/read-text-view';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
@@ -52,7 +54,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import { AppTextInput } from '@/components/app-text-input';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const palette = {
@@ -130,6 +131,8 @@ export default function ReadLessonScreen() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
   const [finishing, setFinishing] = useState(false);
+
+  const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [phase, answers, discussionMessages]);
 
   const latestJaviId = useMemo(() => {
     for (let i = discussionMessages.length - 1; i >= 0; i -= 1) {
@@ -485,7 +488,8 @@ export default function ReadLessonScreen() {
       <StatusBar style="light" />
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}>
+        style={styles.flex}
+        keyboardVerticalOffset={80}>
         <View style={styles.topBar}>
           <Pressable onPress={() => router.back()} hitSlop={12}>
             <Text style={styles.backLink}>← Back</Text>
@@ -507,8 +511,13 @@ export default function ReadLessonScreen() {
 
         <ScrollView
           ref={scrollRef}
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 24) }]}
-          keyboardShouldPersistTaps="handled">
+          contentContainerStyle={[
+            styles.scrollContent,
+            { flexGrow: 1, paddingBottom: Math.max(insets.bottom, 24) },
+          ]}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
+          showsVerticalScrollIndicator={false}>
           {phase === 'read' ? (
             <>
               <ReadTextView
@@ -541,6 +550,10 @@ export default function ReadLessonScreen() {
                       placeholder="Escribe tu respuesta…"
                       placeholderTextColor={palette.muted}
                       multiline
+                      scrollEnabled
+                      blurOnSubmit={false}
+                      textAlignVertical="top"
+                      onFocus={() => scrollToEnd()}
                     />
                   ) : (
                     <Text style={styles.answerPreview}>{answers[q.id]}</Text>
@@ -688,6 +701,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.text,
     minHeight: 80,
+    maxHeight: 120,
     textAlignVertical: 'top',
   },
   answerPreview: { fontSize: 15, fontWeight: '600', color: palette.muted },

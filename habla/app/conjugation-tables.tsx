@@ -100,10 +100,15 @@ export default function ConjugationTablesScreen() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={80}>
         <ScrollView
-          contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 24) }]}
+          contentContainerStyle={[
+            styles.scroll,
+            { flexGrow: 1, paddingBottom: Math.max(insets.bottom, 24) },
+          ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}>
           <Text style={styles.topicLabel}>{topic}</Text>
           {weekDef ? <Text style={styles.weekMeta}>Week {weekDef.week} focus verbs</Text> : null}
@@ -119,6 +124,9 @@ export default function ConjugationTablesScreen() {
                 style={styles.searchInput}
                 autoCapitalize="none"
                 autoCorrect={false}
+                multiline
+                scrollEnabled
+                blurOnSubmit={false}
                 returnKeyType="search"
                 onSubmitEditing={handleSearch}
               />

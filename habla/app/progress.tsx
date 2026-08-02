@@ -18,6 +18,10 @@ import {
 } from '@/lib/practice-storage';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { hasLastSummary } from '@/lib/last-summary-storage';
+import {
+  getWeeklyLessonBalance,
+  type WeeklyLessonBalance,
+} from '@/lib/lesson-type-nudge';
 import { buildWrappedTeaser, currentMonthKey, monthNameOnly, previousMonthKey, wrappedCardTitle } from '@/lib/wrapped-data';
 import {
   generateCurrentWrappedNow,
@@ -71,6 +75,7 @@ export default function ProgressScreen() {
   const reopenWeekModalRef = useRef(false);
   const [levelExpanded, setLevelExpanded] = useState(false);
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
+  const [weeklyBalance, setWeeklyBalance] = useState<WeeklyLessonBalance | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,7 +99,7 @@ export default function ProgressScreen() {
       void (async () => {
         try {
           await recoverUnregisteredSessions();
-          const [lessonHistory, drillHistory, wraps, unread, lastSummary, latest, overdue] =
+          const [lessonHistory, drillHistory, wraps, unread, lastSummary, latest, overdue, balance] =
             await Promise.all([
               getLessonHistory(),
               getDrillHistory(),
@@ -103,6 +108,7 @@ export default function ProgressScreen() {
               hasLastSummary(),
               getMostRecentWrapped(),
               isWrappedOverdue(),
+              getWeeklyLessonBalance(),
             ]);
           if (cancelled) return;
           setLessons(lessonHistory);
@@ -112,6 +118,7 @@ export default function ProgressScreen() {
           setUnreadWrapped(unread);
           setWrappedOverdue(overdue);
           setShowLastSummaryLink(lastSummary);
+          setWeeklyBalance(balance);
           setTodaysScoreInfo(getTodayScoreInfo(lessonHistory, drillHistory));
           setTopScoreWeek(getTopScoreThisWeek(lessonHistory, drillHistory));
           const bestWeek = getBestDayThisWeek(lessonHistory, drillHistory);
@@ -199,6 +206,40 @@ export default function ProgressScreen() {
                   : undefined
               }
             />
+          </View>
+        ) : null}
+
+        {!loading && weeklyBalance ? (
+          <View style={styles.weeklyBalanceCard}>
+            <Text style={styles.weeklyBalanceTitle}>This week</Text>
+            {(
+              [
+                ['Grammar', weeklyBalance.Grammar],
+                ['Your Day', weeklyBalance['Your Day']],
+                ['Structure', weeklyBalance.Structure],
+                ['Read', weeklyBalance.Read],
+              ] as const
+            ).map(([label, count]) => {
+              const total =
+                weeklyBalance.Grammar +
+                weeklyBalance['Your Day'] +
+                weeklyBalance.Structure +
+                weeklyBalance.Read;
+              const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+              return (
+                <View key={label} style={styles.weeklyBalanceRow}>
+                  <View style={styles.weeklyBalanceRowTop}>
+                    <Text style={styles.weeklyBalanceLabel}>{label}</Text>
+                    <Text style={styles.weeklyBalanceCount}>
+                      {count} session{count === 1 ? '' : 's'}
+                    </Text>
+                  </View>
+                  <View style={styles.weeklyBalanceTrack}>
+                    <View style={[styles.weeklyBalanceFill, { width: `${pct}%` }]} />
+                  </View>
+                </View>
+              );
+            })}
           </View>
         ) : null}
 
@@ -439,6 +480,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     color: progressPalette.muted,
+  },
+  weeklyBalanceCard: {
+    backgroundColor: progressPalette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: progressPalette.surfaceBorder,
+    padding: 14,
+    marginBottom: 18,
+    gap: 10,
+  },
+  weeklyBalanceTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: progressPalette.text,
+    marginBottom: 2,
+  },
+  weeklyBalanceRow: { gap: 4 },
+  weeklyBalanceRowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  weeklyBalanceLabel: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: progressPalette.text,
+  },
+  weeklyBalanceCount: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: progressPalette.muted,
+  },
+  weeklyBalanceTrack: {
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: progressPalette.surfaceBorder,
+    overflow: 'hidden',
+  },
+  weeklyBalanceFill: {
+    height: '100%',
+    borderRadius: 3,
+    backgroundColor: progressPalette.accent,
   },
   wrappedPromo: {
     backgroundColor: 'rgba(167, 139, 250, 0.12)',

@@ -1,4 +1,4 @@
-import { ConversationInputDock, useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
+import { ConversationInputDock, useKeyboardScrollToEnd, WritingPromptCard } from '@/components/conversation-input-layout';
 import { AppTextInput } from '@/components/app-text-input';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
@@ -63,6 +63,12 @@ import {
 import { buildInterleavingContext, type InterleavingContext } from '@/lib/interleaving';
 import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
+import {
+  getWeeklyOverrideUsed,
+  markWeeklyOverrideUsed,
+  resolveLessonNudge,
+  type SelectableLessonKind,
+} from '@/lib/lesson-type-nudge';
 import { checkIsOnline } from '@/lib/network-status';
 import { saveLessonCheckpoint, clearLessonCheckpoint } from '@/lib/lesson-checkpoint';
 import { lessonTypeLabel, upsertLessonHistoryEntry } from '@/lib/practice-storage';
@@ -134,7 +140,14 @@ const palette = {
   green: '#34D399',
 };
 
-type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
+const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
+  { id: 'grammar', label: 'Grammar 📚' },
+  { id: 'your-day', label: 'Your Day 🗣️' },
+  { id: 'structure', label: 'Structure 🏗️' },
+  { id: 'read', label: 'Read 📖' },
+];
+
+type LessonKind = 'grammar' | 'your-day' | 'structure' | 'read';
 type LessonPhase = 'warmup' | 'feynman' | 'writing' | 'speaking';
 type SpeakingStep = 'intro' | 'conversation';
 
@@ -144,14 +157,6 @@ type ChatMessage = {
   spanish: string;
   translation?: string;
 };
-
-const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
-  { id: 'grammar', label: 'Grammar' },
-  { id: 'vocabulary', label: 'Vocabulary' },
-  { id: 'your-day', label: 'Your day' },
-  { id: 'structure', label: 'Structure 🏗️' },
-  { id: 'read', label: 'Read 📖' },
-];
 
 const WARMUP_SKIP_AFTER_MESSAGES = 4;
 const WARMUP_MAX_JAVI_MESSAGES = 4;
@@ -201,6 +206,11 @@ export default function LessonScreen() {
   const speakingStepRef = useRef<SpeakingStep>('intro');
 
   const [lessonKind, setLessonKind] = useState<LessonKind>('grammar');
+  const [nudgeReady, setNudgeReady] = useState(false);
+  const [nudgeMessage, setNudgeMessage] = useState<string | null>(null);
+  const [overrideBlockedMessage, setOverrideBlockedMessage] = useState<string | null>(null);
+  const [weeklyOverrideUsed, setWeeklyOverrideUsed] = useState(false);
+  const recommendedKindRef = useRef<SelectableLessonKind>('grammar');
   const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
   const [topErrorDna, setTopErrorDna] = useState<ErrorDNAItem[]>([]);
   const [loadingFocus, setLoadingFocus] = useState(true);
@@ -434,6 +444,40 @@ export default function LessonScreen() {
 
   useEffect(() => {
     let cancelled = false;
+    void (async () => {
+      try {
+        const [nudge, overrideUsed] = await Promise.all([
+          resolveLessonNudge(),
+          getWeeklyOverrideUsed(),
+        ]);
+        if (cancelled) return;
+        recommendedKindRef.current = nudge.recommended;
+        setNudgeMessage(nudge.nudgeMessage);
+        setWeeklyOverrideUsed(overrideUsed);
+        setLessonKind(nudge.recommended);
+        setNudgeReady(true);
+      } catch {
+        if (cancelled) return;
+        recommendedKindRef.current = 'grammar';
+        setNudgeMessage(null);
+        setLessonKind('grammar');
+        setNudgeReady(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!nudgeReady) return;
+    if (lessonKind === 'read') {
+      setLoadingFocus(false);
+      setLessonFocus(null);
+      return;
+    }
+
+    let cancelled = false;
     setLoadingFocus(true);
     resetLessonState();
 
@@ -540,7 +584,7 @@ export default function LessonScreen() {
     return () => {
       cancelled = true;
     };
-  }, [lessonKind, resetLessonState, demoMode]);
+  }, [lessonKind, resetLessonState, demoMode, nudgeReady]);
 
   const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [
     warmUpMessages,
@@ -1739,8 +1783,22 @@ export default function LessonScreen() {
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.flex}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
+        keyboardVerticalOffset={80}>
         <View style={styles.headerBlock}>
+          {!nudgeReady ? (
+            <ActivityIndicator color={palette.muted} style={{ marginVertical: 8 }} />
+          ) : (
+            <>
+          {nudgeMessage ? (
+            <View style={styles.nudgeCard}>
+              <Text style={styles.nudgeText}>{nudgeMessage}</Text>
+            </View>
+          ) : null}
+          {overrideBlockedMessage ? (
+            <View style={styles.nudgeCard}>
+              <Text style={styles.nudgeText}>{overrideBlockedMessage}</Text>
+            </View>
+          ) : null}
           <View style={styles.lessonHeaderRow}>
             <Pressable onPress={() => router.back()} hitSlop={12} style={styles.backBtn}>
               <Text style={styles.backLink}>←</Text>
@@ -1752,12 +1810,32 @@ export default function LessonScreen() {
               contentContainerStyle={styles.lessonPillScroll}>
               {LESSON_OPTIONS.map((opt) => {
                 const selected = lessonKind === opt.id;
+                const overrideLocked = weeklyOverrideUsed && !selected;
                 return (
                   <Pressable
                     key={opt.id}
                     onPress={() => {
+                      if (phase !== 'warmup' || warmUpMessages.length > 1) return;
+
+                      if (opt.id === lessonKind) {
+                        if (opt.id === 'read') {
+                          router.push('/read-lesson');
+                        }
+                        return;
+                      }
+
+                      if (weeklyOverrideUsed) {
+                        setOverrideBlockedMessage(
+                          'Ya has cambiado la lección esta semana.\n¡Confía en Javi! 😄',
+                        );
+                        return;
+                      }
+
+                      void markWeeklyOverrideUsed().then(() => setWeeklyOverrideUsed(true));
+                      setOverrideBlockedMessage(null);
+                      setNudgeMessage(null);
                       if (opt.id === 'read') {
-                        router.push('/read-lesson');
+                        setLessonKind('read');
                         return;
                       }
                       setLessonKind(opt.id);
@@ -1766,9 +1844,15 @@ export default function LessonScreen() {
                     style={({ pressed }) => [
                       styles.lessonPill,
                       selected && styles.lessonPillSelected,
-                      pressed && !selected && styles.lessonPillPressed,
+                      overrideLocked && styles.lessonPillOverrideLocked,
+                      pressed && !selected && !overrideLocked && styles.lessonPillPressed,
                     ]}>
-                    <Text style={[styles.lessonPillText, selected && styles.lessonPillTextSelected]}>
+                    <Text
+                      style={[
+                        styles.lessonPillText,
+                        selected && styles.lessonPillTextSelected,
+                        overrideLocked && styles.lessonPillTextOverrideLocked,
+                      ]}>
                       {opt.label}
                     </Text>
                   </Pressable>
@@ -1776,19 +1860,35 @@ export default function LessonScreen() {
               })}
             </ScrollView>
           </View>
+          {lessonKind === 'read' && phase === 'warmup' ? (
+            <Pressable
+              onPress={() => router.push('/read-lesson')}
+              style={({ pressed }) => [
+                styles.readStartButton,
+                pressed && styles.readStartButtonPressed,
+              ]}>
+              <Text style={styles.readStartButtonText}>Empezar lectura 📖</Text>
+            </Pressable>
+          ) : null}
           <View style={styles.phaseTimerRow}>
             <View style={styles.phaseIndicatorWrap}>
               <LessonPhaseIndicator activeStep={indicatorStep} />
             </View>
             <LessonTimer resetKey={lessonKind} paused={finishing} />
           </View>
+            </>
+          )}
         </View>
 
         <ScrollView
           ref={scrollRef}
           style={styles.scroll}
-          contentContainerStyle={styles.scrollContent}
+          contentContainerStyle={[
+            styles.scrollContent,
+            phase === 'writing' && !writingResult ? styles.writingScrollContent : null,
+          ]}
           keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}>
           {loadingFocus ? (
             <ActivityIndicator color={palette.muted} style={{ marginTop: 24 }} />
@@ -1840,6 +1940,13 @@ export default function LessonScreen() {
                 </Pressable>
               ) : null}
             </>
+          ) : null}
+
+          {phase === 'writing' && !writingResult ? (
+            <View style={styles.writingBlock}>
+              <Text style={styles.phaseTitle}>Writing task ✍️</Text>
+              <WritingPromptCard prompt={writingPrompt} loading={loadingWritingTask} />
+            </View>
           ) : null}
 
           {phase === 'writing' && writingResult ? (
@@ -1909,7 +2016,7 @@ export default function LessonScreen() {
         </ScrollView>
 
         {phase === 'warmup' || phase === 'feynman' ? (
-          <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+          <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 20) }]}>
             <View style={styles.composeRow}>
               <AppTextInput
                 style={styles.textInput}
@@ -1919,6 +2026,7 @@ export default function LessonScreen() {
                 placeholderTextColor={palette.muted}
                 multiline
                 scrollEnabled
+                blurOnSubmit={false}
                 editable={!warmUpSending}
                 textAlignVertical="top"
                 onFocus={() => scrollToEnd()}
@@ -1949,13 +2057,14 @@ export default function LessonScreen() {
               </Text>
             ) : null}
             <ConversationInputDock
-            prompt={writingPrompt}
-            promptLoading={loadingWritingTask}
+            showPrompt={false}
+            showResponseLabel
+            responseLabel="Your response:"
             inputValue={writingText}
             onChangeText={setWritingText}
             inputPlaceholder="Write your response in Spanish..."
             inputEditable={!writingSubmitting}
-            bottomInset={Math.max(insets.bottom, 12)}
+            bottomInset={Math.max(insets.bottom, 20)}
             onInputFocus={() => scrollToEnd()}
             trailingAction={
               <Pressable
@@ -2074,6 +2183,9 @@ const styles = StyleSheet.create({
     backgroundColor: palette.accentMuted,
     borderColor: palette.accent,
   },
+  lessonPillOverrideLocked: {
+    opacity: 0.45,
+  },
   lessonPillText: {
     fontSize: 13,
     fontWeight: '700',
@@ -2081,6 +2193,39 @@ const styles = StyleSheet.create({
   },
   lessonPillTextSelected: {
     color: palette.accent,
+  },
+  lessonPillTextOverrideLocked: {
+    color: palette.muted,
+  },
+  nudgeCard: {
+    marginTop: 4,
+    marginBottom: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    backgroundColor: palette.surface,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+  },
+  nudgeText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.text,
+    lineHeight: 19,
+  },
+  readStartButton: {
+    marginTop: 10,
+    marginBottom: 4,
+    backgroundColor: palette.accent,
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  readStartButtonPressed: { opacity: 0.9 },
+  readStartButtonText: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#0B0F14',
   },
   phaseTimerRow: {
     flexDirection: 'row',
@@ -2092,6 +2237,7 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 16, flexGrow: 1 },
+  writingScrollContent: { paddingBottom: 28 },
   offlineNote: {
     fontSize: 13,
     fontWeight: '700',

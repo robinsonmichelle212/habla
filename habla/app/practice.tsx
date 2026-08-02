@@ -1,4 +1,5 @@
 import { AppTextInput } from '@/components/app-text-input';
+import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { useDemoMode } from '@/contexts/demo-mode-context';
 import { DEMO_DRILLS } from '@/lib/demo-mode';
@@ -186,6 +187,7 @@ export default function PracticeScreen() {
   const writingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const writingSubmittingRef = useRef(false);
   const submitWritingAnswerRef = useRef<(overrideAnswer?: string) => void>(() => {});
+  const drillScrollRef = useRef<ScrollView>(null);
 
   const initialDrill = parseDrillParam(typeof drill === 'string' ? drill : undefined);
 
@@ -234,6 +236,12 @@ export default function PracticeScreen() {
   const wrongResults = results.filter((r) => !r.correct && !r.partialCredit);
   const isWritingDrill = activeDrillRef.current === 'writing';
   const writingReviewResults = isWritingDrill ? results : [];
+  const scrollToEnd = useKeyboardScrollToEnd(drillScrollRef, [
+    stage,
+    questionIdx,
+    currentQuestion?.kind,
+    isWritingDrill,
+  ]);
 
   const displayDrillSelection = useMemo((): DrillSelection | null => {
     if (isUserOverride && manualDrillOverride) {
@@ -1130,7 +1138,8 @@ export default function PracticeScreen() {
       ) : null}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.flex}>
+        style={styles.flex}
+        keyboardVerticalOffset={80}>
         {stage === 'drill' ? (
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${Math.min(100, progress * 100)}%` }]} />
@@ -1138,9 +1147,14 @@ export default function PracticeScreen() {
         ) : null}
 
         <ScrollView
-          contentContainerStyle={[styles.scrollContent, { paddingBottom: Math.max(insets.bottom, 16) }]}
+          ref={drillScrollRef}
+          contentContainerStyle={[
+            styles.scrollContent,
+            { flexGrow: 1, paddingBottom: Math.max(insets.bottom, isWritingDrill ? 28 : 16) },
+          ]}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled">
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive">
           <View style={styles.topBar}>
             <Pressable onPress={goHome} hitSlop={12} accessibilityRole="button">
               <Text style={styles.backLink}>← Home</Text>
@@ -1393,15 +1407,20 @@ export default function PracticeScreen() {
               ) : !locked ? (
                 <View style={styles.inputCard}>
                   <AppTextInput
-                    style={styles.input}
+                    style={[styles.input, isWritingDrill && styles.writingInput]}
                     value={answer}
                     onChangeText={setAnswer}
                     placeholder={isWritingDrill ? 'Escribe aquí…' : 'Type your answer…'}
                     placeholderTextColor={palette.muted}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    returnKeyType="done"
-                    onSubmitEditing={submitAnswer}
+                    multiline
+                    scrollEnabled
+                    blurOnSubmit={false}
+                    textAlignVertical={isWritingDrill ? 'top' : 'center'}
+                    returnKeyType={isWritingDrill ? 'default' : 'done'}
+                    onFocus={() => scrollToEnd()}
+                    onSubmitEditing={isWritingDrill ? undefined : submitAnswer}
                   />
                   <Pressable
                     onPress={submitAnswer}
@@ -1893,6 +1912,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: palette.text,
+  },
+  writingInput: {
+    minHeight: 80,
+    maxHeight: 120,
+    fontWeight: '600',
   },
   submitButton: {
     backgroundColor: palette.accent,

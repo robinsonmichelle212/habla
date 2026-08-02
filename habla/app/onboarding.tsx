@@ -1,4 +1,5 @@
 import { AppTextInput } from '@/components/app-text-input';
+import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { TextMessageBubble } from '@/components/text-message-bubble';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import {
@@ -143,6 +144,7 @@ export default function OnboardingScreen() {
   const nameInputRef = useRef<import('react-native').TextInput>(null);
   const scrollRef = useRef<ScrollView>(null);
   const welcomeOpacity = useRef(new Animated.Value(0)).current;
+  const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [messages, step, textInput, inputMode]);
 
   const dialectLabelText = dialectPreference ? dialectLabel(dialectPreference) : '';
   const selfLevelLabel = selfAssessedLevel ?? '';
@@ -182,14 +184,6 @@ export default function OnboardingScreen() {
       setSelectedSelfLevel(profile.selfAssessedLevel);
     });
   }, [isRetake]);
-
-  const scrollToEnd = useCallback(() => {
-    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
-  }, []);
-
-  useEffect(() => {
-    scrollToEnd();
-  }, [messages, scrollToEnd]);
 
   const speakJaviMessage = async (spanish: string) => {
     if (Platform.OS === 'web') return;
@@ -423,7 +417,11 @@ export default function OnboardingScreen() {
   );
 
   const renderName = () => (
-    <View style={styles.formBlock}>
+    <ScrollView
+      contentContainerStyle={[styles.formBlock, { flexGrow: 1 }]}
+      keyboardShouldPersistTaps="handled"
+      keyboardDismissMode="interactive"
+      showsVerticalScrollIndicator={false}>
       <Text style={styles.screenTitle}>First, what&apos;s your name?</Text>
       <Text style={styles.screenHint}>Javi will use this name throughout all lessons.</Text>
       <AppTextInput
@@ -435,6 +433,9 @@ export default function OnboardingScreen() {
         placeholderTextColor={palette.muted}
         autoCapitalize="words"
         autoCorrect={false}
+        multiline
+        scrollEnabled
+        blurOnSubmit={false}
         returnKeyType="done"
         onSubmitEditing={() => {
           if (userName.trim()) setStep('dialect');
@@ -450,7 +451,7 @@ export default function OnboardingScreen() {
         ]}>
         <Text style={styles.primaryButtonText}>Continue →</Text>
       </Pressable>
-    </View>
+    </ScrollView>
   );
 
   const renderDialect = () => (
@@ -553,8 +554,9 @@ export default function OnboardingScreen() {
       <ScrollView
         ref={scrollRef}
         style={styles.chatScroll}
-        contentContainerStyle={styles.chatContent}
+        contentContainerStyle={[styles.chatContent, { flexGrow: 1 }]}
         keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="interactive"
         showsVerticalScrollIndicator={false}>
         {messages.map((m) => (
           <TextMessageBubble
@@ -571,7 +573,7 @@ export default function OnboardingScreen() {
         ) : null}
       </ScrollView>
 
-      <View style={[styles.assessmentDock, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+      <View style={[styles.assessmentDock, { paddingBottom: Math.max(insets.bottom, 20) }]}>
         <View style={styles.modeToggle}>
           <Pressable
             onPress={() => setInputMode('voice')}
@@ -598,7 +600,11 @@ export default function OnboardingScreen() {
               placeholder="Type your answer in Spanish..."
               placeholderTextColor={palette.muted}
               multiline
+              scrollEnabled
+              blurOnSubmit={false}
+              textAlignVertical="top"
               editable={!assessmentLoading && !finalizing}
+              onFocus={() => scrollToEnd()}
             />
             <Pressable
               onPress={() => void handleUserResponse(textInput)}
@@ -702,8 +708,8 @@ export default function OnboardingScreen() {
       <StatusBar style="light" />
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}>
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={80}>
         {step === 'welcome' ? renderWelcome() : null}
         {step === 'name' ? renderName() : null}
         {step === 'dialect' ? renderDialect() : null}
