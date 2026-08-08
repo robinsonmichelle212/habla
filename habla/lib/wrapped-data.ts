@@ -7,6 +7,7 @@ import {
   type LevelBand,
 } from '@/lib/level-progress';
 import {
+  isStreakSessionLesson,
   overallLessonScore,
   type DrillHistoryEntry,
   type LessonHistoryEntry,
@@ -159,7 +160,9 @@ function daysInMonth(monthKey: MonthKey): number {
 }
 
 function filterLessons(lessons: LessonHistoryEntry[], monthKey: MonthKey): LessonHistoryEntry[] {
-  return lessons.filter((l) => isDateInMonth(l.date, monthKey));
+  return lessons.filter(
+    (l) => isDateInMonth(l.date, monthKey) && !isStreakSessionLesson(l) && !l.placeholder,
+  );
 }
 
 function filterDrills(drills: DrillHistoryEntry[], monthKey: MonthKey): DrillHistoryEntry[] {
@@ -219,9 +222,12 @@ function buildCalendarDays(monthKey: MonthKey, activeDates: Set<string>): Wrappe
 }
 
 function averageScore(lessons: LessonHistoryEntry[]): number {
-  if (!lessons.length) return 0;
-  const sum = lessons.reduce((s, l) => s + overallLessonScore(l), 0);
-  return Math.round(sum / lessons.length);
+  const scored = lessons.filter(
+    (l) => !l.placeholder && !isStreakSessionLesson(l) && l.overallScore != null,
+  );
+  if (!scored.length) return 0;
+  const sum = scored.reduce((s, l) => s + overallLessonScore(l), 0);
+  return Math.round(sum / scored.length);
 }
 
 function skillAverages(lessons: LessonHistoryEntry[]): Record<string, number> {

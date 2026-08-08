@@ -130,6 +130,7 @@ export default function RootLayout() {
           <Stack.Screen name="onboarding" options={{ headerShown: false, gestureEnabled: false }} />
           <Stack.Screen name="lesson" options={{ headerShown: false }} />
           <Stack.Screen name="practice" options={{ headerShown: false }} />
+          <Stack.Screen name="spark" options={{ headerShown: false }} />
           <Stack.Screen name="writing" options={{ headerShown: false }} />
           <Stack.Screen name="level" options={{ headerShown: false }} />
           <Stack.Screen name="progress" options={{ headerShown: false }} />

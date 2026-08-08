@@ -21,6 +21,7 @@ import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
 import { DailyActivityRow } from '@/components/daily-activity-row';
 import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activity';
+import { hasFullActivityToday } from '@/lib/practice-storage';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
 import { hasLastSummary } from '@/lib/last-summary-storage';
 import { getCrashLog, logCrashBreadcrumb } from '@/lib/crash-breadcrumb';
@@ -62,6 +63,7 @@ export default function HomeScreen() {
   const [activityDays, setActivityDays] = useState<DailyActivityDay[]>([]);
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
   const [javiRecommendation, setJaviRecommendation] = useState<string | null>(null);
+  const [showSparkButton, setShowSparkButton] = useState(false);
   const titleTapCountRef = useRef(0);
   const titleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -105,7 +107,7 @@ export default function HomeScreen() {
           console.log('Last crash breadcrumbs:', crashLog);
 
           await recoverUnregisteredSessions();
-          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary, nudge] =
+          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary, nudge, fullToday] =
             await Promise.all([
               getStreakState(),
               getTotalGems(),
@@ -115,6 +117,7 @@ export default function HomeScreen() {
               getLast7DaysActivity(),
               hasLastSummary(),
               resolveLessonNudge(),
+              hasFullActivityToday(),
             ]);
           if (cancelled) return;
 
@@ -126,6 +129,7 @@ export default function HomeScreen() {
           setActivityDays(weekActivity);
           setShowLastSummaryLink(lastSummary);
           setJaviRecommendation(homeRecommendationPreview(nudge));
+          setShowSparkButton(!fullToday);
 
           await refreshShopBadge(gems);
         } finally {
@@ -319,6 +323,22 @@ export default function HomeScreen() {
               <Text style={styles.secondaryButtonText}>Practice</Text>
             </Pressable>
             <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
+
+            {showSparkButton ? (
+              <Pressable
+                onPress={() => {
+                  if (Platform.OS !== 'web') {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  }
+                  router.push('/spark' as Href);
+                }}
+                style={({ pressed }) => [styles.sparkButton, pressed && styles.sparkButtonPressed]}
+                accessibilityRole="button"
+                  accessibilityLabel="Streak session, 60 seconds">
+                <Text style={styles.sparkButtonText}>⚡ Streak — 60 seconds</Text>
+                <Text style={styles.sparkButtonHint}>Keeps your streak alive. Nothing more.</Text>
+              </Pressable>
+            ) : null}
 
             {urgentUnlock ? (
               <Pressable
@@ -526,6 +546,29 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: palette.muted,
+    textAlign: 'center',
+  },
+  sparkButton: {
+    marginTop: 4,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    backgroundColor: 'transparent',
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    alignItems: 'center',
+  },
+  sparkButtonPressed: { opacity: 0.75 },
+  sparkButtonText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.muted,
+  },
+  sparkButtonHint: {
+    marginTop: 2,
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7380',
     textAlign: 'center',
   },
   lastSummaryLink: {

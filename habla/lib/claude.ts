@@ -3136,3 +3136,42 @@ Return JSON only.`;
   const parsed = extractFirstJsonObject(text) as DrillCheckJson;
   return parsed;
 }
+
+/**
+ * Streak session: one warm closing reply. No corrections, no evaluation.
+ * Single short Claude call.
+ */
+export async function askJaviSparkReply(
+  userMessage: string,
+  openingSpanish: string,
+): Promise<string> {
+  const trimmed = userMessage.trim();
+  if (!trimmed) {
+    throw new Error('Message is empty.');
+  }
+
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi, a warm Spanish tutor. This is a 60-second streak session.
+Rules:
+- Reply in Spanish only (you may end with one emoji like 🔥).
+- Maximum 2 short sentences.
+- Acknowledge what the learner said warmly.
+- Do NOT correct grammar, vocabulary, or pronunciation.
+- Do NOT evaluate, score, or teach a grammar point.
+- Close the conversation (e.g. "Hasta mañana" / "Que descanses").
+- You opened with: "${openingSpanish}"`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 120,
+    system,
+    messages: [
+      { role: 'assistant', content: openingSpanish },
+      { role: 'user', content: trimmed },
+    ],
+  });
+
+  return extractText(response);
+}

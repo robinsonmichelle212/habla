@@ -1,5 +1,5 @@
+import { isStreakSessionLesson, overallLessonScore } from '@/lib/practice-storage';
 import type { LessonHistoryEntry } from '@/lib/practice-storage';
-import { overallLessonScore } from '@/lib/practice-storage';
 
 export const LEVEL_BANDS = [
   { id: 'b1-beginner', label: 'B1 Beginner', min: 0, max: 60 },
@@ -46,7 +46,8 @@ function clampScore(n: number): number {
 }
 
 export function getRecentAverageScore(history: LessonHistoryEntry[]): number | null {
-  const recent = history.filter((e) => !e.placeholder).slice(-RECENT_SESSION_COUNT);
+  const recent = history.filter((e) => !e.placeholder && !isStreakSessionLesson(e)).slice(-RECENT_SESSION_COUNT);
+
   if (!recent.length) return null;
   return clampScore(
     recent.reduce((sum, e) => sum + overallLessonScore(e), 0) / recent.length,
@@ -112,7 +113,8 @@ function skillStatus(avg: number): SkillSnapshot['status'] {
 }
 
 export function getSkillSnapshots(history: LessonHistoryEntry[]): SkillSnapshot[] {
-  const recent = history.filter((e) => !e.placeholder).slice(-RECENT_SESSION_COUNT);
+  const recent = history.filter((e) => !e.placeholder && !isStreakSessionLesson(e)).slice(-RECENT_SESSION_COUNT);
+
   if (!recent.length) return [];
 
   const sums = { grammar: 0, vocabulary: 0, fluency: 0, writing: 0, structure: 0 };
@@ -155,7 +157,8 @@ export function getNextLevelRequirements(history: LessonHistoryEntry[]): NextLev
 
   let estimatedSessions: number | null = null;
   if (gap > 0 && history.length >= 2) {
-    const recent = history.filter((e) => !e.placeholder).slice(-RECENT_SESSION_COUNT);
+    const recent = history.filter((e) => !e.placeholder && !isStreakSessionLesson(e)).slice(-RECENT_SESSION_COUNT);
+
     const scores = recent.map((e) => overallLessonScore(e));
     let totalDelta = 0;
     for (let i = 1; i < scores.length; i++) {
@@ -190,7 +193,8 @@ export function estimateSessionsToReachScore(
   if (gap <= 0) return 0;
   if (history.length < 2) return null;
 
-  const recent = history.filter((e) => !e.placeholder).slice(-RECENT_SESSION_COUNT);
+  const recent = history.filter((e) => !e.placeholder && !isStreakSessionLesson(e)).slice(-RECENT_SESSION_COUNT);
+
   const scores = recent.map((e) => overallLessonScore(e));
   let totalDelta = 0;
   for (let i = 1; i < scores.length; i++) {
@@ -203,7 +207,7 @@ export function estimateSessionsToReachScore(
 
 export function getRecentLessonScores(history: LessonHistoryEntry[], count = 5): number[] {
   return history
-    .filter((e) => !e.placeholder)
+    .filter((e) => !e.placeholder && !isStreakSessionLesson(e))
     .slice(-count)
     .map((e) => overallLessonScore(e));
 }
@@ -252,7 +256,7 @@ export function averageScoreForTopic(
 ): number | null {
   const key = topic.trim().toLowerCase();
   const matching = history.filter((e) => {
-    if (e.placeholder) return false;
+    if (e.placeholder || isStreakSessionLesson(e)) return false;
     const t =
       field === 'grammar'
         ? e.breakdown.grammar.topic

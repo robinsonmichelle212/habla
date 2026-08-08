@@ -242,6 +242,42 @@ export async function recordLessonCompleted(today: string = formatLocalDate()): 
   return updateStreak(today);
 }
 
+/**
+ * Streak session: maintains the streak for today without counting a full lesson session.
+ * Does not increment totalSessionsCompleted (milestones / session counts stay lesson-based).
+ */
+export async function recordSparkCompleted(
+  today: string = formatLocalDate(),
+): Promise<StreakUpdateResult> {
+  const prev = await getStreakState();
+
+  const next: StreakState = {
+    ...prev,
+    last7Days: normalizeLast7Days(prev.last7Days, today),
+  };
+
+  if (next.lastSessionDate === null) {
+    next.currentStreak = 1;
+    next.lastSessionDate = today;
+  } else if (next.lastSessionDate === today) {
+    // Already maintained for today.
+  } else {
+    const gap = daysBetween(next.lastSessionDate, today);
+    if (gap === 1) {
+      next.currentStreak += 1;
+    } else {
+      next.currentStreak = 1;
+    }
+    next.lastSessionDate = today;
+  }
+
+  next.longestStreak = Math.max(next.longestStreak, next.currentStreak);
+  next.last7Days = next.last7Days.map((d) => (d.date === today ? { ...d, completed: true } : d));
+
+  await save(next);
+  return { state: next };
+}
+
 export type PracticeStreakUpdateResult = StreakUpdateResult & {
   starsAwarded: number; // practice stars only
 };

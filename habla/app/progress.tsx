@@ -22,6 +22,7 @@ import {
   getWeeklyLessonBalance,
   type WeeklyLessonBalance,
 } from '@/lib/lesson-type-nudge';
+import { getWeeklyActivitySummary, type WeeklyActivitySummary } from '@/lib/daily-activity';
 import { buildWrappedTeaser, currentMonthKey, monthNameOnly, previousMonthKey, wrappedCardTitle } from '@/lib/wrapped-data';
 import {
   generateCurrentWrappedNow,
@@ -76,6 +77,7 @@ export default function ProgressScreen() {
   const [levelExpanded, setLevelExpanded] = useState(false);
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
   const [weeklyBalance, setWeeklyBalance] = useState<WeeklyLessonBalance | null>(null);
+  const [weeklyActivity, setWeeklyActivity] = useState<WeeklyActivitySummary | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -99,7 +101,7 @@ export default function ProgressScreen() {
       void (async () => {
         try {
           await recoverUnregisteredSessions();
-          const [lessonHistory, drillHistory, wraps, unread, lastSummary, latest, overdue, balance] =
+          const [lessonHistory, drillHistory, wraps, unread, lastSummary, latest, overdue, balance, activity] =
             await Promise.all([
               getLessonHistory(),
               getDrillHistory(),
@@ -109,6 +111,7 @@ export default function ProgressScreen() {
               getMostRecentWrapped(),
               isWrappedOverdue(),
               getWeeklyLessonBalance(),
+              getWeeklyActivitySummary(),
             ]);
           if (cancelled) return;
           setLessons(lessonHistory);
@@ -119,6 +122,7 @@ export default function ProgressScreen() {
           setWrappedOverdue(overdue);
           setShowLastSummaryLink(lastSummary);
           setWeeklyBalance(balance);
+          setWeeklyActivity(activity);
           setTodaysScoreInfo(getTodayScoreInfo(lessonHistory, drillHistory));
           setTopScoreWeek(getTopScoreThisWeek(lessonHistory, drillHistory));
           const bestWeek = getBestDayThisWeek(lessonHistory, drillHistory);
@@ -212,6 +216,14 @@ export default function ProgressScreen() {
         {!loading && weeklyBalance ? (
           <View style={styles.weeklyBalanceCard}>
             <Text style={styles.weeklyBalanceTitle}>This week</Text>
+            {weeklyActivity ? (
+              <Text style={styles.weeklyActivitySummary}>
+                {weeklyActivity.fullLessons} full lesson
+                {weeklyActivity.fullLessons === 1 ? '' : 's'} · {weeklyActivity.drills} drill
+                {weeklyActivity.drills === 1 ? '' : 's'} · {weeklyActivity.streakSessions}{' '}
+                streak session{weeklyActivity.streakSessions === 1 ? '' : 's'}
+              </Text>
+            ) : null}
             {(
               [
                 ['Grammar', weeklyBalance.Grammar],
@@ -495,6 +507,13 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: progressPalette.text,
     marginBottom: 2,
+  },
+  weeklyActivitySummary: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: progressPalette.muted,
+    marginBottom: 8,
+    lineHeight: 18,
   },
   weeklyBalanceRow: { gap: 4 },
   weeklyBalanceRowTop: {

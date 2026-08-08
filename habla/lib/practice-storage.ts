@@ -117,6 +117,13 @@ export type LessonHistoryEntry = {
   /** Offline session before history was persisted — no score breakdown. */
   placeholder?: boolean;
   note?: string;
+  /** Minimal streak-saver session — no score / XP / gems. */
+  streakSession?: boolean;
+  /** @deprecated legacy alias — prefer streakSession */
+  spark?: boolean;
+  /** Storage type, e.g. "streak_session" (legacy: "spark"). */
+  type?: string;
+  completed?: boolean;
   /** @deprecated legacy flat scores — kept for old entries */
   scores?: {
     grammar: number;
@@ -406,7 +413,35 @@ function normalizeLessonHistory(raw: unknown): LessonHistoryEntry[] {
   const entries: LessonHistoryEntry[] = [];
 
   for (const item of raw) {
-    const obj = item as Partial<LessonHistoryEntry>;
+    const obj = item as Partial<LessonHistoryEntry> & { type?: string };
+    const isStreakSession =
+      obj.streakSession === true ||
+      obj.spark === true ||
+      obj.type === 'streak_session' ||
+      obj.type === 'spark' ||
+      (typeof obj.lessonType === 'string' &&
+        (obj.lessonType.toLowerCase() === 'streak_session' ||
+          obj.lessonType.toLowerCase() === 'spark'));
+
+    if (isStreakSession) {
+      const date = typeof obj?.date === 'string' ? obj.date : '';
+      if (!date) continue;
+      entries.push({
+        date,
+        overallScore: null,
+        breakdown: normalizeBreakdown({}, undefined),
+        weakAreas: [],
+        focusAreas: [],
+        lessonType: 'streak_session',
+        type: 'streak_session',
+        streakSession: true,
+        // Keep legacy flag so older readers still recognize the day.
+        spark: true,
+        completed: obj.completed !== false,
+      });
+      continue;
+    }
+
     if (obj.placeholder === true) {
       const date = typeof obj?.date === 'string' ? obj.date : '';
       if (!date) continue;
@@ -494,14 +529,55 @@ export function scoreBarColor(score: number): string {
   return '#F87171';
 }
 
-/** Overall session score (0–100). Placeholder entries return 0 for legacy callers. */
+/** Overall session score (0–100). Placeholder / streak-session entries return 0 for legacy callers. */
 export function overallLessonScore(entry: LessonHistoryEntry): number {
-  if (entry.placeholder || entry.overallScore == null) return 0;
+  if (entry.placeholder || isStreakSessionLesson(entry) || entry.overallScore == null) return 0;
   return entry.overallScore;
 }
 
 export function isPlaceholderLesson(entry: LessonHistoryEntry): boolean {
   return entry.placeholder === true;
+}
+
+/**
+ * True for minimal streak-saver history rows.
+ * Accepts both current (`streak_session`) and legacy (`spark`) shapes.
+ */
+export function isStreakSessionLesson(entry: LessonHistoryEntry): boolean {
+  return (
+    entry.streakSession === true ||
+    entry.spark === true ||
+    entry.type === 'streak_session' ||
+    entry.type === 'spark' ||
+    entry.lessonType?.toLowerCase() === 'streak_session' ||
+    entry.lessonType?.toLowerCase() === 'spark'
+  );
+}
+
+/** @deprecated use isStreakSessionLesson — kept for older call sites */
+export const isSparkLesson = isStreakSessionLesson;
+
+/** History entry counts as a streak-maintaining day (lesson, drill-adjacent, or streak session). */
+export function isValidStreakDay(entry: LessonHistoryEntry): boolean {
+  return (
+    entry.completed === true ||
+    entry.spark === true ||
+    entry.streakSession === true ||
+    entry.type === 'spark' ||
+    entry.type === 'streak_session'
+  );
+}
+
+/**
+ * True when the Streak button should stay hidden:
+ * a full lesson, practice drill, or streak session already done today.
+ */
+export async function hasFullActivityToday(today: string = formatLocalDate()): Promise<boolean> {
+  const [lessons, drills] = await Promise.all([getLessonHistory(), getDrillHistory()]);
+  const hasLesson = lessons.some((l) => l.date === today && !isStreakSessionLesson(l));
+  const hasDrill = drills.some((d) => d.date === today);
+  const hasStreakSession = lessons.some((l) => l.date === today && isStreakSessionLesson(l));
+  return hasLesson || hasDrill || hasStreakSession;
 }
 
 function createOfflinePlaceholderEntry(date: string): LessonHistoryEntry {
@@ -597,7 +673,9 @@ export async function upsertLessonHistoryEntry(
   entry: LessonHistoryEntry,
 ): Promise<'created' | 'updated' | 'unchanged'> {
   const history = await getLessonHistory();
-  const idx = findLessonHistoryIndex(history, entry.date, entry.lessonType);
+  const idx = isStreakSessionLesson(entry)
+    ? findStreakSessionIndex(history, entry.date)
+    : findLessonHistoryIndex(history, entry.date, entry.lessonType);
   const candidateProvidedInsights =
     countBreakdownInsightItems(normalizeBreakdown(entry.breakdown)) > 0;
 
@@ -691,6 +769,16 @@ function findLessonHistoryIndex(
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const entry = history[i];
     if (entry.date === date && entry.lessonType === lessonType) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+/** Match legacy spark or current streak_session rows for the same calendar day. */
+function findStreakSessionIndex(history: LessonHistoryEntry[], date: string): number {
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    if (history[i].date === date && isStreakSessionLesson(history[i])) {
       return i;
     }
   }
@@ -830,7 +918,7 @@ function isWithinLastCalendarDays(dateStr: string, today: string, dayCount: numb
 }
 
 function bestLessonScoreForDay(lessons: LessonHistoryEntry[], date: string): number | null {
-  const dayLessons = lessons.filter((e) => e.date === date && !e.placeholder);
+  const dayLessons = lessons.filter((e) => e.date === date && !e.placeholder && !isStreakSessionLesson(e));
   if (!dayLessons.length) return null;
   return Math.max(...dayLessons.map((e) => overallLessonScore(e)));
 }
@@ -849,7 +937,7 @@ function getBestLessonEntryForDay(
   lessons: LessonHistoryEntry[],
   date: string,
 ): LessonHistoryEntry | null {
-  const dayLessons = lessons.filter((e) => e.date === date && !e.placeholder);
+  const dayLessons = lessons.filter((e) => e.date === date && !e.placeholder && !isStreakSessionLesson(e));
   if (!dayLessons.length) return null;
   return dayLessons.reduce((best, e) =>
     overallLessonScore(e) > overallLessonScore(best) ? e : best,
@@ -893,7 +981,7 @@ export function getTodaysLessonEntry(
   history: LessonHistoryEntry[],
   today: string = formatLocalDate(),
 ): LessonHistoryEntry | null {
-  const todays = history.filter((e) => e.date === today && !e.placeholder);
+  const todays = history.filter((e) => e.date === today && !e.placeholder && !isStreakSessionLesson(e));
   if (!todays.length) return null;
   return todays[todays.length - 1];
 }

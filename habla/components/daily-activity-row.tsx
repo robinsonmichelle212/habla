@@ -7,6 +7,7 @@ const palette = {
   grey: '#3D4654',
   greyBorder: '#4A5568',
   gem: '#A78BFA',
+  spark: '#8B95A5',
   dot: '#F4F6F8',
 };
 
@@ -15,6 +16,7 @@ const KIND_LABELS: Record<DailyActivityKind, string> = {
   lesson: 'Lesson completed',
   drill: 'Practice drill',
   both: 'Lesson and drill',
+  spark: 'Streak session',
   gem: 'Gem shop round',
 };
 
@@ -41,28 +43,16 @@ function ActivityCircle({ kind }: { kind: DailyActivityKind }) {
   const label = KIND_LABELS[kind];
 
   if (kind === 'none') {
-    return (
-      <View
-        style={[styles.circle, styles.circleEmpty]}
-        accessibilityLabel={label}
-      />
-    );
+    return <View style={[styles.circle, styles.circleEmpty]} accessibilityLabel={label} />;
   }
 
   if (kind === 'lesson') {
-    return (
-      <View
-        style={[styles.circle, styles.circleFull]}
-        accessibilityLabel={label}
-      />
-    );
+    return <View style={[styles.circle, styles.circleFull]} accessibilityLabel={label} />;
   }
 
   if (kind === 'drill') {
     return (
-      <View
-        style={[styles.circle, styles.circleEmpty]}
-        accessibilityLabel={label}>
+      <View style={[styles.circle, styles.circleEmpty]} accessibilityLabel={label}>
         <View style={styles.halfFill} />
       </View>
     );
@@ -70,18 +60,22 @@ function ActivityCircle({ kind }: { kind: DailyActivityKind }) {
 
   if (kind === 'both') {
     return (
-      <View
-        style={[styles.circle, styles.circleFull]}
-        accessibilityLabel={label}>
+      <View style={[styles.circle, styles.circleFull]} accessibilityLabel={label}>
         <View style={styles.centerDot} />
       </View>
     );
   }
 
+  if (kind === 'spark') {
+    return (
+      <View style={[styles.circle, styles.circleEmpty, styles.sparkCircle]} accessibilityLabel={label}>
+        <Text style={styles.sparkEmoji}>⚡</Text>
+      </View>
+    );
+  }
+
   return (
-    <View
-      style={[styles.circle, styles.circleEmpty, styles.gemCircle]}
-      accessibilityLabel={label}>
+    <View style={[styles.circle, styles.circleEmpty, styles.gemCircle]} accessibilityLabel={label}>
       <Text style={styles.gemEmoji}>💎</Text>
     </View>
   );
@@ -138,6 +132,16 @@ const styles = StyleSheet.create({
     backgroundColor: palette.dot,
     top: (CIRCLE_SIZE - 7) / 2,
     left: (CIRCLE_SIZE - 7) / 2,
+  },
+  sparkCircle: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderColor: palette.spark,
+  },
+  sparkEmoji: {
+    fontSize: 12,
+    lineHeight: 14,
+    color: palette.spark,
   },
   gemCircle: {
     justifyContent: 'center',

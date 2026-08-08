@@ -8,7 +8,7 @@ import {
   TOTAL_CURRICULUM_WEEKS,
   type GrammarCurriculumState,
 } from '@/lib/grammar-curriculum';
-import { getLessonHistory, overallLessonScore } from '@/lib/practice-storage';
+import { getLessonHistory, isStreakSessionLesson, overallLessonScore } from '@/lib/practice-storage';
 import { addStars, formatLocalDate, getStreakState } from '@/lib/streak';
 
 const MILESTONES_KEY = 'milestones';
@@ -284,9 +284,10 @@ export async function checkPersonalBestMilestone(
   today: string = formatLocalDate(),
 ): Promise<MilestoneCelebration | null> {
   const history = await getLessonHistory();
-  if (history.length === 0) return null;
+  const scored = history.filter((e) => !isStreakSessionLesson(e) && e.overallScore != null);
+  if (scored.length === 0) return null;
 
-  const previousBest = Math.max(...history.map((e) => overallLessonScore(e)));
+  const previousBest = Math.max(...scored.map((e) => overallLessonScore(e)));
   if (newScore <= previousBest) return null;
 
   const def = defFor('personal-best');
