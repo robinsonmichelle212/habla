@@ -38,6 +38,7 @@ import {
 import {
   formatReminderTimeLabel,
   getReminderTime,
+  NOTIFICATION_TIME_OPTIONS,
   setReminderTime,
   type ReminderTime,
 } from '@/lib/streak-notifications';
@@ -47,6 +48,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { useRouter, type Href } from 'expo-router';
 import {
   ActivityIndicator,
+  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -305,6 +307,7 @@ export default function LevelScreen() {
               onReminderChange={async (hour, minute) => {
                 await setReminderTime(hour, minute);
                 setReminderTimeState({ hour, minute });
+                Alert.alert('', 'Notificación actualizada ✅');
               }}
               onResetCurriculum={handleResetCurriculum}
               onRetakeAssessment={() => router.push('/onboarding?retake=1' as Href)}
@@ -340,13 +343,6 @@ function SettingsSection({
   onRetakeAssessment: () => void;
   embedded?: boolean;
 }) {
-  const options: ReminderTime[] = [
-    { hour: 18, minute: 0 },
-    { hour: 19, minute: 0 },
-    { hour: 20, minute: 0 },
-    { hour: 21, minute: 0 },
-  ];
-
   return (
     <View style={embedded ? undefined : styles.section}>
       {!embedded ? <Text style={styles.sectionTitle}>Settings</Text> : null}
@@ -369,20 +365,31 @@ function SettingsSection({
 
         <Text style={[styles.settingsLabel, styles.settingsLabelSpaced]}>Streak reminder time</Text>
         <Text style={styles.settingsHint}>
-          Current: {reminderTime ? formatReminderTimeLabel(reminderTime) : '8:00 PM'}
+          Current: {reminderTime ? formatReminderTimeLabel(reminderTime) : '12:00pm'}
         </Text>
-        <View style={styles.reminderRow}>
-          {options.map((opt) => {
+        <View style={styles.reminderCards}>
+          {NOTIFICATION_TIME_OPTIONS.map((opt) => {
             const selected =
               reminderTime?.hour === opt.hour && reminderTime?.minute === opt.minute;
             return (
               <Pressable
-                key={`${opt.hour}-${opt.minute}`}
+                key={opt.id}
                 onPress={() => void onReminderChange(opt.hour, opt.minute)}
-                style={[styles.reminderChip, selected && styles.reminderChipSelected]}>
-                <Text style={[styles.reminderChipText, selected && styles.reminderChipTextSelected]}>
-                  {formatReminderTimeLabel(opt)}
+                style={[styles.reminderCard, selected && styles.reminderCardSelected]}
+                accessibilityRole="button"
+                accessibilityState={{ selected }}
+                accessibilityLabel={`${opt.timeLabel} ${opt.spanishLabel}`}>
+                <View style={styles.reminderCardTop}>
+                  <Text style={[styles.reminderCardTime, selected && styles.reminderCardTextSelected]}>
+                    {opt.timeLabel}
+                  </Text>
+                  <Text style={styles.reminderCardEmoji}>{opt.emoji}</Text>
+                </View>
+                <Text
+                  style={[styles.reminderCardSpanish, selected && styles.reminderCardTextSelected]}>
+                  {opt.spanishLabel}
                 </Text>
+                <Text style={styles.reminderCardDesc}>{opt.description}</Text>
               </Pressable>
             );
           })}
@@ -551,21 +558,30 @@ const styles = StyleSheet.create({
   },
   demoToggleCopy: { flex: 1 },
   settingsHint: { fontSize: 13, fontWeight: '600', color: palette.muted, marginBottom: 12 },
-  reminderRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
-  reminderChip: {
-    borderRadius: 999,
+  reminderCards: { gap: 10, marginBottom: 16 },
+  reminderCard: {
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
     backgroundColor: palette.background,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 4,
   },
-  reminderChipSelected: {
+  reminderCardSelected: {
     borderColor: palette.accent,
     backgroundColor: 'rgba(255, 122, 89, 0.12)',
   },
-  reminderChipText: { fontSize: 13, fontWeight: '700', color: palette.muted },
-  reminderChipTextSelected: { color: palette.accent },
+  reminderCardTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  reminderCardTime: { fontSize: 16, fontWeight: '900', color: palette.text },
+  reminderCardEmoji: { fontSize: 18 },
+  reminderCardSpanish: { fontSize: 14, fontWeight: '800', color: palette.text },
+  reminderCardDesc: { fontSize: 13, fontWeight: '600', color: palette.muted, lineHeight: 18 },
+  reminderCardTextSelected: { color: palette.accent },
   settingsDangerBtn: {
     borderRadius: 10,
     borderWidth: 1,
