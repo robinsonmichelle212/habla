@@ -28,7 +28,7 @@ import { useDemoMode } from '@/contexts/demo-mode-context';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -40,6 +40,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const palette = {
@@ -78,6 +79,8 @@ export default function GemShopScreen() {
   const [successUnlock, setSuccessUnlock] = useState<SuccessUnlock | null>(null);
   const [expiredNotices, setExpiredNotices] = useState<ExpiredUnlockNotice[]>([]);
   const [tick, setTick] = useState(() => Date.now());
+  const scrollRef = useRef<ScrollView>(null);
+  const roundOffsets = useRef<Partial<Record<BonusRoundId, number>>>({});
 
   const load = useCallback(async () => {
     const [g, p, s] = await Promise.all([
@@ -116,14 +119,22 @@ export default function GemShopScreen() {
     return () => clearInterval(interval);
   }, [load, progress]);
 
-  useEffect(() => {
-    void (async () => {
-      const g = await getTotalGems();
-      const affordable = await getAffordableNextLevels(g);
-      dismissShopBadge(affordable);
-      await load();
-    })();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void (async () => {
+        const g = await getTotalGems();
+        const affordable = await getAffordableNextLevels(g);
+        dismissShopBadge(affordable);
+        await load();
+      })();
+    }, [load]),
+  );
+
+  const scrollToRound = (roundId: BonusRoundId) => {
+    const y = roundOffsets.current[roundId];
+    if (y == null || !scrollRef.current) return;
+    scrollRef.current.scrollTo({ y: Math.max(0, y - 16), animated: true });
+  };
 
   const launchRound = (roundId: BonusRoundId, level: RoundLevel) => {
     router.push({ pathname: '/bonus-round', params: { round: roundId, level: String(level) } });
@@ -326,6 +337,7 @@ export default function GemShopScreen() {
         <ActivityIndicator color={palette.accent} style={{ marginTop: 40 }} />
       ) : (
         <ScrollView
+          ref={scrollRef}
           contentContainerStyle={[styles.scroll, { paddingBottom: Math.max(insets.bottom, 20) }]}
           showsVerticalScrollIndicator={false}>
           <Text style={styles.statsLine}>
@@ -334,32 +346,18 @@ export default function GemShopScreen() {
 
           {recommendation ? (
             <View style={styles.recCard}>
-              <Text style={styles.recLabel}>Javi recommends</Text>
-              <Text style={styles.recText}>
-                {recommendation.roundEmoji} {recommendation.roundName} Level {recommendation.level} —{' '}
-                {recommendation.reason}
+              <Text style={styles.recLabel}>🎯 Javi recomienda para ti:</Text>
+              <Text style={styles.recRound}>
+                {recommendation.roundEmoji} {recommendation.roundName}
               </Text>
-              {recommendation.canAfford || demoMode ? (
-                <Pressable
-                  onPress={() => requestUnlock(recommendation.roundId, recommendation.level)}
-                  style={styles.recBtn}>
-                  <Text style={styles.recBtnText}>
-                    {demoMode
-                      ? `Unlock for FREE in demo 🎭`
-                      : recommendation.cost > 0
-                        ? `Unlock for ${recommendation.cost} 💎`
-                        : `Play Level ${recommendation.level} ▶`}
-                  </Text>
-                </Pressable>
-              ) : recommendation.cost === 0 ? (
-                <Pressable
-                  onPress={() => handlePlay(recommendation.roundId, recommendation.level)}
-                  style={styles.recBtn}>
-                  <Text style={styles.recBtnText}>Play Level {recommendation.level} ▶</Text>
-                </Pressable>
-              ) : (
-                <Text style={styles.recNeed}>Need {recommendation.cost - gems} more gems</Text>
-              )}
+              <Text style={styles.recReason}>{recommendation.reason}</Text>
+              <Pressable
+                onPress={() => scrollToRound(recommendation.roundId)}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={`Ver ${recommendation.roundName}`}>
+                <Text style={styles.recLink}>Ver ronda →</Text>
+              </Pressable>
             </View>
           ) : null}
 
@@ -391,9 +389,14 @@ export default function GemShopScreen() {
             const expiryUrgency = pending ? getExpiryUrgency(pending.expiresAt, tick) : null;
             const shopState = getRoundShopState(progress, round.id, tick);
             const isQuizGateway = round.id === 'quiz';
-            const showAffordBadge = canAffordRoundNextLevel(progress, round.id, gems, tick);
+            const isRecommended = recommendation?.roundId === round.id;
             return (
-              <View key={round.id} style={styles.card}>
+              <View
+                key={round.id}
+                style={[styles.card, isRecommended && styles.cardRecommended]}
+                onLayout={(e) => {
+                  roundOffsets.current[round.id] = e.nativeEvent.layout.y;
+                }}>
                 {isQuizGateway ? (
                   <Text style={styles.gatewayLabel}>Start here 👆 — your first unlock</Text>
                 ) : null}
@@ -402,11 +405,6 @@ export default function GemShopScreen() {
                   <View style={styles.cardTitles}>
                     <Text style={styles.cardName}>{round.name}</Text>
                   </View>
-                  {showAffordBadge ? (
-                    <View style={styles.affordBadge}>
-                      <Text style={styles.affordBadgeText}>!</Text>
-                    </View>
-                  ) : null}
                 </View>
                 <Text style={styles.cardDesc} numberOfLines={2}>
                   {round.description}
@@ -566,18 +564,10 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 8,
   },
-  recLabel: { fontSize: 12, fontWeight: '900', color: palette.accent, textTransform: 'uppercase' },
-  recText: { fontSize: 15, fontWeight: '700', color: palette.text, lineHeight: 22 },
-  recBtn: {
-    alignSelf: 'flex-start',
-    backgroundColor: palette.accent,
-    borderRadius: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    marginTop: 4,
-  },
-  recBtnText: { fontSize: 14, fontWeight: '900', color: '#0B0F14' },
-  recNeed: { fontSize: 13, fontWeight: '700', color: palette.muted },
+  recLabel: { fontSize: 13, fontWeight: '900', color: palette.accent },
+  recRound: { fontSize: 17, fontWeight: '900', color: palette.text },
+  recReason: { fontSize: 14, fontWeight: '600', color: palette.muted, lineHeight: 20 },
+  recLink: { fontSize: 14, fontWeight: '800', color: palette.accent, marginTop: 2 },
   subtitle: {
     fontSize: 14,
     fontWeight: '600',
@@ -592,19 +582,14 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 10,
   },
+  cardRecommended: {
+    borderColor: palette.accent,
+    borderWidth: 1.5,
+  },
   cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   cardEmoji: { fontSize: 32 },
   cardTitles: { flex: 1 },
   cardName: { fontSize: 17, fontWeight: '900', color: palette.text },
-  affordBadge: {
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    backgroundColor: palette.accent,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  affordBadgeText: { fontSize: 13, fontWeight: '900', color: '#0B0F14' },
   cardDesc: { fontSize: 14, fontWeight: '600', color: palette.muted, lineHeight: 20 },
   gatewayLabel: {
     fontSize: 12,
