@@ -3,7 +3,15 @@ import { useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useFocusEffect } from '@react-navigation/native';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Animated,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   completeDailyChallenge,
@@ -50,7 +58,9 @@ export default function HomeScreen() {
   const insets = useSafeAreaInsets();
   const [streakHydrated, setStreakHydrated] = useState(false);
   const [currentStreak, setCurrentStreak] = useState(0);
+  const [displayStreak, setDisplayStreak] = useState(0);
   const [totalGems, setTotalGems] = useState(0);
+  const [displayGems, setDisplayGems] = useState(0);
   const [dailyChallenge, setDailyChallenge] = useState<DailyChallenge | null>(null);
   const [challengeExpanded, setChallengeExpanded] = useState(false);
   const [challengeConfirm, setChallengeConfirm] = useState(false);
@@ -66,6 +76,88 @@ export default function HomeScreen() {
   const [showSparkButton, setShowSparkButton] = useState(false);
   const titleTapCountRef = useRef(0);
   const titleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bounceAnim = useRef(new Animated.Value(1)).current;
+  const previousGems = useRef(0);
+  const gemsHydratedOnce = useRef(false);
+  const gemsRafRef = useRef<number | null>(null);
+
+  const triggerBounce = useCallback(() => {
+    Animated.sequence([
+      Animated.timing(bounceAnim, {
+        toValue: 1.3,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.spring(bounceAnim, {
+        toValue: 1,
+        friction: 3,
+        tension: 40,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, [bounceAnim]);
+
+  const animateGemsTo = useCallback((target: number) => {
+    const start = previousGems.current;
+    const difference = target - start;
+    if (difference <= 0) {
+      setDisplayGems(target);
+      return;
+    }
+
+    const duration = Math.min(difference * 100, 1000);
+    const startTime = Date.now();
+
+    if (gemsRafRef.current != null) {
+      cancelAnimationFrame(gemsRafRef.current);
+      gemsRafRef.current = null;
+    }
+
+    const tickFrame = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplayGems(Math.round(start + difference * eased));
+      if (progress < 1) {
+        gemsRafRef.current = requestAnimationFrame(tickFrame);
+      } else {
+        gemsRafRef.current = null;
+      }
+    };
+
+    gemsRafRef.current = requestAnimationFrame(tickFrame);
+  }, []);
+
+  useEffect(() => {
+    if (currentStreak === 0) {
+      setDisplayStreak(0);
+      return;
+    }
+
+    const duration = 800;
+    const startFrom = currentStreak > 10 ? currentStreak - 10 : 0;
+    const steps = Math.max(currentStreak - startFrom, 1);
+    const stepDuration = duration / steps;
+
+    setDisplayStreak(startFrom);
+    let current = startFrom;
+    const timer = setInterval(() => {
+      current += 1;
+      setDisplayStreak(current);
+      if (current >= currentStreak) {
+        clearInterval(timer);
+        triggerBounce();
+      }
+    }, stepDuration);
+
+    return () => clearInterval(timer);
+  }, [currentStreak, triggerBounce]);
+
+  useEffect(() => {
+    return () => {
+      if (gemsRafRef.current != null) cancelAnimationFrame(gemsRafRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     void shouldShowOnboarding().then((show) => {
@@ -123,6 +215,17 @@ export default function HomeScreen() {
 
           setCurrentStreak(streak.currentStreak);
           setTotalGems(gems);
+          if (!gemsHydratedOnce.current) {
+            setDisplayGems(gems);
+            previousGems.current = gems;
+            gemsHydratedOnce.current = true;
+          } else if (gems > previousGems.current) {
+            animateGemsTo(gems);
+            previousGems.current = gems;
+          } else {
+            setDisplayGems(gems);
+            previousGems.current = gems;
+          }
           setDailyChallenge(challenge);
           setUrgentUnlock(getUrgentPendingUnlock(shopProgress));
           setGreeting(name ? timeBasedGreeting(name) : null);
@@ -140,7 +243,7 @@ export default function HomeScreen() {
       return () => {
         cancelled = true;
       };
-    }, [refreshShopBadge]),
+    }, [animateGemsTo, refreshShopBadge]),
   );
 
   const openGemShop = async () => {
@@ -190,6 +293,12 @@ export default function HomeScreen() {
       }
       if (result.challenge) {
         const nextGems = await addGems(1);
+        if (nextGems > previousGems.current) {
+          animateGemsTo(nextGems);
+        } else {
+          setDisplayGems(nextGems);
+        }
+        previousGems.current = nextGems;
         setTotalGems(nextGems);
         setChallengeConfirm(true);
         await refreshShopBadge(nextGems);
@@ -226,7 +335,7 @@ export default function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel={showShopBadge ? 'Open gem shop, new unlock available' : 'Open gem shop'}>
               <Text style={styles.gemEmoji}>💎</Text>
-              <Text style={styles.gemCount}>{streakHydrated ? String(totalGems) : '—'}</Text>
+              <Text style={styles.gemCount}>{streakHydrated ? String(displayGems) : '—'}</Text>
               {showShopBadge ? (
                 <View style={styles.shopBadge}>
                   <Text style={styles.shopBadgeText}>!</Text>
@@ -236,8 +345,10 @@ export default function HomeScreen() {
           </View>
 
           <View style={styles.streakRow} accessibilityLabel="Current streak">
-            <Text style={styles.streakEmoji}>🔥</Text>
-            <Text style={styles.streakNumber}>{streakHydrated ? String(currentStreak) : '—'}</Text>
+            <Animated.Text style={[styles.streakEmoji, { transform: [{ scale: bounceAnim }] }]}>
+              🔥
+            </Animated.Text>
+            <Text style={styles.streakNumber}>{streakHydrated ? String(displayStreak) : '—'}</Text>
           </View>
 
           {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
@@ -305,10 +416,10 @@ export default function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel="Start today's lesson">
               <Text style={styles.primaryButtonText}>Start Today&apos;s Lesson</Text>
+              {javiRecommendation ? (
+                <Text style={styles.primaryButtonHint}>{javiRecommendation}</Text>
+              ) : null}
             </Pressable>
-            {javiRecommendation ? (
-              <Text style={styles.javiRecommendation}>{javiRecommendation}</Text>
-            ) : null}
 
             <Pressable
               onPress={() => {
@@ -321,8 +432,8 @@ export default function HomeScreen() {
               accessibilityRole="button"
               accessibilityLabel="Practice mode">
               <Text style={styles.secondaryButtonText}>Practice</Text>
+              <Text style={styles.secondaryButtonHint}>5 mins · drill your errors</Text>
             </Pressable>
-            <Text style={styles.practiceHint}>5 mins · keeps your streak alive</Text>
 
             {showSparkButton ? (
               <Pressable
@@ -334,7 +445,7 @@ export default function HomeScreen() {
                 }}
                 style={({ pressed }) => [styles.sparkButton, pressed && styles.sparkButtonPressed]}
                 accessibilityRole="button"
-                  accessibilityLabel="Streak session, 60 seconds">
+                accessibilityLabel="Streak session, 60 seconds">
                 <Text style={styles.sparkButtonText}>⚡ Streak — 60 seconds</Text>
                 <Text style={styles.sparkButtonHint}>Keeps your streak alive. Nothing more.</Text>
               </Pressable>
@@ -504,52 +615,58 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   actions: {
-    gap: 10,
+    gap: 12,
     paddingBottom: 8,
   },
   primaryButton: {
     backgroundColor: palette.accent,
     borderRadius: 16,
-    paddingVertical: 18,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 72,
   },
   primaryButtonPressed: { backgroundColor: palette.accentPressed },
   primaryButtonText: {
     fontSize: 18,
     fontWeight: '900',
     color: '#0B0F14',
+    textAlign: 'center',
   },
-  javiRecommendation: {
+  primaryButtonHint: {
+    marginTop: 4,
     fontSize: 13,
     fontWeight: '600',
-    color: palette.muted,
+    color: 'rgba(11, 15, 20, 0.72)',
     textAlign: 'center',
-    marginTop: -4,
-    marginBottom: 2,
-    paddingHorizontal: 8,
   },
   secondaryButton: {
     backgroundColor: palette.surface,
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    paddingVertical: 14,
+    paddingVertical: 16,
+    paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 72,
   },
   secondaryButtonPressed: { opacity: 0.9 },
   secondaryButtonText: {
-    fontSize: 16,
-    fontWeight: '800',
+    fontSize: 18,
+    fontWeight: '900',
     color: palette.text,
+    textAlign: 'center',
   },
-  practiceHint: {
+  secondaryButtonHint: {
+    marginTop: 4,
     fontSize: 13,
     fontWeight: '600',
     color: palette.muted,
     textAlign: 'center',
   },
   sparkButton: {
-    marginTop: 4,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
