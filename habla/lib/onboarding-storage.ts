@@ -156,6 +156,10 @@ export async function isDemoModeEnabled(): Promise<boolean> {
 
 export async function setDemoModeEnabled(enabled: boolean): Promise<void> {
   await AsyncStorage.setItem(DEMO_MODE_KEY, enabled ? 'true' : 'false');
+  if (!enabled) {
+    const { clearDemoUnlocks } = await import('@/lib/gem-shop-demo-session');
+    clearDemoUnlocks();
+  }
 }
 
 /** True when the user already has saved progress (lost onboarding flag, dev reload, etc.). */

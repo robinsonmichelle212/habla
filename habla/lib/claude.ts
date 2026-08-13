@@ -1748,11 +1748,42 @@ Return JSON exactly:
 
   const parsed = extractFirstJsonObject(extractText(response)) as PlacementAssessmentResult;
   const week = typeof parsed.grammarStartingWeek === 'number' ? parsed.grammarStartingWeek : 1;
+  const validLevels: PlacementAssessmentResult['confirmedLevel'][] = [
+    'A1',
+    'A2',
+    'B1 Beginner',
+    'B1 Developing',
+    'B1 Confident',
+    'B1 Strong',
+    'B2 Emerging',
+  ];
+  const confirmedLevel = validLevels.includes(
+    parsed.confirmedLevel as PlacementAssessmentResult['confirmedLevel'],
+  )
+    ? (parsed.confirmedLevel as PlacementAssessmentResult['confirmedLevel'])
+    : (selfAssessedLevel as PlacementAssessmentResult['confirmedLevel']);
+  const adjustmentDirection =
+    parsed.adjustmentDirection === 'higher' ||
+    parsed.adjustmentDirection === 'lower' ||
+    parsed.adjustmentDirection === 'same'
+      ? parsed.adjustmentDirection
+      : 'same';
+
   return {
-    ...parsed,
+    confirmedLevel,
+    adjustedFromSelfAssessment: Boolean(parsed.adjustedFromSelfAssessment),
+    adjustmentDirection,
     grammarStartingWeek: Math.max(1, Math.min(TOTAL_CURRICULUM_WEEKS, Math.trunc(week))),
-    keyStrengths: Array.isArray(parsed.keyStrengths) ? parsed.keyStrengths.slice(0, 2) : [],
-    keyWeaknesses: Array.isArray(parsed.keyWeaknesses) ? parsed.keyWeaknesses.slice(0, 2) : [],
+    keyStrengths: Array.isArray(parsed.keyStrengths)
+      ? parsed.keyStrengths.filter((s) => typeof s === 'string').slice(0, 2)
+      : [],
+    keyWeaknesses: Array.isArray(parsed.keyWeaknesses)
+      ? parsed.keyWeaknesses.filter((s) => typeof s === 'string').slice(0, 2)
+      : [],
+    personalNote:
+      typeof parsed.personalNote === 'string' && parsed.personalNote.trim()
+        ? parsed.personalNote.trim()
+        : `¡Hola ${userName}! Estoy listo para aprender contigo.`,
   };
 }
 

@@ -23,6 +23,7 @@ import {
   getExpiryUrgency,
 } from '@/lib/gem-shop-expiry';
 import { getShopRecommendation, type ShopRecommendation } from '@/lib/gem-shop-recommendations';
+import { clearDemoUnlocks } from '@/lib/gem-shop-demo-session';
 import { getTotalGems } from '@/lib/gems';
 import { useDemoMode } from '@/contexts/demo-mode-context';
 import { useRouter } from 'expo-router';
@@ -121,13 +122,18 @@ export default function GemShopScreen() {
 
   useFocusEffect(
     useCallback(() => {
+      // Demo unlocks are session-only for this Gem Shop visit.
+      // Closing and reopening the shop resets them; in-play unlocks survive until return.
+      if (demoMode) {
+        clearDemoUnlocks();
+      }
       void (async () => {
         const g = await getTotalGems();
         const affordable = await getAffordableNextLevels(g);
         dismissShopBadge(affordable);
         await load();
       })();
-    }, [load]),
+    }, [demoMode, load]),
   );
 
   const scrollToRound = (roundId: BonusRoundId) => {

@@ -14,11 +14,26 @@ import {
 import { getWeekDefinition } from '@/lib/grammar-curriculum';
 
 const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
+const ROUND_GENERATION_TIMEOUT_MS = 30_000;
+
+function getApiKey(): string {
+  const key = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY?.trim();
+  console.log('Gem shop API key:', key ? 'found' : 'missing');
+  if (!key) {
+    throw new Error('Missing EXPO_PUBLIC_ANTHROPIC_API_KEY environment variable.');
+  }
+  return key;
+}
 
 function getClient(): Anthropic {
-  const key = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY?.trim();
-  if (!key) throw new Error('Missing EXPO_PUBLIC_ANTHROPIC_API_KEY');
-  return new Anthropic({ apiKey: key, dangerouslyAllowBrowser: true });
+  return new Anthropic({
+    apiKey: getApiKey(),
+    dangerouslyAllowBrowser: true,
+  });
+}
+
+function getModel(): string {
+  return process.env.EXPO_PUBLIC_ANTHROPIC_MODEL?.trim() || DEFAULT_MODEL;
 }
 
 function extractText(response: Anthropic.Message): string {
@@ -31,6 +46,38 @@ function extractJson<T>(text: string): T {
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1) throw new Error('No JSON in response');
   return JSON.parse(text.slice(start, end + 1)) as T;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Round generation timed out after ${ms}ms`)), ms);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** 30s timeout around a single generation attempt. */
+export async function generateWithTimeout<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await withTimeout(fn(), ROUND_GENERATION_TIMEOUT_MS);
+  } catch (error) {
+    const err = error as { message?: string; status?: number; statusCode?: number };
+    console.log(`Round generation error (${label}):`, err?.message ?? error);
+    console.log(
+      `Round generation error status (${label}):`,
+      err?.status ?? err?.statusCode ?? 'n/a',
+    );
+    throw error;
+  }
+}
+
+/** @deprecated use generateWithTimeout — kept for callers expecting retry wrapper name */
+export async function generateWithRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  return generateWithTimeout(label, fn);
 }
 
 function calibrationBlock(cal: RoundCalibration): string {
@@ -279,31 +326,33 @@ export type CultureRoundContent = {
 };
 
 export async function generateCultureRound(cal: RoundCalibration): Promise<CultureRoundContent> {
-  const topic = CULTURE_TOPICS[Math.floor(Math.random() * CULTURE_TOPICS.length)];
-  const client = getClient();
-  const { block: gateBlock } = await curriculumGateBlock();
-  const response = await client.messages.create({
-    model: DEFAULT_MODEL,
-    max_tokens: 1200,
-    system: 'Return ONLY valid JSON. Javi presents cultural content in Spanish.',
-    messages: [
-      {
-        role: 'user',
-        content: `${calibrationBlock(cal)}
+  return generateWithRetry('culture', async () => {
+    const topic = CULTURE_TOPICS[Math.floor(Math.random() * CULTURE_TOPICS.length)];
+    const client = getClient();
+    const { block: gateBlock } = await curriculumGateBlock();
+    const response = await client.messages.create({
+      model: getModel(),
+      max_tokens: 900,
+      system: 'Return ONLY valid JSON. Javi presents cultural content in Spanish. Keep presentation under 120 words.',
+      messages: [
+        {
+          role: 'user',
+          content: `${calibrationBlock(cal)}
 ${gateBlock}
 Culture deep dive topic: ${topic}
 Presentation and discussion prompts must only use unlocked grammar.
 Return JSON:
 {
   "topic": "...",
-  "presentation": "Spanish paragraphs scaled to level — shorter for level 1",
-  "discussionPrompts": ["questions in Spanish"],
+  "presentation": "Spanish paragraphs scaled to level — shorter for level 1, max ~120 words",
+  "discussionPrompts": ["2-3 questions in Spanish"],
   "culturalNote": "Brief English+Spanish cultural note for encyclopedia"
 }`,
-      },
-    ],
+        },
+      ],
+    });
+    return extractJson<CultureRoundContent>(extractText(response));
   });
-  return extractJson<CultureRoundContent>(extractText(response));
 }
 
 export type MusicRoundContent = {
@@ -328,25 +377,37 @@ const MUSIC_ROTATION = [
 ];
 
 export async function generateMusicRound(cal: RoundCalibration): Promise<MusicRoundContent> {
-  const pick = MUSIC_ROTATION[Math.floor(Math.random() * MUSIC_ROTATION.length)];
-  const client = getClient();
-  const { block: gateBlock } = await curriculumGateBlock();
-  const response = await client.messages.create({
-    model: DEFAULT_MODEL,
-    max_tokens: 1600,
-    system: 'Return ONLY valid JSON. Text-only lyrics excerpt, no audio.',
-    messages: [
-      {
-        role: 'user',
-        content: `${calibrationBlock(cal)}
+  return generateWithRetry('music', async () => {
+    const pick = MUSIC_ROTATION[Math.floor(Math.random() * MUSIC_ROTATION.length)];
+    const client = getClient();
+    const { block: gateBlock } = await curriculumGateBlock();
+    const response = await client.messages.create({
+      model: getModel(),
+      max_tokens: 1100,
+      system:
+        'Return ONLY valid JSON. Text-only lyrics excerpt, no audio. Keep verses short (4-8 lines).',
+      messages: [
+        {
+          role: 'user',
+          content: `${calibrationBlock(cal)}
 ${gateBlock}
 Music round: ${pick.artist} — ${pick.song}
-Return JSON with context, verses as text (fewer/simpler at level 1), lineByLine explanations, vocabDrill (5 words), theme.
-Explanations and drills must only reference unlocked grammar.`,
-      },
-    ],
+Return compact JSON:
+{
+  "artist": "...",
+  "song": "...",
+  "context": "2-3 short Spanish sentences",
+  "verses": "4-8 lyric lines as plain text",
+  "lineByLine": [{"line":"...","explanation":"..."}],
+  "vocabDrill": [{"spanish":"...","english":"..."}],
+  "theme": "..."
+}
+Explanations and drills must only reference unlocked grammar. Keep total response short.`,
+        },
+      ],
+    });
+    return extractJson<MusicRoundContent>(extractText(response));
   });
-  return extractJson<MusicRoundContent>(extractText(response));
 }
 
 export type FilmRoundContent = {
@@ -369,27 +430,35 @@ const FILM_ROTATION = [
 ];
 
 export async function generateFilmRound(cal: RoundCalibration): Promise<FilmRoundContent> {
-  const title = FILM_ROTATION[Math.floor(Math.random() * FILM_ROTATION.length)];
-  const client = getClient();
-  const { block: gateBlock } = await curriculumGateBlock();
-  const response = await client.messages.create({
-    model: DEFAULT_MODEL,
-    max_tokens: 1600,
-    system: 'Return ONLY valid JSON.',
-    messages: [
-      {
-        role: 'user',
-        content: `${calibrationBlock(cal)}
+  return generateWithRetry('film', async () => {
+    const title = FILM_ROTATION[Math.floor(Math.random() * FILM_ROTATION.length)];
+    const client = getClient();
+    const { block: gateBlock } = await curriculumGateBlock();
+    const response = await client.messages.create({
+      model: getModel(),
+      max_tokens: 1100,
+      system: 'Return ONLY valid JSON. Keep scene and dialogue concise.',
+      messages: [
+        {
+          role: 'user',
+          content: `${calibrationBlock(cal)}
 ${gateBlock}
 Film/TV round: ${title}
-Describe a scene in Spanish, key dialogue as text, vocabulary, discussion questions, Spain vs Argentina dialect notes.
-Match dialogue complexity and cultural depth to level guide.
-Dialogue and discussion must only use unlocked grammar.
-Return JSON.`,
-      },
-    ],
+Return compact JSON:
+{
+  "title": "...",
+  "sceneDescription": "short Spanish scene setup",
+  "dialogue": "6-10 short dialogue lines as text",
+  "vocabulary": [{"spanish":"...","english":"...","note":"..."}],
+  "discussionQuestions": ["2-3 Spanish questions"],
+  "dialectNotes": "brief Spain vs Argentina note"
+}
+Match complexity to level. Dialogue and discussion must only use unlocked grammar. Keep response short.`,
+        },
+      ],
+    });
+    return extractJson<FilmRoundContent>(extractText(response));
   });
-  return extractJson<FilmRoundContent>(extractText(response));
 }
 
 export async function generateImmersionOpening(cal: RoundCalibration): Promise<string> {

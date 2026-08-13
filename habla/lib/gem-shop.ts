@@ -14,6 +14,11 @@ import {
   scheduleUnlockExpiryWarning,
 } from '@/lib/gem-shop-notifications';
 import { deductGems, getTotalGems } from '@/lib/gems';
+import {
+  addDemoUnlock,
+  getDemoUnlockLevel,
+  hasDemoUnlock,
+} from '@/lib/gem-shop-demo-session';
 import { isDemoModeEnabled } from '@/lib/onboarding-storage';
 import { getProfileBadges } from '@/lib/profile-badges';
 import { formatLocalDate } from '@/lib/streak';
@@ -505,6 +510,7 @@ export function isLevelPlayable(
   level: RoundLevel,
   now = Date.now(),
 ): boolean {
+  if (hasDemoUnlock(roundId, level)) return true;
   return canPlayLevelInUnlocks(progress[roundId].unlocks, level, now);
 }
 
@@ -564,6 +570,16 @@ export function getRoundShopState(
   roundId: BonusRoundId,
   now = Date.now(),
 ): RoundShopState {
+  const demoLevel = getDemoUnlockLevel(roundId);
+  if (demoLevel) {
+    return {
+      kind: 'play',
+      level: demoLevel,
+      highestScore: 0,
+      qualified: false,
+    };
+  }
+
   if (isRoundMastered(progress, roundId)) {
     return { kind: 'mastered' };
   }
@@ -680,19 +696,28 @@ export async function isRoundLevelUnlocked(
 export async function purchaseLevel(
   roundId: BonusRoundId,
   level: RoundLevel,
-): Promise<{ success: boolean; error?: string; gemsRemaining?: number }> {
+): Promise<{ success: boolean; error?: string; gemsRemaining?: number; demo?: boolean }> {
   const progress = await getGemShopProgress();
-  const nextLevel = getNextUnlockLevel(progress, roundId);
+  const gemsRemaining = await getTotalGems();
 
   if (isLevelPlayable(progress, roundId, level)) {
-    return { success: true, gemsRemaining: await getTotalGems() };
+    return { success: true, gemsRemaining };
   }
 
+  const demo = await isDemoModeEnabled();
+
+  if (demo) {
+    // Session-only unlock — never touch AsyncStorage / gems / spent totals.
+    addDemoUnlock(roundId, level);
+    return { success: true, gemsRemaining, demo: true };
+  }
+
+  const nextLevel = getNextUnlockLevel(progress, roundId);
   if (nextLevel !== level) {
     return { success: false, error: 'Unlock previous level first' };
   }
 
-  const cost = (await isDemoModeEnabled()) ? 0 : getLevelCost(roundId, level);
+  const cost = getLevelCost(roundId, level);
   if (cost > 0) {
     const result = await deductGems(cost);
     if (!result.success) {
@@ -731,6 +756,8 @@ export async function purchaseRound(roundId: BonusRoundId) {
 }
 
 export async function recordRoundPlayed(roundId: BonusRoundId, level: RoundLevel): Promise<void> {
+  if (await isDemoModeEnabled()) return;
+
   const progress = await getGemShopProgress();
   const round = progress[roundId];
   progress[roundId] = {
@@ -790,24 +817,30 @@ export async function recordLevelAttempt(
   scoreOutOf10: number,
 ): Promise<{ qualified: boolean; highestScore: number; newlyQualified: boolean }> {
   const score = Math.max(0, Math.min(10, Math.round(scoreOutOf10)));
+  const qualified = score >= LEVEL_QUALIFY_SCORE;
+
+  if (await isDemoModeEnabled()) {
+    // Demo: score is display-only — never write gemShopProgress.
+    return { qualified, highestScore: score, newlyQualified: false };
+  }
+
   const progress = await getGemShopProgress();
   const round = progress[roundId];
   const existing = round.levelScores.find((s) => s.level === level);
   const highestScore = Math.max(existing?.highestScore ?? 0, score);
   const wasQualified = Boolean(existing?.qualified) || isLevelCompletedInUnlocks(round.unlocks, level);
-  const qualified = highestScore >= LEVEL_QUALIFY_SCORE;
   const newlyQualified = qualified && !wasQualified;
 
   const levelScores = dedupeLevelScores([
     ...round.levelScores.filter((s) => s.level !== level),
-    { level, highestScore, qualified },
+    { level, highestScore, qualified: highestScore >= LEVEL_QUALIFY_SCORE },
   ]);
 
   const now = Date.now();
   let unlocks = [...round.unlocks];
   const existingUnlock = unlocks.find((u) => u.level === level);
 
-  if (qualified) {
+  if (highestScore >= LEVEL_QUALIFY_SCORE) {
     const updatedRecord: LevelUnlockRecord = existingUnlock
       ? { ...existingUnlock, completed: true }
       : { level, unlockedAt: now, expiresAt: now, completed: true };
@@ -830,7 +863,11 @@ export async function recordLevelAttempt(
   };
   await saveProgress(progress);
 
-  return { qualified, highestScore, newlyQualified };
+  return {
+    qualified: highestScore >= LEVEL_QUALIFY_SCORE,
+    highestScore,
+    newlyQualified,
+  };
 }
 
 /** Convert a 0–100 percentage into a 0–10 level score. */

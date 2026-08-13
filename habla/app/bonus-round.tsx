@@ -48,6 +48,8 @@ import {
 import { addGems } from '@/lib/gems';
 import { milestonesAfterBonusRound } from '@/lib/milestones';
 import { parseJaviResponse } from '@/lib/javi-response';
+import { isDemoModeEnabled } from '@/lib/onboarding-storage';
+import { useDemoMode } from '@/contexts/demo-mode-context';
 import { speakJavi, stopJaviSpeech } from '@/lib/javi-speech';
 import { ensureMicPermission } from '@/lib/mic-permission';
 import { awardBadge } from '@/lib/profile-badges';
@@ -83,7 +85,7 @@ const palette = {
 
 const QUIZ_TIMER_SEC_DEFAULT = 15;
 
-type Stage = 'gate' | 'loading' | 'play' | 'result';
+type Stage = 'gate' | 'loading' | 'play' | 'result' | 'error';
 
 function safeSpanish(text: string): string {
   return text.split(/\r?\n\s*(Translate|Translation)\s*:/i)[0].trim();
@@ -97,6 +99,7 @@ function parseRoundId(value: string | undefined): BonusRoundId | null {
 export default function BonusRoundScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { enabled: demoMode } = useDemoMode();
   const { round: roundParam, level: levelParam } = useLocalSearchParams<{
     round?: string;
     level?: string;
@@ -150,9 +153,11 @@ export default function BonusRoundScreen() {
   const [shadowScores, setShadowScores] = useState<number[]>([]);
   const [shadowFeedback, setShadowFeedback] = useState<string | null>(null);
 
-  // Culture / music / film presentation
-  const [presentation, setPresentation] = useState('');
+  // Culture / music / film — content lives in chat bubbles only (no separate header)
   const [roundMeta, setRoundMeta] = useState<Record<string, unknown>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRetrying, setLoadRetrying] = useState(false);
+  const loadGenerationRef = useRef(0);
 
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const { celebrate } = useMilestoneCelebration();
@@ -166,43 +171,56 @@ export default function BonusRoundScreen() {
 
   const finishRound = useCallback(
     async (title: string, detail: string, gems: number, scoreOutOf10: number = 10) => {
+      const demo = demoMode || (await isDemoModeEnabled());
       let qualified = scoreOutOf10 >= LEVEL_QUALIFY_SCORE;
-      if (roundId) {
+
+      if (roundId && !demo) {
         await recordRoundPlayed(roundId, roundLevel);
         const attempt = await recordLevelAttempt(roundId, roundLevel, scoreOutOf10);
         qualified = attempt.qualified;
         if (qualified && roundLevel === 5) {
           await awardBadge(eliteBadgeId(roundId), eliteBadgeLabel(roundId), '🏆');
         }
+      } else if (roundId && demo) {
+        // Display-only — do not persist progress, badges, or gems.
+        const attempt = await recordLevelAttempt(roundId, roundLevel, scoreOutOf10);
+        qualified = attempt.qualified;
       }
+
       if (gems > 0) {
-        await addGems(gems);
+        if (!demo) {
+          await addGems(gems);
+        }
         setGemsEarned(gems);
         setGemToastAmount(gems);
-        setShowGemToast(true);
+        setShowGemToast(!demo);
       } else {
         setGemsEarned(0);
       }
-      const celebrations = await milestonesAfterBonusRound();
-      if (celebrations.length > 0) {
-        const milestoneGems = celebrations.reduce((sum, c) => sum + c.gemsAwarded, 0);
-        celebrate(celebrations, {
-          onAllDismissed: () => {
-            if (milestoneGems > 0) {
-              setGemsEarned((prev) => prev + milestoneGems);
-              setGemToastAmount(milestoneGems);
-              setShowGemToast(true);
-            }
-          },
-        });
+
+      if (!demo) {
+        const celebrations = await milestonesAfterBonusRound();
+        if (celebrations.length > 0) {
+          const milestoneGems = celebrations.reduce((sum, c) => sum + c.gemsAwarded, 0);
+          celebrate(celebrations, {
+            onAllDismissed: () => {
+              if (milestoneGems > 0) {
+                setGemsEarned((prev) => prev + milestoneGems);
+                setGemToastAmount(milestoneGems);
+                setShowGemToast(true);
+              }
+            },
+          });
+        }
       }
+
       setResultScore(scoreOutOf10);
       setResultQualified(qualified);
       setResultTitle(title);
       setResultDetail(detail);
       setStage('result');
     },
-    [roundId, roundLevel, celebrate],
+    [roundId, roundLevel, celebrate, demoMode],
   );
 
   const buildQuizResultCopy = useCallback(
@@ -287,6 +305,7 @@ export default function BonusRoundScreen() {
     setStage('loading');
     setResultScore(null);
     setResultQualified(false);
+    setLoadError(null);
     try {
       const cal = await buildRoundCalibration(roundId, roundLevel);
       setCalibration(cal);
@@ -294,10 +313,7 @@ export default function BonusRoundScreen() {
       setQuizTimer(cal.quizTimerSec);
       const exclude = [...usedQuizPromptsRef.current];
       const qs = await generateQuizRound(cal, exclude);
-      usedQuizPromptsRef.current = [
-        ...exclude,
-        ...qs.map((q) => q.prompt),
-      ].slice(-80);
+      usedQuizPromptsRef.current = [...exclude, ...qs.map((q) => q.prompt)].slice(-80);
       setQuizQuestions(qs);
       setQuizIdx(0);
       setQuizScore(0);
@@ -305,10 +321,12 @@ export default function BonusRoundScreen() {
       setQuizSelected(null);
       setQuizAwaitingNext(false);
       setStage('play');
-    } catch {
-      Alert.alert('Could not load round', 'Check your connection and try again.', [
-        { text: 'OK', onPress: () => setStage('result') },
-      ]);
+    } catch (error) {
+      const err = error as { message?: string; status?: number };
+      console.log('Round generation error:', err?.message ?? error);
+      console.log('Round generation error status:', err?.status ?? 'n/a');
+      setLoadError('Could not load round — tap to retry');
+      setStage('error');
     }
   }, [roundId, roundLevel]);
 
@@ -369,113 +387,167 @@ export default function BonusRoundScreen() {
     [chatInput, chatSending, chatMessages, chatTurns, roundId, maxChatTurns],
   );
 
-  useEffect(() => {
+  const loadRoundContent = useCallback(async (opts?: { manualRetry?: boolean }) => {
     if (!roundId) {
       router.replace('/gem-shop');
       return;
     }
-    void (async () => {
+
+    const generation = ++loadGenerationRef.current;
+    setLoadError(null);
+    setLoadRetrying(Boolean(opts?.manualRetry));
+    setStage('loading');
+
+    const runLoad = async () => {
       const playable = await isRoundLevelPlayable(roundId, roundLevel);
+      if (generation !== loadGenerationRef.current) return;
       if (!playable) {
-        Alert.alert('Unlock first', `Purchase Level ${roundLevel} in the Gem Shop — you have 24 hours to complete it.`, [
-          { text: 'OK', onPress: () => router.replace('/gem-shop') },
-        ]);
+        Alert.alert(
+          'Unlock first',
+          `Purchase Level ${roundLevel} in the Gem Shop — you have 24 hours to complete it.`,
+          [{ text: 'OK', onPress: () => router.replace('/gem-shop') }],
+        );
         return;
       }
-      setStage('loading');
-      try {
-        const cal = await buildRoundCalibration(roundId, roundLevel);
-        setCalibration(cal);
-        setMaxChatTurns(cal.chatTurns);
-        setQuizTimerSec(cal.quizTimerSec);
-        setQuizTimer(cal.quizTimerSec);
 
-        switch (roundId) {
-          case 'quiz': {
-            const qs = await generateQuizRound(cal, usedQuizPromptsRef.current);
-            usedQuizPromptsRef.current = [
-              ...usedQuizPromptsRef.current,
-              ...qs.map((q) => q.prompt),
-            ].slice(-80);
-            setQuizQuestions(qs);
-            setQuizIdx(0);
-            setQuizScore(0);
-            setQuizLocked(false);
-            setQuizSelected(null);
-            setQuizAwaitingNext(false);
-            break;
-          }
-          case 'slang': {
-            const c = await generateSlangRound(cal);
-            setSlangContent(c);
-            setSlangPhase('intro');
-            break;
-          }
-          case 'roleplay': {
-            const c = await generateRoleplayRound(cal);
-            setRoleplayContent(c);
-            setChatMessages([{ role: 'assistant', text: c.openingLine }]);
-            break;
-          }
-          case 'shadowing': {
-            const s = await generateShadowingRound(cal);
-            setShadowSentences(s);
-            setShadowIdx(0);
-            setShadowScores([]);
-            break;
-          }
-          case 'culture': {
-            const c = await generateCultureRound(cal);
-            setPresentation(c.presentation);
-            setRoundMeta({ culture: c });
-            setChatMessages([
-              { role: 'assistant', text: `${c.presentation}\n\n${c.discussionPrompts[0] ?? '¿Qué opinas?'}` },
-            ]);
-            break;
-          }
-          case 'immersion': {
-            const open = await generateImmersionOpening(cal);
-            setChatMessages([{ role: 'assistant', text: open }]);
-            break;
-          }
-          case 'music': {
-            const m = await generateMusicRound(cal);
-            setPresentation(`${m.context}\n\n${m.verses}`);
-            setRoundMeta({ music: m });
-            setChatMessages([
-              {
-                role: 'assistant',
-                text: `${m.context}\n\n${m.verses}\n\n¿Qué te transmite esta canción?`,
-              },
-            ]);
-            break;
-          }
-          case 'film': {
-            const f = await generateFilmRound(cal);
-            setPresentation(`${f.sceneDescription}\n\n${f.dialogue}`);
-            setRoundMeta({ film: f });
-            setChatMessages([
-              {
-                role: 'assistant',
-                text: `${f.sceneDescription}\n\n${f.discussionQuestions[0] ?? '¿Qué opinas?'}`,
-              },
-            ]);
-            break;
-          }
+      const cal = await buildRoundCalibration(roundId, roundLevel);
+      if (generation !== loadGenerationRef.current) return;
+      setCalibration(cal);
+      setMaxChatTurns(cal.chatTurns);
+      setQuizTimerSec(cal.quizTimerSec);
+      setQuizTimer(cal.quizTimerSec);
+      setRoundMeta({});
+      setChatMessages([]);
+
+      switch (roundId) {
+        case 'quiz': {
+          const qs = await generateQuizRound(cal, usedQuizPromptsRef.current);
+          if (generation !== loadGenerationRef.current) return;
+          usedQuizPromptsRef.current = [
+            ...usedQuizPromptsRef.current,
+            ...qs.map((q) => q.prompt),
+          ].slice(-80);
+          setQuizQuestions(qs);
+          setQuizIdx(0);
+          setQuizScore(0);
+          setQuizLocked(false);
+          setQuizSelected(null);
+          setQuizAwaitingNext(false);
+          break;
         }
-        setStage('play');
-      } catch {
-        Alert.alert('Could not load round', 'Check your connection and try again.', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        case 'slang': {
+          const c = await generateSlangRound(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setSlangContent(c);
+          setSlangPhase('intro');
+          break;
+        }
+        case 'roleplay': {
+          const c = await generateRoleplayRound(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setRoleplayContent(c);
+          setChatMessages([{ role: 'assistant', text: c.openingLine }]);
+          break;
+        }
+        case 'shadowing': {
+          const s = await generateShadowingRound(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setShadowSentences(s);
+          setShadowIdx(0);
+          setShadowScores([]);
+          break;
+        }
+        case 'culture': {
+          const c = await generateCultureRound(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setRoundMeta({ culture: c });
+          // Introduction once only — Javi's first chat message (no header duplicate).
+          setChatMessages([
+            {
+              role: 'assistant',
+              text: `${c.presentation}\n\n${c.discussionPrompts[0] ?? '¿Qué opinas?'}`,
+            },
+          ]);
+          break;
+        }
+        case 'immersion': {
+          const open = await generateImmersionOpening(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setChatMessages([{ role: 'assistant', text: open }]);
+          break;
+        }
+        case 'music': {
+          const m = await generateMusicRound(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setRoundMeta({ music: m });
+          setChatMessages([
+            {
+              role: 'assistant',
+              text: `${m.context}\n\n${m.verses}\n\n¿Qué te transmite esta canción?`,
+            },
+          ]);
+          break;
+        }
+        case 'film': {
+          const f = await generateFilmRound(cal);
+          if (generation !== loadGenerationRef.current) return;
+          setRoundMeta({ film: f });
+          setChatMessages([
+            {
+              role: 'assistant',
+              text: `${f.sceneDescription}\n\n${f.dialogue}\n\n${f.discussionQuestions[0] ?? '¿Qué opinas?'}`,
+            },
+          ]);
+          break;
+        }
       }
-    })();
+
+      if (generation !== loadGenerationRef.current) return;
+      setStage('play');
+    };
+
+    try {
+      if (!opts?.manualRetry) setLoadRetrying(false);
+      await runLoad();
+    } catch (error) {
+      if (generation !== loadGenerationRef.current) return;
+      const err = error as { message?: string; status?: number };
+      console.log('Round generation error:', err?.message ?? error);
+      console.log('Round generation error status:', err?.status ?? 'n/a');
+      // Automatic second attempt after 2s before showing error UI.
+      setLoadRetrying(true);
+      await new Promise((r) => setTimeout(r, 2000));
+      if (generation !== loadGenerationRef.current) return;
+      try {
+        await runLoad();
+      } catch (retryError) {
+        if (generation !== loadGenerationRef.current) return;
+        const retryErr = retryError as { message?: string; status?: number };
+        console.log('Round generation error:', retryErr?.message ?? retryError);
+        console.log('Round generation error status:', retryErr?.status ?? 'n/a');
+        setLoadError('Could not load round — tap to retry');
+        setStage('error');
+      }
+    } finally {
+      if (generation === loadGenerationRef.current) {
+        setLoadRetrying(false);
+      }
+    }
+  }, [roundId, roundLevel, router]);
+
+  useEffect(() => {
+    void loadRoundContent();
     return () => {
+      loadGenerationRef.current += 1;
       stopJaviSpeech();
       if (timerRef.current) clearInterval(timerRef.current);
       if (quizAdvanceRef.current) clearTimeout(quizAdvanceRef.current);
     };
-  }, [roundId, roundLevel, router]);
+  }, [loadRoundContent]);
+
+  const handleRetryLoad = useCallback(() => {
+    void loadRoundContent({ manualRetry: true });
+  }, [loadRoundContent]);
 
   // Quiz timer
   useEffect(() => {
@@ -543,12 +615,19 @@ export default function BonusRoundScreen() {
       void sendChat(
         (msgs) => askSlangJavi(slangContent.expressions, msgs),
         async (messages) => {
-          await saveVocabularyWord(slangContent.slangCard.spanish, {
-            source: 'slang',
-            english: slangContent.slangCard.english,
-            exampleSpanish: slangContent.slangCard.exampleSpanish,
-          });
-          void finishRound('Slang round complete!', 'Slang card saved to vocabulary 📚', 2, 10);
+          if (!demoMode) {
+            await saveVocabularyWord(slangContent.slangCard.spanish, {
+              source: 'slang',
+              english: slangContent.slangCard.english,
+              exampleSpanish: slangContent.slangCard.exampleSpanish,
+            });
+          }
+          void finishRound(
+            'Slang round complete!',
+            demoMode ? 'Demo only — slang card not saved' : 'Slang card saved to vocabulary 📚',
+            2,
+            10,
+          );
         },
       );
       return;
@@ -568,22 +647,26 @@ export default function BonusRoundScreen() {
         return askCultureJavi('cultura', msgs);
       },
       async (messages) => {
-        if (roundId === 'culture' && culture) {
-          await addCulturalNote(culture.culturalNote, culture.topic, 'Culture Round');
-        }
-        if (roundId === 'music' && music) {
-          for (const v of music.vocabDrill.slice(0, 5)) {
-            await saveVocabularyWord(v.spanish, {
-              source: 'music',
-              english: v.english,
-            });
+        if (!demoMode) {
+          if (roundId === 'culture' && culture) {
+            await addCulturalNote(culture.culturalNote, culture.topic, 'Culture Round');
+          }
+          if (roundId === 'music' && music) {
+            for (const v of music.vocabDrill.slice(0, 5)) {
+              await saveVocabularyWord(v.spanish, {
+                source: 'music',
+                english: v.english,
+              });
+            }
+          }
+          if (roundId === 'immersion') {
+            await awardBadge('immersion', 'Inmersión', '🔇');
           }
         }
         if (roundId === 'immersion') {
           const ev = await evaluateImmersion(
             messages.map((m) => ({ role: m.role, content: m.text })),
           );
-          await awardBadge('immersion', 'Inmersión', '🔇');
           const gems = immersionRoundGems(ev.score);
           void finishRound(`Inmersión: ${ev.score}%`, ev.feedback, gems, percentToLevelScore(ev.score));
         } else {
@@ -615,7 +698,36 @@ export default function BonusRoundScreen() {
   if (stage === 'loading' || stage === 'gate') {
     return (
       <SafeAreaView style={styles.safeArea}>
-        <ActivityIndicator color={palette.accent} size="large" style={{ flex: 1 }} />
+        <View style={styles.loadingWrap}>
+          <ActivityIndicator color={palette.accent} size="large" />
+          <Text style={styles.loadingText}>
+            {loadRetrying ? 'Loading... 🔄' : 'Loading...'}
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (stage === 'error') {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <StatusBar style="light" />
+        <View style={styles.resultWrap}>
+          <Text style={styles.resultTitle}>Could not load round</Text>
+          <Text style={styles.resultDetail}>
+            {loadError ?? 'Check your connection and try again.'}
+          </Text>
+          <Pressable
+            onPress={handleRetryLoad}
+            style={({ pressed }) => [styles.primaryBtn, pressed && styles.optionPressed]}>
+            <Text style={styles.primaryBtnText}>Try again 🔄</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.replace('/gem-shop')}
+            style={({ pressed }) => [styles.secondaryBtn, pressed && styles.optionPressed]}>
+            <Text style={styles.secondaryBtnText}>Exit</Text>
+          </Pressable>
+        </View>
       </SafeAreaView>
     );
   }
@@ -636,13 +748,28 @@ export default function BonusRoundScreen() {
         <StatusBar style="light" />
         {showGemToast ? <GemEarnedToast amount={gemToastAmount} onDone={() => setShowGemToast(false)} /> : null}
         <View style={styles.resultWrap}>
+          {demoMode ? (
+            <View style={styles.demoBanner}>
+              <Text style={styles.demoBannerTitle}>🎭 Demo session — nothing saved</Text>
+              <Text style={styles.demoBannerBody}>
+                Score shown but not saved. Gems shown but not added. Level not saved to progress.
+                Next level is only available while demo unlock lasts.
+              </Text>
+            </View>
+          ) : null}
           <Text style={styles.resultEmoji}>{def.emoji}</Text>
           <Text style={styles.resultTitle}>{resultTitle}</Text>
           <Text style={styles.resultDetail}>{resultDetail}</Text>
           {roundLevel === 5 && resultQualified ? (
-            <Text style={styles.eliteNote}>🏆 Elite {def.name} badge earned!</Text>
+            <Text style={styles.eliteNote}>
+              {demoMode ? '🏆 Elite badge (demo only — not saved)' : `🏆 Elite ${def.name} badge earned!`}
+            </Text>
           ) : null}
-          {gemsEarned > 0 ? <Text style={styles.gemsEarned}>+{gemsEarned} 💎</Text> : null}
+          {gemsEarned > 0 ? (
+            <Text style={styles.gemsEarned}>
+              {demoMode ? `+${gemsEarned} 💎 (demo — not added)` : `+${gemsEarned} 💎`}
+            </Text>
+          ) : null}
           {showUnlockNext ? (
             <Pressable
               onPress={() => void unlockNextLevel()}
@@ -656,7 +783,9 @@ export default function BonusRoundScreen() {
                 <ActivityIndicator color="#0B0F14" />
               ) : (
                 <Text style={styles.primaryBtnText}>
-                  Unlock Level {roundLevel + 1} — {nextLevelCost} 💎
+                  {demoMode
+                    ? `Unlock Level ${roundLevel + 1} — FREE in demo 🎭`
+                    : `Unlock Level ${roundLevel + 1} — ${nextLevelCost} 💎`}
                 </Text>
               )}
             </Pressable>
@@ -708,7 +837,6 @@ export default function BonusRoundScreen() {
           scrollToEndDeps={[chatMessages, chatSending]}
           contentContainerStyle={[styles.scroll, { flexGrow: 1, paddingBottom: 16 }]}
           footer={textChatFooter}>
-          {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
           {chatBubbleNodes}
         </ConversationInputLayout>
       ) : (
@@ -817,7 +945,6 @@ export default function BonusRoundScreen() {
 
             {roundId === 'roleplay' ? (
               <View style={styles.block}>
-                {presentation ? <Text style={styles.presentation}>{presentation}</Text> : null}
                 {chatBubbleNodes}
                 <RoleplayMic
                   onTranscript={async (text) => {
@@ -930,7 +1057,6 @@ const styles = StyleSheet.create({
   slangArg: { fontSize: 14, fontWeight: '700', color: palette.muted },
   slangMean: { fontSize: 14, fontWeight: '600', color: palette.text },
   slangEx: { fontSize: 13, fontWeight: '600', color: palette.muted, fontStyle: 'italic' },
-  presentation: { fontSize: 16, fontWeight: '600', color: palette.text, lineHeight: 24, marginBottom: 12 },
   userBubble: {
     alignSelf: 'flex-end',
     backgroundColor: 'rgba(255, 122, 89, 0.2)',
@@ -979,6 +1105,43 @@ const styles = StyleSheet.create({
   shadowEnglish: { fontSize: 14, fontWeight: '600', color: palette.muted, textAlign: 'center' },
   feedback: { fontSize: 14, fontWeight: '700', color: palette.accent, textAlign: 'center' },
   resultWrap: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 12 },
+  loadingWrap: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 14,
+    paddingHorizontal: 24,
+  },
+  loadingText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.muted,
+    textAlign: 'center',
+  },
+  demoBanner: {
+    alignSelf: 'stretch',
+    backgroundColor: 'rgba(251, 146, 60, 0.16)',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 146, 60, 0.45)',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 6,
+    marginBottom: 8,
+  },
+  demoBannerTitle: {
+    fontSize: 15,
+    fontWeight: '900',
+    color: '#FB923C',
+    textAlign: 'center',
+  },
+  demoBannerBody: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   resultEmoji: { fontSize: 56 },
   resultTitle: { fontSize: 26, fontWeight: '900', color: palette.text, textAlign: 'center' },
   resultDetail: { fontSize: 16, fontWeight: '600', color: palette.muted, textAlign: 'center' },
