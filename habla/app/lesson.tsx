@@ -210,6 +210,8 @@ export default function LessonScreen() {
   const [nudgeMessage, setNudgeMessage] = useState<string | null>(null);
   const [overrideBlockedMessage, setOverrideBlockedMessage] = useState<string | null>(null);
   const [weeklyOverrideUsed, setWeeklyOverrideUsed] = useState(false);
+  const [readLessonOpened, setReadLessonOpened] = useState(false);
+  const readAutoOpenedRef = useRef(false);
   const recommendedKindRef = useRef<SelectableLessonKind>('grammar');
   const [lessonFocus, setLessonFocus] = useState<LessonFocusContext | null>(null);
   const [topErrorDna, setTopErrorDna] = useState<ErrorDNAItem[]>([]);
@@ -474,9 +476,17 @@ export default function LessonScreen() {
     if (lessonKind === 'read') {
       setLoadingFocus(false);
       setLessonFocus(null);
+      resetLessonState();
+      if (!readAutoOpenedRef.current) {
+        readAutoOpenedRef.current = true;
+        setReadLessonOpened(true);
+        router.push('/read-lesson');
+      }
       return;
     }
 
+    readAutoOpenedRef.current = false;
+    setReadLessonOpened(false);
     let cancelled = false;
     setLoadingFocus(true);
     resetLessonState();
@@ -493,7 +503,7 @@ export default function LessonScreen() {
           buildInterleavingContext(),
         ]);
         if (cancelled) return;
-        setFeynmanNeeded(needsFeynman);
+        setFeynmanNeeded(demoMode ? false : needsFeynman);
         setInterleavingContext(interleaving);
         setLessonSession({
           lessonType: lessonKindToLessonType(lessonKind),
@@ -584,7 +594,7 @@ export default function LessonScreen() {
     return () => {
       cancelled = true;
     };
-  }, [lessonKind, resetLessonState, demoMode, nudgeReady]);
+  }, [lessonKind, resetLessonState, demoMode, nudgeReady, router]);
 
   const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [
     warmUpMessages,
@@ -650,6 +660,22 @@ export default function LessonScreen() {
     setWarmUpSending(true);
 
     try {
+      if (demoModeRef.current) {
+        setWarmUpMessages((prev) => [
+          ...prev,
+          {
+            id: newId(),
+            role: 'assistant',
+            spanish: 'Perfecto. Lo entiendes bien. Ahora vamos a practicarlo.',
+            translation: 'Perfect. You understand it well. Now let\'s practise it.',
+          },
+        ]);
+        setTimeout(() => {
+          void completeFeynmanAndStartWriting();
+        }, 800);
+        return;
+      }
+
       const online = await checkIsOnline();
       const question = buildFeynmanQuestion(lessonFocus);
 
@@ -725,6 +751,19 @@ export default function LessonScreen() {
     setWarmUpMessages((prev) => [...prev, { id: newId(), role: 'user', spanish: trimmed }]);
 
     try {
+      if (demoModeRef.current) {
+        const reply = {
+          spanish: '¡Perfecto! Cuando quieras, pasa a la escritura. ✍️',
+          translation: 'Perfect! When you are ready, move on to writing.',
+        };
+        setWarmUpReadyForWriting(true);
+        setWarmUpMessages((prev) => [
+          ...prev,
+          { id: newId(), role: 'assistant', spanish: reply.spanish, translation: reply.translation },
+        ]);
+        return;
+      }
+
       const online = await checkIsOnline();
       if (!online) {
         const reply = offlineWarmUpReply(javiCount);
@@ -1810,7 +1849,7 @@ export default function LessonScreen() {
               contentContainerStyle={styles.lessonPillScroll}>
               {LESSON_OPTIONS.map((opt) => {
                 const selected = lessonKind === opt.id;
-                const overrideLocked = weeklyOverrideUsed && !selected;
+                const overrideLocked = !demoMode && weeklyOverrideUsed && !selected;
                 return (
                   <Pressable
                     key={opt.id}
@@ -1819,22 +1858,29 @@ export default function LessonScreen() {
 
                       if (opt.id === lessonKind) {
                         if (opt.id === 'read') {
+                          readAutoOpenedRef.current = true;
+                          setReadLessonOpened(true);
                           router.push('/read-lesson');
                         }
                         return;
                       }
 
-                      if (weeklyOverrideUsed) {
+                      if (!demoMode && weeklyOverrideUsed) {
                         setOverrideBlockedMessage(
                           'Ya has cambiado la lección esta semana.\n¡Confía en Javi! 😄',
                         );
                         return;
                       }
 
-                      void markWeeklyOverrideUsed().then(() => setWeeklyOverrideUsed(true));
+                      if (!demoMode) {
+                        void markWeeklyOverrideUsed().then(() => setWeeklyOverrideUsed(true));
+                      }
                       setOverrideBlockedMessage(null);
                       setNudgeMessage(null);
                       if (opt.id === 'read') {
+                        resetLessonState();
+                        readAutoOpenedRef.current = false;
+                        setReadLessonOpened(false);
                         setLessonKind('read');
                         return;
                       }
@@ -1860,15 +1906,11 @@ export default function LessonScreen() {
               })}
             </ScrollView>
           </View>
-          {lessonKind === 'read' && phase === 'warmup' ? (
-            <Pressable
-              onPress={() => router.push('/read-lesson')}
-              style={({ pressed }) => [
-                styles.readStartButton,
-                pressed && styles.readStartButtonPressed,
-              ]}>
-              <Text style={styles.readStartButtonText}>Empezar lectura 📖</Text>
-            </Pressable>
+          {lessonKind === 'read' && phase === 'warmup' && !readLessonOpened ? (
+            <View style={styles.readAutoStart}>
+              <ActivityIndicator color={palette.accent} />
+              <Text style={styles.readAutoStartText}>Opening reading with Javi…</Text>
+            </View>
           ) : null}
           <View style={styles.phaseTimerRow}>
             <View style={styles.phaseIndicatorWrap}>
@@ -1898,9 +1940,9 @@ export default function LessonScreen() {
             <Text style={styles.offlineNote}>📡 Offline — using a saved introduction</Text>
           ) : null}
 
-          {phase === 'warmup' || phase === 'feynman' || phase === 'writing' ? (
+          {phase === 'warmup' || phase === 'feynman' ? (
             <>
-              {phase === 'warmup' && lessonFocus?.kind === 'grammar' ? (
+              {phase === 'warmup' && lessonFocus?.kind === 'grammar' && !demoMode ? (
                 <Phase1VerbGuide focus={lessonFocus} />
               ) : null}
               {warmUpMessages.map((m) => (
@@ -1917,7 +1959,7 @@ export default function LessonScreen() {
                   }
                 />
               ))}
-              {phase === 'warmup' && warmUpReadyForWriting ? (
+              {phase === 'warmup' && warmUpReadyForWriting && lessonKind !== 'read' ? (
                 <Pressable
                   onPress={() => proceedAfterWarmup()}
                   style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
@@ -2213,19 +2255,19 @@ const styles = StyleSheet.create({
     color: palette.text,
     lineHeight: 19,
   },
-  readStartButton: {
+  readAutoStart: {
     marginTop: 10,
     marginBottom: 4,
-    backgroundColor: palette.accent,
-    borderRadius: 12,
-    paddingVertical: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 12,
   },
-  readStartButtonPressed: { opacity: 0.9 },
-  readStartButtonText: {
-    fontSize: 15,
-    fontWeight: '900',
-    color: '#0B0F14',
+  readAutoStartText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.muted,
   },
   phaseTimerRow: {
     flexDirection: 'row',

@@ -25,15 +25,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
+  LayoutAnimation,
   Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  UIManager,
   type TextStyle,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 const palette = {
   background: '#0B0F14',
@@ -56,6 +62,30 @@ type StepMode = 'prompt' | 'feedback';
 
 function splitWords(text: string): string[] {
   return text.trim().split(/\s+/).filter(Boolean);
+}
+
+function groupStatusEmoji(
+  group: MemoryPalaceGroupView,
+  visitedIds: string[],
+): string {
+  if (!group.unlocked) return '🔒';
+  if (group.isCurrent) return '🔵';
+  const verbCount = group.verbSets.length;
+  if (verbCount > 0 && group.verbSets.every((vs) => visitedIds.includes(vs.id))) {
+    return '✅';
+  }
+  return '';
+}
+
+function verbPreview(group: MemoryPalaceGroupView): string {
+  const labels = group.verbSets.map((vs) => vs.verbLabel.toLowerCase());
+  if (labels.length === 0) return '';
+  const first = labels.slice(0, 3).join(', ');
+  return labels.length > 3 ? `${first}…` : first;
+}
+
+function animateAccordion() {
+  LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
 }
 
 function TypingText({
@@ -134,6 +164,7 @@ export default function MemoryPalaceScreen() {
   const [currentWeek, setCurrentWeek] = useState(1);
   const [currentSkipMessage, setCurrentSkipMessage] = useState<string | null>(null);
   const [visited, setVisited] = useState<string[]>([]);
+  const [expandedGroupId, setExpandedGroupId] = useState<string | null>(null);
 
   const [verbSet, setVerbSet] = useState<MemoryPalaceVerbSet | null>(null);
   const [phase, setPhase] = useState<SessionPhase>('walkthrough');
@@ -171,8 +202,18 @@ export default function MemoryPalaceScreen() {
       setCurrentWeek(catalog.currentWeek);
       setCurrentSkipMessage(catalog.currentSkipMessage);
       setVisited(await getMemoryPalaceHistory());
+      const currentExpandable = catalog.groups.find(
+        (g) => g.isCurrent && g.unlocked && g.kind !== 'skip' && g.verbSets.length > 0,
+      );
+      setExpandedGroupId(currentExpandable?.id ?? null);
       setLoading(false);
     })();
+  }, []);
+
+  const toggleGroupExpanded = useCallback((groupId: string, locked: boolean) => {
+    if (locked) return;
+    animateAccordion();
+    setExpandedGroupId((prev) => (prev === groupId ? null : groupId));
   }, []);
 
   useEffect(() => {
@@ -324,16 +365,19 @@ export default function MemoryPalaceScreen() {
 
           {groups.map((group) => {
             const verbCount = group.verbSets.length;
-            const visitedCount = group.verbSets.filter((vs) => visited.includes(vs.id)).length;
-            const allVisited = verbCount > 0 && visitedCount === verbCount;
+            const status = groupStatusEmoji(group, visited);
+            const headerTitle = `${group.tenseLabel}${verbCount ? ` — ${verbCount} verbs` : ''}`;
+            const preview = verbPreview(group);
+            const expanded = expandedGroupId === group.id;
 
             if (group.kind === 'skip') {
               if (!group.isCurrent) return null;
               return (
                 <View key={group.id} style={[styles.groupBlock, styles.groupCurrent]}>
-                  <Text style={styles.groupTitle}>
-                    Esta semana 🔵 · {group.tenseLabel}
-                  </Text>
+                  <View style={styles.groupHeaderRow}>
+                    <Text style={[styles.groupTitle, styles.groupTitleFlex]}>{headerTitle}</Text>
+                    <Text style={styles.groupStatus}>🔵</Text>
+                  </View>
                   <Text style={styles.lockedHint}>{group.skipMessage}</Text>
                 </View>
               );
@@ -342,10 +386,12 @@ export default function MemoryPalaceScreen() {
             if (!group.unlocked) {
               return (
                 <View key={group.id} style={styles.groupBlockLocked}>
-                  <Text style={styles.groupTitleLocked}>
-                    🔒 {group.tenseLabel}
-                    {verbCount ? ` — ${verbCount} verbs` : ''}
-                  </Text>
+                  <View style={styles.groupHeaderRow}>
+                    <Text style={[styles.groupTitleLocked, styles.groupTitleFlex]}>{headerTitle}</Text>
+                    <Text style={styles.groupStatus}>🔒</Text>
+                    <Text style={styles.groupChevronMuted}>→</Text>
+                  </View>
+                  {preview ? <Text style={styles.groupPreview}>{preview}</Text> : null}
                   <Text style={styles.lockedHint}>{group.unlockHint}</Text>
                 </View>
               );
@@ -355,32 +401,49 @@ export default function MemoryPalaceScreen() {
               <View
                 key={group.id}
                 style={[styles.groupBlock, group.isCurrent && styles.groupCurrent]}>
-                <Text style={styles.groupTitle}>
-                  {group.isCurrent ? 'Esta semana 🔵 · ' : allVisited ? '✅ ' : ''}
-                  {group.tenseLabel}
-                  {verbCount ? ` — ${verbCount} verbs` : ''}
-                </Text>
-                {group.kind === 'combined' ? (
-                  <Text style={styles.combinedHint}>Combined practice for this topic</Text>
+                <Pressable
+                  onPress={() => toggleGroupExpanded(group.id, false)}
+                  style={({ pressed }) => [
+                    styles.groupHeaderPressable,
+                    pressed && styles.groupHeaderPressed,
+                  ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded }}>
+                  <View style={styles.groupHeaderRow}>
+                    <Text style={[styles.groupTitle, styles.groupTitleFlex]}>{headerTitle}</Text>
+                    {status ? <Text style={styles.groupStatus}>{status}</Text> : null}
+                    <Text style={styles.groupChevron}>{expanded ? '↓' : '→'}</Text>
+                  </View>
+                  {!expanded && preview ? (
+                    <Text style={styles.groupPreview}>{preview}</Text>
+                  ) : null}
+                </Pressable>
+
+                {expanded ? (
+                  <View style={styles.groupExpandedBody}>
+                    {group.kind === 'combined' ? (
+                      <Text style={styles.combinedHint}>Combined practice for this topic</Text>
+                    ) : null}
+                    {group.verbSets.map((vs) => {
+                      const done = visited.includes(vs.id);
+                      return (
+                        <Pressable
+                          key={vs.id}
+                          onPress={() => startVerbSet(vs.id)}
+                          style={({ pressed }) => [styles.verbRow, pressed && styles.verbRowPressed]}>
+                          <View style={styles.verbRowText}>
+                            <Text style={styles.verbLabel}>
+                              {done ? '✅ ' : ''}
+                              {vs.verbLabel} ({vs.previewForms})
+                            </Text>
+                            <Text style={styles.verbMeaning}>{vs.englishMeaning}</Text>
+                          </View>
+                          <Text style={styles.chevron}>→</Text>
+                        </Pressable>
+                      );
+                    })}
+                  </View>
                 ) : null}
-                {group.verbSets.map((vs) => {
-                  const done = visited.includes(vs.id);
-                  return (
-                    <Pressable
-                      key={vs.id}
-                      onPress={() => startVerbSet(vs.id)}
-                      style={({ pressed }) => [styles.verbRow, pressed && styles.verbRowPressed]}>
-                      <View style={styles.verbRowText}>
-                        <Text style={styles.verbLabel}>
-                          {done ? '✅ ' : ''}
-                          {vs.verbLabel} ({vs.previewForms})
-                        </Text>
-                        <Text style={styles.verbMeaning}>{vs.englishMeaning}</Text>
-                      </View>
-                      <Text style={styles.chevron}>→</Text>
-                    </Pressable>
-                  );
-                })}
               </View>
             );
           })}
@@ -549,18 +612,58 @@ const styles = StyleSheet.create({
     opacity: 0.72,
     paddingVertical: 8,
   },
+  groupHeaderPressable: {
+    gap: 4,
+  },
+  groupHeaderPressed: { opacity: 0.85 },
+  groupHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   groupTitle: {
     fontSize: 12,
     fontWeight: '900',
     color: palette.accent,
     textTransform: 'uppercase',
     letterSpacing: 0.6,
-    marginBottom: 4,
   },
+  groupTitleFlex: { flex: 1 },
   groupTitleLocked: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '800',
     color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  groupStatus: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  groupChevron: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.accent,
+    minWidth: 16,
+    textAlign: 'center',
+  },
+  groupChevronMuted: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: palette.muted,
+    minWidth: 16,
+    textAlign: 'center',
+  },
+  groupPreview: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 18,
+    marginTop: 2,
+  },
+  groupExpandedBody: {
+    gap: 8,
+    marginTop: 4,
   },
   lockedHint: {
     fontSize: 13,

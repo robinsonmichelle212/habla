@@ -168,7 +168,11 @@ export function buildSafeSummaryPayload(session: LessonSessionState): SafeSummar
   const analysis = normalizeSummaryAnalysis(rawAnalysis);
   const scorePending = isOverallScorePending(session, rawAnalysis);
   const overallScore = scorePending ? 0 : safeNumber(analysis.overallScore, 0);
-  const gemsEarnedEstimate = scorePending ? 2 : calculateLessonGems(overallScore) || 2;
+  const gemsEarnedEstimate = session.discussionIncomplete
+    ? 0
+    : scorePending
+      ? 2
+      : calculateLessonGems(overallScore) || 2;
   const xpEarned = overallScore > 0 ? overallScore : 50;
 
   return {

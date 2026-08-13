@@ -1,5 +1,4 @@
 import { AppTextInput } from '@/components/app-text-input';
-import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { LessonTimer } from '@/components/lesson-timer';
 import { ReadTextView } from '@/components/read-text-view';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
@@ -12,6 +11,7 @@ import {
   generateReadingSession,
 } from '@/lib/claude';
 import { addCulturalNote } from '@/lib/cultural-notes';
+import { demoLessonAnalysis } from '@/lib/demo-mode';
 import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech, stopJaviSpeechAsync } from '@/lib/javi-speech';
 import { getTopErrorsForLesson } from '@/lib/error-dna';
@@ -39,6 +39,7 @@ import {
   stopVoiceRecording,
 } from '@/lib/voice-recording';
 import { transcribeSpanishAudio } from '@/lib/whisper';
+import { useDemoMode } from '@/contexts/demo-mode-context';
 import { useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
@@ -108,6 +109,7 @@ function phaseLabel(phase: ReadPhase): string {
 export default function ReadLessonScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { enabled: demoMode } = useDemoMode();
   const scrollRef = useRef<ScrollView>(null);
   const heardTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
@@ -118,7 +120,7 @@ export default function ReadLessonScreen() {
   const [topErrors, setTopErrors] = useState<Awaited<ReturnType<typeof getTopErrorsForLesson>>>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [paragraphAnswer, setParagraphAnswer] = useState('');
   const [comprehensionSubmitting, setComprehensionSubmitting] = useState(false);
   const [comprehensionScore, setComprehensionScore] = useState<number | null>(null);
   const [comprehensionFeedback, setComprehensionFeedback] = useState('');
@@ -131,8 +133,6 @@ export default function ReadLessonScreen() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [micGranted, setMicGranted] = useState(Platform.OS !== 'web');
   const [finishing, setFinishing] = useState(false);
-
-  const scrollToEnd = useKeyboardScrollToEnd(scrollRef, [phase, answers, discussionMessages]);
 
   const latestJaviId = useMemo(() => {
     for (let i = discussionMessages.length - 1; i >= 0; i -= 1) {
@@ -219,13 +219,10 @@ export default function ReadLessonScreen() {
           speakingConversation: [],
           conversation: [],
           readingSession,
+          demoSession: demoMode,
         });
 
-        const initialAnswers: Record<string, string> = {};
-        for (const q of readingSession.comprehensionQuestions) {
-          initialAnswers[q.id] = '';
-        }
-        setAnswers(initialAnswers);
+        setParagraphAnswer('');
         setPhase('read');
       } catch (e) {
         if (cancelled) return;
@@ -239,7 +236,7 @@ export default function ReadLessonScreen() {
       void ensureRecordingStopped();
       if (heardTimerRef.current) clearTimeout(heardTimerRef.current);
     };
-  }, []);
+  }, [demoMode]);
 
   const startDiscussion = useCallback(async () => {
     if (!session || !lessonFocus) return;
@@ -273,19 +270,14 @@ export default function ReadLessonScreen() {
   const submitComprehension = async () => {
     if (!session || comprehensionSubmitting) return;
 
-    const unanswered = session.comprehensionQuestions.some((q) => !answers[q.id]?.trim());
-    if (unanswered) {
-      Alert.alert('Answer all questions', 'Responde las preguntas antes de continuar.');
+    if (!paragraphAnswer.trim()) {
+      Alert.alert('Write a paragraph', 'Escribe un párrafo corto respondiendo las 3 preguntas.');
       return;
     }
 
     setComprehensionSubmitting(true);
     try {
-      const responses = session.comprehensionQuestions.map((q) => ({
-        questionId: q.id,
-        answer: answers[q.id].trim(),
-      }));
-      const evaluation = await evaluateReadComprehension(session, responses);
+      const evaluation = await evaluateReadComprehension(session, paragraphAnswer.trim());
       setComprehensionScore(evaluation.score);
       setComprehensionFeedback(evaluation.feedback);
       setLessonSession({ comprehensionEvaluation: evaluation });
@@ -328,10 +320,15 @@ export default function ReadLessonScreen() {
     }
   };
 
-  const finishLesson = async (messages: ChatMessage[]) => {
+  const finishLesson = async (
+    messages: ChatMessage[],
+    options?: { skippedDiscussion?: boolean },
+  ) => {
     if (!session || finishing) return;
     setFinishing(true);
     setPhase('finishing');
+
+    const skipped = options?.skippedDiscussion === true;
 
     try {
       await ensureRecordingStopped();
@@ -342,31 +339,43 @@ export default function ReadLessonScreen() {
         spanish: v.spanish,
         english: v.english,
       }));
-      const savedWords = await saveReadingVocabularyWords(vocabWords);
+      const savedWords = skipped ? [] : await saveReadingVocabularyWords(vocabWords);
 
       let culturalNoteSaved: string | undefined;
-      if (session.culturalNote) {
+      if (!skipped && session.culturalNote) {
         await addCulturalNote(session.culturalNote, session.topic, READ_TEXT_TYPE_LABELS[session.textType]);
         culturalNoteSaved = session.culturalNote;
       }
 
-      const speakingScore = Math.min(100, 60 + discussionTurns * 10);
+      const speakingScore = skipped ? 0 : Math.min(100, 60 + discussionTurns * 10);
       const compScore = comprehensionScore ?? 70;
 
-      const analysis = await analyzeReadLesson(
-        session,
-        compScore,
-        comprehensionFeedback,
-        conversationToJaviMessages(toTurns(messages)),
-        speakingScore,
-        savedWords.map((w) => ({ spanish: w.spanish, english: w.english })),
-      );
+      const analysis = skipped
+        ? {
+            ...demoLessonAnalysis(),
+            encouragingMessage: 'Discussion skipped — summary still available.',
+            weakAreas: ['Discussion incomplete'],
+            focusAreas: ['Try the full speaking discussion next time'],
+          }
+        : await analyzeReadLesson(
+            session,
+            compScore,
+            comprehensionFeedback,
+            conversationToJaviMessages(toTurns(messages)),
+            speakingScore,
+            savedWords.map((w) => ({ spanish: w.spanish, english: w.english })),
+          );
 
       setLessonSession({
         analysis,
         readingSession: session,
         wordsSavedFromReading: savedWords.map((w) => ({ spanish: w.spanish, english: w.english })),
         culturalNoteSaved,
+        demoSession: demoMode,
+        discussionIncomplete: skipped,
+        summaryNotice: skipped
+          ? 'Discussion skipped — incomplete (0 gems)'
+          : undefined,
         speakingEvaluation: {
           fluencyScore: speakingScore,
           confidenceScore: speakingScore,
@@ -374,13 +383,17 @@ export default function ReadLessonScreen() {
           naturalFlowScore: speakingScore,
           combinedScore: speakingScore,
           score: speakingScore,
-          javiFeedback: 'Good discussion about the reading.',
-          feedback: 'Good discussion about the reading.',
+          javiFeedback: skipped
+            ? 'Discussion was skipped before finishing.'
+            : 'Good discussion about the reading.',
+          feedback: skipped
+            ? 'Discussion incomplete.'
+            : 'Good discussion about the reading.',
           pronunciationNotes: [],
           exchangeCount: discussionTurns,
         },
         writingEvaluation: {
-          originalText: Object.values(answers).join('\n'),
+          originalText: paragraphAnswer.trim(),
           correctedText: '',
           grammarScore: compScore,
           vocabularyScore: analysis.breakdown.vocabulary?.score ?? compScore,
@@ -398,6 +411,18 @@ export default function ReadLessonScreen() {
       setFinishing(false);
       setPhase('discussion');
     }
+  };
+
+  const confirmSkipDiscussion = () => {
+    if (!demoMode || finishing) return;
+    Alert.alert('¿Seguro?', 'Perderás esta parte de la discusión.', [
+      { text: 'No, continuar', style: 'cancel' },
+      {
+        text: 'Sí, saltar →',
+        style: 'destructive',
+        onPress: () => void finishLesson(discussionMessages, { skippedDiscussion: true }),
+      },
+    ]);
   };
 
   const handlePressIn = async () => {
@@ -487,9 +512,9 @@ export default function ReadLessonScreen() {
     <SafeAreaView style={styles.safeArea} edges={['top']}>
       <StatusBar style="light" />
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
         style={styles.flex}
-        keyboardVerticalOffset={80}>
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top : 0}>
         <View style={styles.topBar}>
           <Pressable onPress={() => router.back()} hitSlop={12}>
             <Text style={styles.backLink}>← Back</Text>
@@ -509,106 +534,105 @@ export default function ReadLessonScreen() {
           ))}
         </View>
 
-        <ScrollView
-          ref={scrollRef}
-          contentContainerStyle={[
-            styles.scrollContent,
-            { flexGrow: 1, paddingBottom: Math.max(insets.bottom, 24) },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode="interactive"
-          showsVerticalScrollIndicator={false}>
-          {phase === 'read' ? (
-            <>
-              <ReadTextView
-                text={session.spanishText}
-                title={session.title}
-                textTypeLabel={READ_TEXT_TYPE_LABELS[session.textType]}
-              />
-              <Pressable
-                onPress={() => setPhase('comprehension')}
-                style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
-                <Text style={styles.primaryButtonText}>Ready to discuss ✅</Text>
-              </Pressable>
-            </>
-          ) : null}
-
-          {phase === 'comprehension' || (phase === 'discussion' && comprehensionScore != null) ? (
-            <View style={styles.section}>
+        {phase === 'comprehension' ? (
+          <View style={[styles.comprehensionLayout, { paddingBottom: Math.max(insets.bottom, 12) }]}>
+            <View style={styles.questionsCard}>
               <Text style={styles.sectionTitle}>Comprehension check</Text>
-              {session.comprehensionQuestions.map((q) => (
-                <View key={q.id} style={styles.questionCard}>
-                  <Text style={styles.questionPrompt}>{q.promptSpanish}</Text>
-                  {q.promptEnglish ? (
-                    <Text style={styles.questionHint}>{q.promptEnglish}</Text>
-                  ) : null}
-                  {phase === 'comprehension' ? (
-                    <AppTextInput
-                      style={styles.input}
-                      value={answers[q.id] ?? ''}
-                      onChangeText={(t) => setAnswers((prev) => ({ ...prev, [q.id]: t }))}
-                      placeholder="Escribe tu respuesta…"
-                      placeholderTextColor={palette.muted}
-                      multiline
-                      scrollEnabled
-                      blurOnSubmit={false}
-                      textAlignVertical="top"
-                      onFocus={() => scrollToEnd()}
-                    />
-                  ) : (
-                    <Text style={styles.answerPreview}>{answers[q.id]}</Text>
-                  )}
-                </View>
+              <Text style={styles.questionsInstruction}>
+                Escribe un párrafo corto respondiendo las 3 preguntas:
+              </Text>
+              {session.comprehensionQuestions.map((q, index) => (
+                <Text key={q.id} style={styles.questionLine}>
+                  {index + 1}. {q.promptSpanish}
+                </Text>
               ))}
-              {phase === 'comprehension' ? (
-                <Pressable
-                  onPress={() => void submitComprehension()}
-                  disabled={comprehensionSubmitting}
-                  style={({ pressed }) => [
-                    styles.primaryButton,
-                    pressed && styles.primaryButtonPressed,
-                    comprehensionSubmitting && styles.buttonDisabled,
-                  ]}>
-                  {comprehensionSubmitting ? (
-                    <ActivityIndicator color="#0B0F14" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Submit answers</Text>
-                  )}
-                </Pressable>
-              ) : comprehensionFeedback ? (
-                <View style={styles.feedbackCard}>
-                  <Text style={styles.feedbackScore}>Score: {comprehensionScore}%</Text>
-                  <Text style={styles.feedbackText}>{comprehensionFeedback}</Text>
-                </View>
-              ) : null}
             </View>
-          ) : null}
 
-          {phase === 'discussion' || phase === 'finishing' ? (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>Discuss with Javi 🗣️</Text>
-              <VoiceConversationLog
-                messages={discussionMessages}
-                latestJaviId={latestJaviId}
-                voiceSyncLatest={voiceState === 'javi-speaking'}
-              />
-              {heardTranscript ? (
-                <Text style={styles.heardText}>Heard: {heardTranscript}</Text>
-              ) : null}
-              {voiceError ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
-              {session.grammarPatterns.length ? (
-                <View style={styles.patternsCard}>
-                  <Text style={styles.patternsTitle}>Grammar in this text</Text>
-                  {session.grammarPatterns.map((p) => (
-                    <Text key={p} style={styles.patternLine}>
-                      · {p}
-                    </Text>
-                  ))}
-                </View>
-              ) : null}
-            </View>
-          ) : null}
-        </ScrollView>
+            <AppTextInput
+              style={styles.paragraphInput}
+              value={paragraphAnswer}
+              onChangeText={setParagraphAnswer}
+              placeholder="Type your paragraph…"
+              placeholderTextColor={palette.muted}
+              multiline
+              scrollEnabled
+              blurOnSubmit={false}
+              textAlignVertical="top"
+              autoFocus
+            />
+
+            <Pressable
+              onPress={() => void submitComprehension()}
+              disabled={comprehensionSubmitting}
+              style={({ pressed }) => [
+                styles.primaryButton,
+                pressed && styles.primaryButtonPressed,
+                comprehensionSubmitting && styles.buttonDisabled,
+              ]}>
+              {comprehensionSubmitting ? (
+                <ActivityIndicator color="#0B0F14" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Send</Text>
+              )}
+            </Pressable>
+          </View>
+        ) : (
+          <ScrollView
+            ref={scrollRef}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { flexGrow: 1, paddingBottom: Math.max(insets.bottom, 24) },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="interactive"
+            showsVerticalScrollIndicator={false}>
+            {phase === 'read' ? (
+              <>
+                <ReadTextView
+                  text={session.spanishText}
+                  title={session.title}
+                  textTypeLabel={READ_TEXT_TYPE_LABELS[session.textType]}
+                />
+                <Pressable
+                  onPress={() => setPhase('comprehension')}
+                  style={({ pressed }) => [styles.primaryButton, pressed && styles.primaryButtonPressed]}>
+                  <Text style={styles.primaryButtonText}>Ready to write ✍️</Text>
+                </Pressable>
+              </>
+            ) : null}
+
+            {phase === 'discussion' || phase === 'finishing' ? (
+              <View style={styles.section}>
+                {comprehensionFeedback ? (
+                  <View style={styles.feedbackCard}>
+                    <Text style={styles.feedbackScore}>Score: {comprehensionScore}%</Text>
+                    <Text style={styles.feedbackText}>{comprehensionFeedback}</Text>
+                  </View>
+                ) : null}
+                <Text style={styles.sectionTitle}>Discuss with Javi 🗣️</Text>
+                <VoiceConversationLog
+                  messages={discussionMessages}
+                  latestJaviId={latestJaviId}
+                  voiceSyncLatest={voiceState === 'javi-speaking'}
+                />
+                {heardTranscript ? (
+                  <Text style={styles.heardText}>Heard: {heardTranscript}</Text>
+                ) : null}
+                {voiceError ? <Text style={styles.voiceError}>{voiceError}</Text> : null}
+                {session.grammarPatterns.length ? (
+                  <View style={styles.patternsCard}>
+                    <Text style={styles.patternsTitle}>Gramática en este texto</Text>
+                    {session.grammarPatterns.map((p) => (
+                      <Text key={p} style={styles.patternLine}>
+                        · {p}
+                      </Text>
+                    ))}
+                  </View>
+                ) : null}
+              </View>
+            ) : null}
+          </ScrollView>
+        )}
 
         {phase === 'discussion' && !finishing ? (
           <View style={[styles.voiceBar, { paddingBottom: Math.max(insets.bottom, 12) }]}>
@@ -626,9 +650,17 @@ export default function ReadLessonScreen() {
               </Pressable>
             ) : (
               <Text style={styles.turnHint}>
-                {discussionTurns}/{SPEAKING_END_TURNS} exchanges
+                Intercambio {discussionTurns} de {SPEAKING_END_TURNS}
               </Text>
             )}
+            {demoMode ? (
+              <Pressable
+                onPress={confirmSkipDiscussion}
+                hitSlop={10}
+                style={({ pressed }) => [styles.skipLinkWrap, pressed && styles.skipLinkPressed]}>
+                <Text style={styles.skipLink}>Skip →</Text>
+              </Pressable>
+            ) : null}
           </View>
         ) : null}
 
@@ -675,36 +707,46 @@ const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: 20, paddingTop: 8, gap: 16 },
   section: { gap: 12 },
   sectionTitle: { fontSize: 16, fontWeight: '900', color: palette.text },
-  questionCard: {
+  comprehensionLayout: {
+    flex: 1,
+    paddingHorizontal: 20,
+    paddingTop: 8,
+    gap: 12,
+  },
+  questionsCard: {
     backgroundColor: palette.surface,
     borderRadius: 14,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
     padding: 14,
     gap: 8,
-  },
-  questionPrompt: {
-    fontSize: 17,
-    fontWeight: '800',
-    color: palette.text,
-    lineHeight: 24,
     flexShrink: 0,
   },
-  questionHint: { fontSize: 13, fontWeight: '600', color: palette.muted, marginTop: 4, lineHeight: 18 },
-  input: {
-    backgroundColor: palette.background,
-    borderRadius: 12,
+  questionsInstruction: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.muted,
+    lineHeight: 20,
+  },
+  questionLine: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: palette.text,
+    lineHeight: 22,
+  },
+  paragraphInput: {
+    flex: 1,
+    minHeight: 120,
+    backgroundColor: palette.surface,
+    borderRadius: 14,
     borderWidth: 1,
     borderColor: palette.surfaceBorder,
-    padding: 12,
+    padding: 14,
     fontSize: 16,
     fontWeight: '600',
     color: palette.text,
-    minHeight: 80,
-    maxHeight: 120,
     textAlignVertical: 'top',
   },
-  answerPreview: { fontSize: 15, fontWeight: '600', color: palette.muted },
   feedbackCard: {
     backgroundColor: palette.surface,
     borderRadius: 14,
@@ -731,6 +773,7 @@ const styles = StyleSheet.create({
     paddingVertical: 18,
     alignItems: 'center',
     marginTop: 8,
+    flexShrink: 0,
   },
   primaryButtonPressed: { backgroundColor: palette.accentPressed },
   buttonDisabled: { opacity: 0.6 },
@@ -748,6 +791,17 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   turnHint: { fontSize: 13, fontWeight: '700', color: palette.muted },
+  skipLinkWrap: {
+    marginTop: 4,
+    paddingVertical: 6,
+    alignItems: 'center',
+  },
+  skipLinkPressed: { opacity: 0.6 },
+  skipLink: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+  },
   endButton: { paddingVertical: 8 },
   endButtonText: { fontSize: 14, fontWeight: '800', color: palette.accent },
   heardText: { fontSize: 13, fontWeight: '700', color: palette.blue, textAlign: 'center' },

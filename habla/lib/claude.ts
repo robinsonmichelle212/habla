@@ -2885,38 +2885,40 @@ Comprehension question format rules:
 
 export async function evaluateReadComprehension(
   session: ReadingSessionContent,
-  responses: { questionId: string; answer: string }[],
+  paragraph: string,
 ): Promise<ReadComprehensionEvaluation> {
   const anthropic = getClient();
   const model = getModel();
 
-  const system = `You are Javi evaluating reading comprehension responses from a B1–B2 learner.
-Return ONLY valid JSON. Be encouraging but honest.`;
+  const system = `You are Javi evaluating a reading comprehension paragraph from a B1–B2 learner.
+The learner wrote ONE short paragraph meant to address ALL of the comprehension questions together.
+Evaluate the paragraph as a whole — did they adequately address all questions?
+Do NOT score question-by-question. Return ONLY valid JSON. Be encouraging but honest.`;
+
+  const questionsList = session.comprehensionQuestions
+    .map((q, i) => `${i + 1}. ${q.promptSpanish}`)
+    .join('\n');
 
   const user = `Text title: ${session.title}
 Text (Spanish):
 ${session.spanishText}
 
-Questions and learner answers:
-${session.comprehensionQuestions
-  .map((q) => {
-    const answer = responses.find((r) => r.questionId === q.id)?.answer ?? '';
-    return `Q (${q.id}): ${q.promptSpanish}\nA: ${answer}`;
-  })
-  .join('\n\n')}
+Comprehension questions the paragraph should address:
+${questionsList}
+
+Learner's paragraph:
+${paragraph.trim()}
 
 Return JSON:
 {
-  "score": 0-100 integer overall comprehension score,
+  "score": 0-100 integer overall comprehension score (how well the paragraph addresses all questions),
   "feedback": "2-3 sentences feedback in English with brief Spanish encouragement",
-  "responses": [
-    { "questionId": "1", "score": 0-100, "feedback": "short per-question feedback" }
-  ]
+  "responses": []
 }`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 800,
+    max_tokens: 600,
     system,
     messages: [{ role: 'user', content: user }],
   });
@@ -2925,13 +2927,7 @@ Return JSON:
   return {
     score: Math.max(0, Math.min(100, Math.round(Number(parsed.score) || 0))),
     feedback: String(parsed.feedback ?? '').trim(),
-    responses: Array.isArray(parsed.responses)
-      ? parsed.responses.map((r) => ({
-          questionId: String(r.questionId),
-          score: Math.max(0, Math.min(100, Math.round(Number(r.score) || 0))),
-          feedback: String(r.feedback ?? '').trim(),
-        }))
-      : [],
+    responses: [],
   };
 }
 

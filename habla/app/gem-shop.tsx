@@ -448,47 +448,89 @@ export default function GemShopScreen() {
           <Pressable style={StyleSheet.absoluteFill} onPress={cancelUnlock} accessibilityLabel="Cancel unlock" />
           <View style={[styles.modalCard, styles.modalCardElevated]}>
             {pendingUnlock && pendingDef ? (
-              <>
-                <Text style={styles.modalEmoji}>{pendingDef.emoji}</Text>
-                <Text style={styles.modalTitle}>Are you sure?</Text>
-                <Text style={styles.modalRoundName}>
-                  {pendingDef.name} · Level {pendingUnlock.level}
-                </Text>
-                <Text style={styles.modalSpend}>
-                  This will spend {pendingCost} 💎 gems
-                </Text>
-                <View style={styles.modalBalanceBox}>
-                  <Text style={styles.modalBalanceLine}>
-                    Your current gem balance: {gems} 💎
+              demoMode ? (
+                <>
+                  <Text style={styles.modalEmoji}>🎭</Text>
+                  <Text style={styles.modalTitle}>Try for free!</Text>
+                  <Text style={styles.modalRoundName}>
+                    {pendingDef.name} · Level {pendingUnlock.level}
                   </Text>
-                  <Text style={styles.modalBalanceLine}>
-                    Your balance after: {Math.max(0, gems - pendingCost)} 💎
+                  <View style={styles.modalBalanceBox}>
+                    <Text style={styles.modalDemoBody}>
+                      No gems will be spent.{'\n'}
+                      This is a demo session — nothing is saved.
+                    </Text>
+                    <Text style={styles.modalDemoGemsStay}>
+                      Your gems stay at {gems} 💎
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={confirmUnlock}
+                    disabled={confirmBusy}
+                    style={({ pressed }) => [
+                      styles.modalConfirmBtn,
+                      pressed && styles.modalBtnPressed,
+                      confirmBusy && styles.modalBtnDisabled,
+                    ]}>
+                    {confirmBusy ? (
+                      <ActivityIndicator color="#0B0F14" />
+                    ) : (
+                      <Text style={styles.modalConfirmText}>Let&apos;s go! 🎭</Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    onPress={cancelUnlock}
+                    disabled={confirmBusy}
+                    style={({ pressed }) => [
+                      styles.modalCancelBtn,
+                      pressed && styles.modalBtnPressed,
+                    ]}>
+                    <Text style={styles.modalCancelText}>Not yet</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.modalEmoji}>{pendingDef.emoji}</Text>
+                  <Text style={styles.modalTitle}>Are you sure?</Text>
+                  <Text style={styles.modalRoundName}>
+                    {pendingDef.name} · Level {pendingUnlock.level}
                   </Text>
-                </View>
-                <Pressable
-                  onPress={confirmUnlock}
-                  disabled={confirmBusy || gems < pendingCost}
-                  style={({ pressed }) => [
-                    styles.modalConfirmBtn,
-                    pressed && styles.modalBtnPressed,
-                    (confirmBusy || gems < pendingCost) && styles.modalBtnDisabled,
-                  ]}>
-                  {confirmBusy ? (
-                    <ActivityIndicator color="#0B0F14" />
-                  ) : (
-                    <Text style={styles.modalConfirmText}>Yes, unlock it 🔓</Text>
-                  )}
-                </Pressable>
-                <Pressable
-                  onPress={cancelUnlock}
-                  disabled={confirmBusy}
-                  style={({ pressed }) => [
-                    styles.modalCancelBtn,
-                    pressed && styles.modalBtnPressed,
-                  ]}>
-                  <Text style={styles.modalCancelText}>Not yet</Text>
-                </Pressable>
-              </>
+                  <Text style={styles.modalSpend}>
+                    This will spend {pendingCost} 💎 gems
+                  </Text>
+                  <View style={styles.modalBalanceBox}>
+                    <Text style={styles.modalBalanceLine}>
+                      Your current gem balance: {gems} 💎
+                    </Text>
+                    <Text style={styles.modalBalanceLine}>
+                      Your balance after: {Math.max(0, gems - pendingCost)} 💎
+                    </Text>
+                  </View>
+                  <Pressable
+                    onPress={confirmUnlock}
+                    disabled={confirmBusy || gems < pendingCost}
+                    style={({ pressed }) => [
+                      styles.modalConfirmBtn,
+                      pressed && styles.modalBtnPressed,
+                      (confirmBusy || gems < pendingCost) && styles.modalBtnDisabled,
+                    ]}>
+                    {confirmBusy ? (
+                      <ActivityIndicator color="#0B0F14" />
+                    ) : (
+                      <Text style={styles.modalConfirmText}>Yes, unlock it 🔓</Text>
+                    )}
+                  </Pressable>
+                  <Pressable
+                    onPress={cancelUnlock}
+                    disabled={confirmBusy}
+                    style={({ pressed }) => [
+                      styles.modalCancelBtn,
+                      pressed && styles.modalBtnPressed,
+                    ]}>
+                    <Text style={styles.modalCancelText}>Not yet</Text>
+                  </Pressable>
+                </>
+              )
             ) : null}
           </View>
         </View>
@@ -781,6 +823,20 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.muted,
     textAlign: 'center',
+  },
+  modalDemoBody: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: palette.text,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  modalDemoGemsStay: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: '#34D399',
+    textAlign: 'center',
+    marginTop: 8,
   },
   modalConfirmBtn: {
     width: '100%',

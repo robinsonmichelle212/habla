@@ -89,19 +89,29 @@ export async function persistLessonComplete(
   const celebrations: MilestoneCelebration[] = [];
   let levelUpLabel: string | undefined;
 
+  if (session.discussionIncomplete) {
+    gemsEarned = 0;
+  }
+
   if (isDemoSession) {
-    gemsEarned = 2;
+    if (!session.discussionIncomplete) gemsEarned = 2;
     challengeText = DEMO_DAILY_CHALLENGE;
   } else {
     await logCrashBreadcrumb('saving_streak');
     const streakRes = await withOneRetry('updateStreak', updateStreak);
     await logCrashBreadcrumb('streak_saved');
 
-    const gems = scorePending ? 0 : calculateLessonGems(overallScore);
+    const gems = session.discussionIncomplete
+      ? 0
+      : scorePending
+        ? 0
+        : calculateLessonGems(overallScore);
     await logCrashBreadcrumb('saving_gems');
     if (gems > 0) {
       await withOneRetry('addGems', () => addGems(gems));
       gemsEarned = gems;
+    } else if (session.discussionIncomplete) {
+      gemsEarned = 0;
     }
     await logCrashBreadcrumb('gems_saved');
     await getTotalGems().catch(() => 0);

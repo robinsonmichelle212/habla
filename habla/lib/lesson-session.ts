@@ -157,6 +157,8 @@ export type LessonSessionState = {
   summaryNotice?: string;
   /** Demo lesson — does not affect streak, history, or gems. */
   demoSession?: boolean;
+  /** Read discussion was skipped early (demo) — award 0 gems. */
+  discussionIncomplete?: boolean;
 };
 
 let state: LessonSessionState = {
@@ -200,6 +202,7 @@ export function clearLessonSessionMemory() {
     wordsSavedFromReading: undefined,
     summaryNotice: undefined,
     demoSession: undefined,
+    discussionIncomplete: undefined,
     lessonType: undefined,
     lessonFocus: undefined,
   };
