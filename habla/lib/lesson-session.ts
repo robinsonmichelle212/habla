@@ -159,6 +159,9 @@ export type LessonSessionState = {
   demoSession?: boolean;
   /** Read discussion was skipped early (demo) — award 0 gems. */
   discussionIncomplete?: boolean;
+  dailyVocabWords?: import('@/lib/daily-vocab-intro').DailyVocabWord[];
+  dailyVocabTheme?: string;
+  dailyVocabUsage?: Record<string, { javiUsed: boolean; userUsed: boolean }>;
 };
 
 let state: LessonSessionState = {

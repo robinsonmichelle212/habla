@@ -42,6 +42,18 @@ export type SummaryDisplayPayload = {
     score: number;
     textType: string;
   };
+  dailyVocabRecap?: {
+    theme: string;
+    weeklyIntroduced: number;
+    words: {
+      spanish: string;
+      english: string;
+      javiUsed: boolean;
+      userUsed: boolean;
+      saved: boolean;
+      revisiting?: boolean;
+    }[];
+  };
 };
 
 let displayPayload: SummaryDisplayPayload | null = null;
@@ -166,5 +178,6 @@ export function resolveSummaryDisplayFromParams(
     speaking: stored?.speaking,
     writing: stored?.writing,
     reading: stored?.reading,
+    dailyVocabRecap: stored?.dailyVocabRecap,
   };
 }

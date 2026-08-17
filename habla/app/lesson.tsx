@@ -3,6 +3,7 @@ import { AppTextInput } from '@/components/app-text-input';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { LessonTimer } from '@/components/lesson-timer';
+import { DailyVocabIntroCard } from '@/components/daily-vocab-intro-card';
 import { Phase1VerbGuide } from '@/components/phase1-verb-guide';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { TextMessageBubble } from '@/components/text-message-bubble';
@@ -62,6 +63,13 @@ import {
 } from '@/lib/feynman-storage';
 import { buildInterleavingContext, type InterleavingContext } from '@/lib/interleaving';
 import { resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
+import {
+  buildDailyVocabIntroMessage,
+  detectDailyVocabUsage,
+  recordDailyVocabWordsShown,
+  selectDailyVocabWordsForLesson,
+  type DailyVocabWord,
+} from '@/lib/daily-vocab-intro';
 import { lessonFocusLabel, prepareLessonFocus, type LessonFocusContext } from '@/lib/lesson-focus';
 import {
   getWeeklyOverrideUsed,
@@ -217,6 +225,12 @@ export default function LessonScreen() {
   const [topErrorDna, setTopErrorDna] = useState<ErrorDNAItem[]>([]);
   const [loadingFocus, setLoadingFocus] = useState(true);
   const [phase, setPhase] = useState<LessonPhase>('warmup');
+
+  const [dailyVocabWords, setDailyVocabWords] = useState<DailyVocabWord[]>([]);
+  const [dailyVocabTheme, setDailyVocabTheme] = useState('');
+  const [dailyVocabIntroMessage, setDailyVocabIntroMessage] = useState('');
+  const [vocabIntroAcknowledged, setVocabIntroAcknowledged] = useState(false);
+  const [loadingGrammarIntro, setLoadingGrammarIntro] = useState(false);
 
   const [warmUpMessages, setWarmUpMessages] = useState<ChatMessage[]>([]);
   const [warmUpInput, setWarmUpInput] = useState('');
@@ -422,6 +436,11 @@ export default function LessonScreen() {
   const resetLessonState = useCallback(() => {
     stopJaviSpeech();
     setPhase('warmup');
+    setDailyVocabWords([]);
+    setDailyVocabTheme('');
+    setDailyVocabIntroMessage('');
+    setVocabIntroAcknowledged(false);
+    setLoadingGrammarIntro(false);
     setWarmUpMessages([]);
     setWarmUpInput('');
     setWarmUpReadyForWriting(false);
@@ -443,6 +462,93 @@ export default function LessonScreen() {
     setPendingAudioPaths([]);
     setVoiceError(null);
   }, []);
+
+  const loadGrammarIntro = useCallback(async () => {
+    if (!lessonFocus) return;
+    setLoadingGrammarIntro(true);
+    try {
+      if (demoModeRef.current) {
+        const topic = demoTopicLabel(lessonFocus);
+        const opening = demoWarmUpOpening(topic);
+        setWarmUpReadyForWriting(true);
+        setOfflineIntroNote(false);
+        setWarmUpMessages([
+          {
+            id: newId(),
+            role: 'assistant',
+            spanish: opening.spanish,
+            translation: opening.translation,
+          },
+        ]);
+        return;
+      }
+
+      const online = await checkIsOnline();
+      const weekNumber = lessonFocus.kind === 'grammar' ? lessonFocus.weekNumber : null;
+
+      if (!online) {
+        const cached = await getCachedLessonIntro(lessonKind, weekNumber);
+        const opening = cached
+          ? { spanish: cached.spanish, translation: cached.translation, usedBundle: false }
+          : getOfflineLessonOpening(lessonKind, lessonFocus);
+        setOfflineIntroNote(!cached && opening.usedBundle);
+        setWarmUpMessages([
+          {
+            id: newId(),
+            role: 'assistant',
+            spanish: opening.spanish,
+            translation: opening.translation,
+          },
+        ]);
+        return;
+      }
+
+      const openingText = await generateWarmUpOpening(
+        lessonKindToLessonType(lessonKind),
+        lessonFocus,
+        topErrorDna,
+        dailyVocabWords,
+      );
+      const { text: openingClean, ready: openingReady } = stripReadyForWritingMarker(openingText);
+      const parsed = parseJaviResponse(openingClean);
+      if (openingReady) setWarmUpReadyForWriting(true);
+      void cacheLessonIntro({
+        lessonKind,
+        weekNumber,
+        spanish: parsed.spanish,
+        translation: parsed.translation ?? '',
+      });
+      setOfflineIntroNote(false);
+      setWarmUpMessages([
+        {
+          id: newId(),
+          role: 'assistant',
+          spanish: parsed.spanish,
+          translation: parsed.translation,
+        },
+      ]);
+    } catch {
+      setWarmUpMessages([
+        {
+          id: 'welcome',
+          role: 'assistant',
+          spanish: '¡Hola! ¿Cómo estás?',
+          translation: 'Hello! How are you?',
+        },
+      ]);
+    } finally {
+      setLoadingGrammarIntro(false);
+    }
+  }, [dailyVocabWords, lessonFocus, lessonKind, topErrorDna]);
+
+  const acknowledgeVocabIntro = useCallback(async () => {
+    if (vocabIntroAcknowledged) return;
+    if (dailyVocabWords.length) {
+      await recordDailyVocabWordsShown(dailyVocabWords);
+    }
+    setVocabIntroAcknowledged(true);
+    await loadGrammarIntro();
+  }, [dailyVocabWords, loadGrammarIntro, vocabIntroAcknowledged]);
 
   useEffect(() => {
     let cancelled = false;
@@ -519,65 +625,26 @@ export default function LessonScreen() {
           demoSession: demoMode,
         });
 
-        if (demoMode) {
-          const topic = demoTopicLabel(focus);
-          const opening = demoWarmUpOpening(topic);
-          setWarmUpReadyForWriting(true);
-          setOfflineIntroNote(false);
-          setWarmUpMessages([
-            {
-              id: newId(),
-              role: 'assistant',
-              spanish: opening.spanish,
-              translation: opening.translation,
-            },
-          ]);
-          return;
-        }
-
         const online = await checkIsOnline();
-        const weekNumber = focus.kind === 'grammar' ? focus.weekNumber : null;
-
-        if (!online) {
-          const cached = await getCachedLessonIntro(lessonKind, weekNumber);
-          const opening = cached
-            ? { spanish: cached.spanish, translation: cached.translation, usedBundle: false }
-            : getOfflineLessonOpening(lessonKind, focus);
-          setOfflineIntroNote(!cached && opening.usedBundle);
-          setWarmUpMessages([
-            {
-              id: newId(),
-              role: 'assistant',
-              spanish: opening.spanish,
-              translation: opening.translation,
-            },
-          ]);
-          return;
-        }
-
-        const openingText = await generateWarmUpOpening(lessonKindToLessonType(lessonKind), focus, topErrors);
-        const { text: openingClean, ready: openingReady } = stripReadyForWritingMarker(openingText);
-        const parsed = parseJaviResponse(openingClean);
-        if (openingReady) setWarmUpReadyForWriting(true);
-        void cacheLessonIntro({
-          lessonKind,
-          weekNumber,
-          spanish: parsed.spanish,
-          translation: parsed.translation ?? '',
+        const vocabPack = await selectDailyVocabWordsForLesson(focus, {
+          skipClaude: demoMode || !online,
         });
-        setOfflineIntroNote(false);
-        setWarmUpMessages([
-          {
-            id: newId(),
-            role: 'assistant',
-            spanish: parsed.spanish,
-            translation: parsed.translation,
-          },
-        ]);
+        if (cancelled) return;
+        setDailyVocabWords(vocabPack.words);
+        setDailyVocabTheme(vocabPack.theme);
+        setDailyVocabIntroMessage(
+          buildDailyVocabIntroMessage(vocabPack.words, vocabPack.revisiting),
+        );
+        setVocabIntroAcknowledged(false);
+        setLessonSession({
+          dailyVocabWords: vocabPack.words,
+          dailyVocabTheme: vocabPack.theme,
+        });
       })
       .catch(() => {
         if (cancelled) return;
         setLessonFocus(null);
+        setVocabIntroAcknowledged(true);
         setWarmUpMessages([
           {
             id: 'welcome',
@@ -774,7 +841,15 @@ export default function LessonScreen() {
         return;
       }
 
-      const reply = await askJaviWarmUp(lessonType, trimmed, prior, lessonFocus, javiCount, topErrorDna);
+      const reply = await askJaviWarmUp(
+        lessonType,
+        trimmed,
+        prior,
+        lessonFocus,
+        javiCount,
+        topErrorDna,
+        dailyVocabWords,
+      );
       const { text: replyClean, ready } = stripReadyForWritingMarker(reply);
       const parsed = parseJaviResponse(replyClean);
       const javiReplies = javiCount + 1;
@@ -849,6 +924,7 @@ export default function LessonScreen() {
         prior,
         lessonFocus,
         interleavingContext ?? undefined,
+        dailyVocabWords,
       );
       setWritingPrompt(task.prompt);
       await cacheWritingTask(lessonType, focusKey, task.prompt);
@@ -1060,6 +1136,7 @@ export default function LessonScreen() {
         lessonFocus,
         topErrorDna,
         interleavingContext ?? undefined,
+        dailyVocabWords,
       );
       const parsed = parseJaviResponse(introText);
       const introMsg: ChatMessage = {
@@ -1231,6 +1308,7 @@ export default function LessonScreen() {
                 SPEAKING_USER_TURNS,
                 topErrorDna,
                 interleavingContext ?? undefined,
+                dailyVocabWords,
               ),
             );
       setShowJaviRevealPanel(false);
@@ -1337,6 +1415,10 @@ export default function LessonScreen() {
 
       const warmUpTurns = toTurns(warmUpMessages);
       const speakingTurns = toTurns(speakingMessages);
+      const vocabUsage =
+        dailyVocabWords.length > 0
+          ? detectDailyVocabUsage(dailyVocabWords, warmUpTurns, speakingTurns, writingText)
+          : undefined;
 
       setLessonSession({
         lessonType,
@@ -1350,12 +1432,17 @@ export default function LessonScreen() {
         analysis: params.analysis,
         summaryNotice: params.notice,
         demoSession: demoModeRef.current || getLessonSession().demoSession,
+        dailyVocabWords,
+        dailyVocabTheme,
+        dailyVocabUsage: vocabUsage,
       });
 
       // Save screen persists everything, then opens display-only summary.
       router.replace('/lesson-complete' as Href);
     },
     [
+      dailyVocabTheme,
+      dailyVocabWords,
       lessonFocus,
       lessonType,
       router,
@@ -1363,6 +1450,7 @@ export default function LessonScreen() {
       warmUpMessages,
       writingPrompt,
       writingResult,
+      writingText,
     ],
   );
 
@@ -1401,6 +1489,15 @@ export default function LessonScreen() {
         } catch (navErr) {
           console.error('[Habla] navigateToSummary failed:', navErr);
           if (!navigatedToSummaryRef.current) {
+            const vocabUsage =
+              dailyVocabWords.length > 0
+                ? detectDailyVocabUsage(
+                    dailyVocabWords,
+                    warmUpTurns,
+                    speakingTurns,
+                    writingText,
+                  )
+                : undefined;
             setLessonSession({
               lessonType,
               lessonFocus,
@@ -1413,6 +1510,9 @@ export default function LessonScreen() {
               analysis: params.analysis,
               summaryNotice: params.notice,
               demoSession: demoModeRef.current || getLessonSession().demoSession,
+              dailyVocabWords,
+              dailyVocabTheme,
+              dailyVocabUsage: vocabUsage,
             });
             navigatedToSummaryRef.current = true;
             router.replace('/lesson-complete' as Href);
@@ -1854,7 +1954,7 @@ export default function LessonScreen() {
                   <Pressable
                     key={opt.id}
                     onPress={() => {
-                      if (phase !== 'warmup' || warmUpMessages.length > 1) return;
+                      if (phase !== 'warmup' || (vocabIntroAcknowledged && warmUpMessages.length >= 1)) return;
 
                       if (opt.id === lessonKind) {
                         if (opt.id === 'read') {
@@ -1886,7 +1986,7 @@ export default function LessonScreen() {
                       }
                       setLessonKind(opt.id);
                     }}
-                    disabled={phase !== 'warmup' || warmUpMessages.length > 1}
+                    disabled={phase !== 'warmup' || (vocabIntroAcknowledged && warmUpMessages.length >= 1)}
                     style={({ pressed }) => [
                       styles.lessonPill,
                       selected && styles.lessonPillSelected,
@@ -1942,7 +2042,16 @@ export default function LessonScreen() {
 
           {phase === 'warmup' || phase === 'feynman' ? (
             <>
-              {phase === 'warmup' && lessonFocus?.kind === 'grammar' && !demoMode ? (
+              {phase === 'warmup' && !vocabIntroAcknowledged && dailyVocabIntroMessage ? (
+                <DailyVocabIntroCard
+                  message={dailyVocabIntroMessage}
+                  words={dailyVocabWords}
+                  theme={dailyVocabTheme}
+                  loading={loadingGrammarIntro}
+                  onReady={() => void acknowledgeVocabIntro()}
+                />
+              ) : null}
+              {phase === 'warmup' && lessonFocus?.kind === 'grammar' && !demoMode && vocabIntroAcknowledged ? (
                 <Phase1VerbGuide focus={lessonFocus} />
               ) : null}
               {warmUpMessages.map((m) => (
@@ -1973,7 +2082,7 @@ export default function LessonScreen() {
                   Explain the concept in your own words — Javi will check your understanding before writing.
                 </Text>
               ) : null}
-              {phase === 'warmup' && showWarmUpSkip ? (
+              {phase === 'warmup' && showWarmUpSkip && vocabIntroAcknowledged ? (
                 <Pressable
                   onPress={confirmSkipIntroduction}
                   style={styles.skipIntroBtn}
@@ -2058,6 +2167,7 @@ export default function LessonScreen() {
         </ScrollView>
 
         {phase === 'warmup' || phase === 'feynman' ? (
+          vocabIntroAcknowledged ? (
           <View style={[styles.inputDock, { paddingBottom: Math.max(insets.bottom, 20) }]}>
             <View style={styles.composeRow}>
               <AppTextInput
@@ -2089,6 +2199,7 @@ export default function LessonScreen() {
               </Pressable>
             </View>
           </View>
+          ) : null
         ) : null}
 
         {phase === 'writing' && !writingResult ? (

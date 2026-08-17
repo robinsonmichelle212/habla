@@ -26,6 +26,7 @@ import {
   getCoveredYourDayTopicsFromStorage,
   YOUR_DAY_TOPICS,
 } from '@/lib/lesson-focus';
+import { getWeeklyVocabIntroducedCount } from '@/lib/daily-vocab-intro';
 import {
   getSavedVocabulary,
   getVocabStats,
@@ -88,6 +89,7 @@ export default function LevelScreen() {
   const [history, setHistory] = useState<Awaited<ReturnType<typeof getLessonHistory>>>([]);
   const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
   const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
+  const [weeklyVocabIntroduced, setWeeklyVocabIntroduced] = useState(0);
   const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [showResetModal, setShowResetModal] = useState(false);
@@ -125,6 +127,7 @@ export default function LevelScreen() {
             milestoneHistory,
             skippedAssessment,
             onboardingProfile,
+            weeklyCount,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredYourDayTopicsFromStorage(),
@@ -137,6 +140,7 @@ export default function LevelScreen() {
             getMilestoneHistory(),
             isAssessmentSkipped(),
             getOnboardingProfile(),
+            getWeeklyVocabIntroducedCount(),
           ]);
           if (cancelled) return;
 
@@ -147,6 +151,7 @@ export default function LevelScreen() {
           setYourDayCovered(yourDaySet);
           setVocabStats(stats);
           setSavedWords(words);
+          setWeeklyVocabIntroduced(weeklyCount);
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
           setReminderTimeState(reminder);
@@ -251,7 +256,11 @@ export default function LevelScreen() {
             summary={vocabularySummary}
             expanded={!!expandedSections.vocabulary}
             onToggle={() => toggleSection('vocabulary')}>
-            <ThemedVocabularyReference savedWords={savedWords} history={history} />
+            <ThemedVocabularyReference
+              savedWords={savedWords}
+              history={history}
+              weeklyIntroduced={weeklyVocabIntroduced}
+            />
             <YourDaySection covered={yourDayCovered} coveredCount={yourDayCoveredCount} embedded />
           </CollapsibleProfileSection>
 

@@ -1,15 +1,17 @@
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { SummaryScoreRing } from '@/components/summary-score-ring';
 import { logCrashBreadcrumb } from '@/lib/crash-breadcrumb';
+import { saveVocabularyWord } from '@/lib/saved-vocabulary';
 import {
   resolveSummaryDisplayFromParams,
   type SummaryDisplayPayload,
 } from '@/lib/summary-display-store';
+import { normalizeSpanishKey } from '@/lib/themed-vocabulary';
 import { useFocusEffect } from '@react-navigation/native';
 import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   BackHandler,
@@ -224,6 +226,10 @@ function SummaryBody({
         </Text>
       </View>
 
+      {data.dailyVocabRecap?.words.length ? (
+        <DailyVocabRecapSection recap={data.dailyVocabRecap} />
+      ) : null}
+
       {data.writing ? (
         <View style={styles.metricCard}>
           <Text style={styles.metricTitle}>Writing</Text>
@@ -265,6 +271,77 @@ function SummaryBody({
 
       <Text style={styles.xpNote}>XP earned · {data.xpEarned}</Text>
     </>
+  );
+}
+
+function DailyVocabRecapSection({
+  recap,
+}: {
+  recap: NonNullable<SummaryDisplayPayload['dailyVocabRecap']>;
+}) {
+  const [savedKeys, setSavedKeys] = useState(
+    () => new Set(recap.words.filter((w) => w.saved).map((w) => normalizeSpanishKey(w.spanish))),
+  );
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+
+  const saveWord = useCallback(
+    async (word: (typeof recap.words)[number]) => {
+      const key = normalizeSpanishKey(word.spanish);
+      if (savedKeys.has(key)) return;
+      setSavingKey(key);
+      try {
+        await saveVocabularyWord(word.spanish, {
+          source: 'lesson',
+          needsReview: true,
+          english: word.english,
+          vocabThemeTag: recap.theme,
+          introducedDate: new Date().toISOString().slice(0, 10),
+        });
+        setSavedKeys((prev) => new Set(prev).add(key));
+      } finally {
+        setSavingKey(null);
+      }
+    },
+    [recap.theme, savedKeys],
+  );
+
+  return (
+    <View style={styles.section}>
+      <Text style={styles.sectionTitle}>Palabras de hoy 🔤</Text>
+      {recap.weeklyIntroduced > 0 ? (
+        <Text style={styles.vocabWeekNote}>
+          Esta semana: {recap.weeklyIntroduced} palabras nuevas introducidas
+        </Text>
+      ) : null}
+      {recap.words.map((word) => {
+        const key = normalizeSpanishKey(word.spanish);
+        const saved = savedKeys.has(key);
+        return (
+          <View key={key} style={[styles.item, styles.vocabRecapRow]}>
+            <View style={styles.vocabRecapMain}>
+              <Text style={styles.vocabRecapSpanish}>
+                {word.spanish}
+                {word.revisiting ? ' · repaso' : ''}
+              </Text>
+              <Text style={styles.vocabRecapEnglish}>{word.english}</Text>
+              <Text style={styles.vocabRecapUsage}>
+                Javi {word.javiUsed ? '✅' : '—'} · Tú {word.userUsed ? '✅' : '—'}
+              </Text>
+            </View>
+            {!saved ? (
+              <Pressable
+                onPress={() => void saveWord(word)}
+                disabled={savingKey === key}
+                style={({ pressed }) => [styles.vocabSaveBtn, pressed && styles.stickyHomeButtonPressed]}>
+                <Text style={styles.vocabSaveBtnText}>{savingKey === key ? '…' : '💾'}</Text>
+              </Pressable>
+            ) : (
+              <Text style={styles.vocabSavedMark}>💾</Text>
+            )}
+          </View>
+        );
+      })}
+    </View>
   );
 }
 
@@ -419,4 +496,31 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginBottom: 12,
   },
+  vocabWeekNote: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: palette.muted,
+    marginBottom: 8,
+  },
+  vocabRecapRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: palette.surface,
+    borderColor: palette.surfaceBorder,
+  },
+  vocabRecapMain: { flex: 1, gap: 2 },
+  vocabRecapSpanish: { fontSize: 15, fontWeight: '900', color: palette.text },
+  vocabRecapEnglish: { fontSize: 13, fontWeight: '600', color: palette.muted },
+  vocabRecapUsage: { fontSize: 12, fontWeight: '700', color: palette.blue, marginTop: 2 },
+  vocabSaveBtn: {
+    backgroundColor: 'rgba(255, 122, 89, 0.15)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 122, 89, 0.4)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  vocabSaveBtnText: { fontSize: 16 },
+  vocabSavedMark: { fontSize: 18, paddingHorizontal: 6 },
 });

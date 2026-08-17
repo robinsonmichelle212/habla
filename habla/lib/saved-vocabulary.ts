@@ -27,6 +27,8 @@ export type SavedVocabWord = {
   needsReview?: boolean;
   partOfSpeech?: string;
   isPhrase?: boolean;
+  vocabThemeTag?: string;
+  introducedDate?: string;
 };
 
 export type SavedVocabQuestion = {
@@ -86,6 +88,8 @@ function normalizeWord(raw: unknown): SavedVocabWord | null {
     needsReview: Boolean(o.needsReview),
     partOfSpeech: typeof o.partOfSpeech === 'string' ? o.partOfSpeech.trim() : undefined,
     isPhrase: Boolean(o.isPhrase),
+    vocabThemeTag: typeof o.vocabThemeTag === 'string' ? o.vocabThemeTag.trim() : undefined,
+    introducedDate: typeof o.introducedDate === 'string' ? o.introducedDate.trim() : undefined,
   };
 }
 
@@ -149,6 +153,8 @@ export async function saveVocabularyWord(
     exampleEnglish?: string;
     partOfSpeech?: string;
     isPhrase?: boolean;
+    vocabThemeTag?: string;
+    introducedDate?: string;
   },
 ): Promise<{
   word: SavedVocabWord;
@@ -194,6 +200,8 @@ export async function saveVocabularyWord(
     needsReview: options?.needsReview,
     partOfSpeech: options?.partOfSpeech,
     isPhrase: options?.isPhrase,
+    vocabThemeTag: options?.vocabThemeTag,
+    introducedDate: options?.introducedDate,
   };
   await saveAll([...existing, word]);
   await addGems(1);

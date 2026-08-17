@@ -254,15 +254,28 @@ The ONLY exception is a conjugation memory hook, which may contain one English s
 brackets, for example: "fui — (sounds like phooey) — ...".
 This rule overrides every conflicting language or response-format instruction.`;
 
+function buildDailyVocabAppendix(words?: { spanish: string; english: string }[]): string {
+  if (!words?.length) return '';
+  const list = words.map((w) => `${w.spanish} (${w.english})`).join(', ');
+  return `
+
+DAILY VOCABULARY (required):
+Today's 3 vocabulary words are: ${list}
+Use each of these words naturally at least once during Phase 1, Phase 2 and Phase 3.
+Do not announce that you are using them — weave them into normal conversation.`;
+}
+
 function buildSystemPrompt(
   lessonType: LessonType,
   focus: LessonFocusContext,
   topErrors: ErrorDNAInput[] = [],
+  dailyVocabWords?: { spanish: string; english: string }[],
 ): string {
   return `You are Javi, a warm, encouraging Spanish tutor in a mobile app.
 
 This session's lesson type: ${lessonType}
 ${buildFocusInstructions(focus)}
+${buildDailyVocabAppendix(dailyVocabWords)}
 
 ${CORE_VOCABULARY_PROMPT}
 
@@ -579,21 +592,27 @@ export async function generateWarmUpOpening(
   lessonType: LessonType,
   focus: LessonFocusContext,
   topErrors: ErrorDNAInput[] = [],
+  dailyVocabWords?: { spanish: string; english: string }[],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
 
+  const vocabNote =
+    dailyVocabWords?.length ?
+      ' The learner already saw today\'s 3 vocabulary words in a separate intro. Do NOT re-introduce vocabulary — start directly with today\'s grammar or topic.'
+    : '';
+
   const openingPrompt =
     focus.kind === 'structure'
-      ? `Start the warm-up. Explain in simple Spanish why today's structure point matters (${focus.topic.title}): ${focus.topic.summary}. Use Spanish examples only. Explain WHY, not just the rule. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
+      ? `Start the warm-up. Explain in simple Spanish why today's structure point matters (${focus.topic.title}): ${focus.topic.summary}. Use Spanish examples only. Explain WHY, not just the rule. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.${vocabNote}`
       : focus.kind === 'grammar'
-        ? `Start the warm-up for ${focus.topic} (week ${focus.weekNumber}). The learner sees conjugation tables for: ${focus.focusVerbs.join(', ')}. Explain in simple Spanish when and why this tense is used, point them to the regular endings on screen, and highlight 2–3 irregular focus verbs. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.`
-        : 'Start the warm-up in Spanish only. Introduce today\'s topic, explain why it matters, and highlight 2–3 verbs or structures to practise. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.';
+        ? `Start the warm-up for ${focus.topic} (week ${focus.weekNumber}). The learner sees conjugation tables for: ${focus.focusVerbs.join(', ')}. Explain in simple Spanish when and why this tense is used, point them to the regular endings on screen, and highlight 2–3 irregular focus verbs. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.${vocabNote}`
+        : `Start the warm-up in Spanish only. Introduce today's topic, explain why it matters, and highlight 2–3 verbs or structures to practise. Do not add a translation. Do not use [READY_FOR_WRITING] yet — this is only your first message.${vocabNote}`;
 
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
-    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${WARMUP_PHASE_APPENDIX}`,
+    system: `${buildSystemPrompt(lessonType, focus, topErrors, dailyVocabWords)}${WARMUP_PHASE_APPENDIX}`,
     messages: [
       {
         role: 'user',
@@ -612,6 +631,7 @@ export async function askJaviWarmUp(
   focus: LessonFocusContext,
   javiMessageNumber: number,
   topErrors: ErrorDNAInput[] = [],
+  dailyVocabWords?: { spanish: string; english: string }[],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -625,7 +645,7 @@ export async function askJaviWarmUp(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
-    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${WARMUP_PHASE_APPENDIX}
+    system: `${buildSystemPrompt(lessonType, focus, topErrors, dailyVocabWords)}${WARMUP_PHASE_APPENDIX}
 ${progressHint}`,
     messages: [
       ...priorExchanges.map((m) => ({ role: m.role, content: m.content })),
@@ -642,6 +662,7 @@ export async function generateSpeakingIntro(
   focus: LessonFocusContext,
   topErrors: ErrorDNAInput[] = [],
   interleaving?: InterleavingContext,
+  dailyVocabWords?: { spanish: string; english: string }[],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -649,7 +670,7 @@ export async function generateSpeakingIntro(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 400,
-    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}`,
+    system: `${buildSystemPrompt(lessonType, focus, topErrors, dailyVocabWords)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}`,
     messages: [
       {
         role: 'user',
@@ -679,6 +700,7 @@ export async function askJaviSpeakingConversation(
   maxExchanges: number = 3,
   topErrors: ErrorDNAInput[] = [],
   interleaving?: InterleavingContext,
+  dailyVocabWords?: { spanish: string; english: string }[],
 ): Promise<string> {
   const anthropic = getClient();
   const model = getModel();
@@ -691,7 +713,7 @@ export async function askJaviSpeakingConversation(
   const response = await anthropic.messages.create({
     model,
     max_tokens: 180,
-    system: `${buildSystemPrompt(lessonType, focus, topErrors)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}
+    system: `${buildSystemPrompt(lessonType, focus, topErrors, dailyVocabWords)}${SPEAKING_PHASE_APPENDIX}${interleavingSpeakingHint(interleaving)}
 Today's speaking theme (keep conversation on this topic): ${speakingTopic}
 ${exchangeHint}`,
     messages: [
@@ -1293,12 +1315,14 @@ export async function generateWritingTask(
   conversation: JaviMessage[],
   focus: LessonFocusContext,
   interleaving?: InterleavingContext,
+  dailyVocabWords?: { spanish: string; english: string }[],
 ): Promise<WritingTaskJson> {
   const anthropic = getClient();
   const model = getModel();
 
   const system = `You are Javi, a Spanish tutor.
 ${SPANISH_ONLY_PHASES_RULE}
+${buildDailyVocabAppendix(dailyVocabWords)}
 The writing task prompt value must be entirely in Spanish.
 Return ONLY valid JSON. No markdown.`;
 
@@ -3417,6 +3441,86 @@ Return JSON:
     topicMastery: typeof parsed.topicMastery === 'string' ? parsed.topicMastery.trim() : '',
     javiFeedback: typeof parsed.javiFeedback === 'string' ? parsed.javiFeedback.trim() : '',
   };
+}
+
+export async function generateDailyVocabWords(input: {
+  theme: string;
+  seenThisWeek: string[];
+  grammarTopic: string;
+  revisiting: boolean;
+}): Promise<
+  {
+    spanish: string;
+    english: string;
+    partOfSpeech: string;
+    exampleSpanish: string;
+    exampleEnglish: string;
+    memoryHook: string;
+    revisiting?: boolean;
+  }[]
+> {
+  const anthropic = getClient();
+  const model = getModel();
+  const system = `You are Javi selecting B1 Spanish vocabulary for a daily lesson intro.
+Return ONLY valid JSON. No markdown.
+Words must fit the theme and work naturally with today's grammar focus.`;
+
+  const user = `From the vocabulary theme "${input.theme}" select exactly 3 words the learner has not seen this week.
+Words already seen this week: ${JSON.stringify(input.seenThisWeek)}
+Today's grammar focus: ${input.grammarTopic}
+${input.revisiting ? 'The learner has already seen 15+ words this week — choose 3 to revisit and mark revisiting true.' : 'Choose 3 NEW words only.'}
+
+Requirements for each word:
+- B1 level — neither too basic nor too advanced
+- Genuinely useful in everyday conversation
+- Works naturally with today's grammar focus
+
+Return JSON:
+{
+  "words": [
+    {
+      "spanish": "conseguir",
+      "english": "to achieve / to get",
+      "partOfSpeech": "verb",
+      "exampleSpanish": "Conseguí el trabajo.",
+      "exampleEnglish": "I got the job.",
+      "memoryHook": "sounds like can-SEEK-ear — you seek what you want to achieve",
+      "revisiting": false
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 900,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as {
+    words?: {
+      spanish?: string;
+      english?: string;
+      partOfSpeech?: string;
+      exampleSpanish?: string;
+      exampleEnglish?: string;
+      memoryHook?: string;
+      revisiting?: boolean;
+    }[];
+  };
+
+  return (parsed.words ?? [])
+    .map((raw) => ({
+      spanish: typeof raw.spanish === 'string' ? raw.spanish.trim() : '',
+      english: typeof raw.english === 'string' ? raw.english.trim() : '',
+      partOfSpeech: typeof raw.partOfSpeech === 'string' ? raw.partOfSpeech.trim() : 'word',
+      exampleSpanish: typeof raw.exampleSpanish === 'string' ? raw.exampleSpanish.trim() : '',
+      exampleEnglish: typeof raw.exampleEnglish === 'string' ? raw.exampleEnglish.trim() : '',
+      memoryHook: typeof raw.memoryHook === 'string' ? raw.memoryHook.trim() : '',
+      revisiting: input.revisiting || raw.revisiting === true,
+    }))
+    .filter((w) => w.spanish && w.english)
+    .slice(0, 3);
 }
 
 export async function generateProgressionRetakeTip(input: {

@@ -28,6 +28,7 @@ const palette = {
 type Props = {
   savedWords: SavedVocabWord[];
   history: LessonHistoryEntry[];
+  weeklyIntroduced?: number;
 };
 
 type SavedMatch = {
@@ -59,7 +60,7 @@ function matchSaved(
   return { mastered: false };
 }
 
-export function ThemedVocabularyReference({ savedWords, history }: Props) {
+export function ThemedVocabularyReference({ savedWords, history, weeklyIntroduced }: Props) {
   const [query, setQuery] = useState('');
   const [expandedTheme, setExpandedTheme] = useState<string | null>(null);
   const [expandedWordKey, setExpandedWordKey] = useState<string | null>(null);
@@ -128,18 +129,33 @@ export function ThemedVocabularyReference({ savedWords, history }: Props) {
     const base = theme.words.map((w) => ({ ...w, ...matchSaved(w.spanish, savedByKey) }));
     const baseKeys = new Set(base.map((w) => normalizeSpanishKey(w.spanish)));
 
-    // Append saved words that belong to this theme by topic match heuristics:
-    // if the saved word's Spanish isn't already listed, skip auto-bucket unless
-    // the user saved it during a lesson that covered this theme — we only tag
-    // overlaps by string match against theme list (already done). Extra saved
-    // words without theme membership stay searchable via the word list only.
-    void baseKeys;
+    for (const saved of savedWords) {
+      if (
+        saved.vocabThemeTag === theme.id &&
+        !baseKeys.has(normalizeSpanishKey(saved.spanish))
+      ) {
+        base.push({
+          spanish: saved.spanish,
+          english: saved.english ?? saved.spanish,
+          definition: saved.exampleEnglish ?? saved.english ?? '',
+          exampleSpanish: saved.exampleSpanish ?? '',
+          exampleEnglish: saved.exampleEnglish ?? '',
+          ...matchSaved(saved.spanish, savedByKey),
+        });
+        baseKeys.add(normalizeSpanishKey(saved.spanish));
+      }
+    }
     return base;
   };
 
   return (
     <View style={styles.wrap}>
       <Text style={styles.subtitle}>Key words and phrases by theme</Text>
+      {weeklyIntroduced != null && weeklyIntroduced > 0 ? (
+        <Text style={styles.weeklyIntroduced}>
+          Esta semana: {weeklyIntroduced} palabras nuevas introducidas
+        </Text>
+      ) : null}
 
       <AppTextInput
         style={styles.search}
@@ -372,6 +388,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: palette.muted,
     marginBottom: 4,
+  },
+  weeklyIntroduced: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: palette.green,
+    marginBottom: 8,
   },
   search: {
     backgroundColor: palette.surface,

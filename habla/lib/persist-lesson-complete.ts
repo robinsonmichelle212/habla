@@ -45,6 +45,13 @@ import {
 } from '@/lib/summary-safe-data';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { syncStreakReminder } from '@/lib/streak-notifications';
+import {
+  buildDailyVocabRecap,
+  detectDailyVocabUsage,
+  getWeeklyVocabIntroducedCount,
+} from '@/lib/daily-vocab-intro';
+import { getSavedVocabulary } from '@/lib/saved-vocabulary';
+import { normalizeSpanishKey } from '@/lib/themed-vocabulary';
 import { noteGrammarLessonForProgressionRetake } from '@/lib/progression-test';
 
 async function withOneRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
@@ -273,6 +280,31 @@ export async function persistLessonComplete(
 
   const speaking = session.speakingEvaluation;
   const writing = session.writingEvaluation;
+
+  let dailyVocabRecap: SummaryDisplayPayload['dailyVocabRecap'];
+  if (session.dailyVocabWords?.length) {
+    try {
+      const saved = await getSavedVocabulary();
+      const savedKeys = new Set(saved.map((w) => normalizeSpanishKey(w.spanish)));
+      const usage =
+        session.dailyVocabUsage ??
+        detectDailyVocabUsage(
+          session.dailyVocabWords,
+          session.warmUpConversation ?? [],
+          session.speakingConversation ?? [],
+          session.writingEvaluation?.originalText,
+        );
+      const weeklyIntroduced = await getWeeklyVocabIntroducedCount();
+      dailyVocabRecap = {
+        theme: session.dailyVocabTheme ?? '',
+        weeklyIntroduced,
+        words: buildDailyVocabRecap(session.dailyVocabWords, usage, savedKeys),
+      };
+    } catch (err) {
+      console.warn('[Habla] daily vocab recap failed:', err);
+    }
+  }
+
   const display: SummaryDisplayPayload = {
     overallScore: scorePending ? 0 : overallScore,
     scorePending,
@@ -317,6 +349,7 @@ export async function persistLessonComplete(
           textType: analysis.breakdown.reading.textType,
         }
       : undefined,
+    dailyVocabRecap,
   };
 
   setSummaryDisplayPayload(display);
