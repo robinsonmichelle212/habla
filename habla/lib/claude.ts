@@ -15,6 +15,7 @@ import type {
   WritingDrillQuestion,
 } from '@/lib/writing-drill';
 import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
+import type { ProgressionTestQuestion, ProgressionQuestionType } from '@/lib/progression-test';
 import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 import type { SpanishWrappedReport } from '@/lib/wrapped-data';
@@ -3201,4 +3202,126 @@ Rules:
   });
 
   return extractText(response);
+}
+
+function normalizeProgressionQuestion(
+  raw: Partial<ProgressionTestQuestion>,
+  index: number,
+): ProgressionTestQuestion | null {
+  const types: ProgressionQuestionType[] = [
+    'conjugation',
+    'fill_blank',
+    'correct_mistake',
+    'sentence_stem',
+    'translation',
+  ];
+  const type = types.includes(raw.type as ProgressionQuestionType)
+    ? (raw.type as ProgressionQuestionType)
+    : null;
+  const prompt = typeof raw.prompt === 'string' ? raw.prompt.trim() : '';
+  const expectedAnswer = typeof raw.expectedAnswer === 'string' ? raw.expectedAnswer.trim() : '';
+  if (!type || !prompt || !expectedAnswer) return null;
+  return {
+    id: String(raw.id ?? index + 1),
+    type,
+    prompt,
+    instruction: typeof raw.instruction === 'string' ? raw.instruction.trim() : '',
+    expectedAnswer,
+    acceptableAnswers: Array.isArray(raw.acceptableAnswers)
+      ? raw.acceptableAnswers.map((a) => String(a).trim()).filter(Boolean)
+      : [],
+    explanation: typeof raw.explanation === 'string' ? raw.explanation.trim() : '',
+  };
+}
+
+export async function generateProgressionTestQuestions(input: {
+  topicName: string;
+  topicSpanish: string;
+  weekSummary: string;
+  focusVerbs: string[];
+  errorDna: { error: string; example: string; correction: string }[];
+  commonMistakes: string[];
+}): Promise<ProgressionTestQuestion[]> {
+  const anthropic = getClient();
+  const model = getModel();
+
+  const system = `You are Javi writing a B1 Spanish progression test.
+Return ONLY valid JSON. No markdown.
+Questions use ONLY this topic's grammar and high-frequency vocabulary.
+No timer — this is a knowledge check, not a speed test.`;
+
+  const user = `Create exactly 10 questions for topic: ${input.topicName} (${input.topicSpanish}).
+Week focus: ${input.weekSummary}
+Focus verbs: ${input.focusVerbs.join(', ')}
+
+Learner error DNA for this topic:
+${JSON.stringify(input.errorDna)}
+
+Common mistakes from lesson history:
+${JSON.stringify(input.commonMistakes)}
+
+Mix EXACTLY:
+- 3 conjugation
+- 2 fill_blank
+- 2 correct_mistake
+- 2 sentence_stem
+- 1 translation
+
+Rules:
+- Prompts can be Spanish or a short English instruction + Spanish sentence.
+- expectedAnswer is the main correct Spanish answer.
+- acceptableAnswers: 1-4 reasonable variants.
+- Target the learner's error DNA when possible.
+- Keep items short enough to type on a phone.
+
+Return JSON:
+{
+  "questions": [
+    {
+      "id": "1",
+      "type": "conjugation",
+      "prompt": "...",
+      "instruction": "Conjugación",
+      "expectedAnswer": "...",
+      "acceptableAnswers": ["..."],
+      "explanation": "short why"
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1800,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as {
+    questions?: Partial<ProgressionTestQuestion>[];
+  };
+  return (parsed.questions ?? [])
+    .map((q, i) => normalizeProgressionQuestion(q, i))
+    .filter((q): q is ProgressionTestQuestion => q != null);
+}
+
+export async function generateProgressionRetakeTip(input: {
+  topicName: string;
+  attempts: number;
+  errorDna: { error: string; example: string; correction: string }[];
+}): Promise<string> {
+  const anthropic = getClient();
+  const model = getModel();
+  const system = `You are Javi. Write one short encouraging Spanish tip (2-3 sentences max) plus one specific correction target.
+Return plain text, no JSON.`;
+  const user = `The learner has ${input.attempts} attempts on ${input.topicName}.
+Error DNA: ${JSON.stringify(input.errorDna.slice(0, 4))}
+Give one specific tip based on their most frequent error.`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 220,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+  return extractText(response).trim();
 }

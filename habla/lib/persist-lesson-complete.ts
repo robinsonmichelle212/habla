@@ -45,6 +45,7 @@ import {
 } from '@/lib/summary-safe-data';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
 import { syncStreakReminder } from '@/lib/streak-notifications';
+import { noteGrammarLessonForProgressionRetake } from '@/lib/progression-test';
 
 async function withOneRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
   try {
@@ -174,6 +175,9 @@ export async function persistLessonComplete(
             ? session.lessonFocus.weekNumber
             : undefined;
         await recordLessonTypeCompletion(trackedKind, week).catch(() => {});
+        if (trackedKind === 'grammar') {
+          await noteGrammarLessonForProgressionRetake().catch(() => {});
+        }
       }
 
       await clearLessonCheckpoint().catch(() => {});

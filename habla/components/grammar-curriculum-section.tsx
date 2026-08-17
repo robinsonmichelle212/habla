@@ -15,6 +15,14 @@ import { getErrorsForGrammarTopic } from '@/lib/tense-guide-content';
 import { averageScoreForTopic } from '@/lib/level-progress';
 import { getLessonHistory } from '@/lib/practice-storage';
 import type { ErrorDNAItem } from '@/lib/error-dna';
+import {
+  blocksForCurriculumGroup,
+  formatProgressionStatusLine,
+  getProgressionStatusForBlock,
+  pickGroupProgressionStatus,
+  PROGRESSION_BLOCKS,
+  type ProgressionGroupStatus,
+} from '@/lib/progression-test';
 import { useFocusEffect } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
@@ -66,13 +74,33 @@ export function GrammarCurriculumSection({
   const [expandedWeek, setExpandedWeek] = useState<number | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
   const [essentialExpanded, setEssentialExpanded] = useState(false);
+  const [progressionByBlock, setProgressionByBlock] = useState<Record<string, ProgressionGroupStatus>>(
+    {},
+  );
 
   useFocusEffect(
     useCallback(() => {
       setExpandedWeek(null);
       setExpandedGroups({});
       setEssentialExpanded(false);
-    }, []),
+      if (!curriculum) return;
+      const week = curriculum.currentWeek;
+      let cancelled = false;
+      void (async () => {
+        const entries = await Promise.all(
+          PROGRESSION_BLOCKS.map(
+            async (block) => [block.key, await getProgressionStatusForBlock(block, week)] as const,
+          ),
+        );
+        if (cancelled) return;
+        const next: Record<string, ProgressionGroupStatus> = {};
+        for (const [key, status] of entries) next[key] = status;
+        setProgressionByBlock(next);
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }, [curriculum]),
   );
 
   if (!curriculum) return null;
@@ -138,6 +166,13 @@ export function GrammarCurriculumSection({
             ) : locked ? (
               <Text style={styles.weekMetaLocked}>Unlocks when you reach this week</Text>
             ) : null}
+            {(() => {
+              const block = blocksForCurriculumGroup([week])[0];
+              const status = block ? progressionByBlock[block.key] : null;
+              return status ? (
+                <Text style={styles.weekMeta}>{formatProgressionStatusLine(status)}</Text>
+              ) : null;
+            })()}
           </View>
           {!locked ? <Text style={styles.chevron}>{expanded ? '▼' : '›'}</Text> : null}
         </Pressable>
@@ -198,6 +233,11 @@ export function GrammarCurriculumSection({
   const renderGroup = (group: (typeof GRAMMAR_TOPIC_GROUPS)[number]) => {
     const completedInGroup = group.weeks.filter((w) => isWeekCompleted(curriculum, w)).length;
     const groupExpanded = expandedGroups[group.id] ?? false;
+    const groupBlocks = blocksForCurriculumGroup(group.weeks);
+    const groupStatuses = groupBlocks
+      .map((b) => progressionByBlock[b.key])
+      .filter((s): s is ProgressionGroupStatus => s != null);
+    const groupStatus = groupStatuses.length ? pickGroupProgressionStatus(groupStatuses) : null;
 
     return (
       <View key={group.id} style={styles.groupBlock}>
@@ -211,6 +251,9 @@ export function GrammarCurriculumSection({
             <Text style={styles.groupMeta}>
               {weekRangeLabel(group.weeks)} · {completedInGroup} of {group.weeks.length} weeks complete
             </Text>
+            {groupStatus ? (
+              <Text style={styles.groupMeta}>{formatProgressionStatusLine(groupStatus)}</Text>
+            ) : null}
           </View>
           <Text style={styles.chevron}>{groupExpanded ? '▼' : '›'}</Text>
         </Pressable>

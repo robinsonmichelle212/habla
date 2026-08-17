@@ -162,6 +162,7 @@ export default function RootLayout() {
           <Stack.Screen name="gem-shop" options={{ headerShown: false, presentation: 'modal' }} />
           <Stack.Screen name="bonus-round" options={{ headerShown: false }} />
           <Stack.Screen name="grammar-curriculum" options={{ headerShown: false }} />
+          <Stack.Screen name="progression-test" options={{ headerShown: false }} />
           <Stack.Screen name="conjugation-tables" options={{ headerShown: false }} />
           <Stack.Screen name="tense-guide" options={{ headerShown: false }} />
         </Stack>

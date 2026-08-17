@@ -598,6 +598,22 @@ export async function resolveGrammarCurriculum(
 ): Promise<GrammarCurriculumState> {
   let state = await getGrammarCurriculum();
 
+  try {
+    const { syncProgressionTestBypass, isProgressionTestBlockingAdvance } = await import(
+      '@/lib/progression-test'
+    );
+    await syncProgressionTestBypass(state.currentWeek);
+    if (
+      state.currentWeek < TOTAL_CURRICULUM_WEEKS &&
+      daysBetween(state.weekStartDate, today) >= 7 &&
+      (await isProgressionTestBlockingAdvance(state.currentWeek))
+    ) {
+      return state;
+    }
+  } catch (err) {
+    console.error('[Habla] progression test gate failed:', err);
+  }
+
   if (state.currentWeek >= TOTAL_CURRICULUM_WEEKS) {
     return state;
   }
@@ -616,6 +632,24 @@ export async function resolveGrammarCurriculum(
   return state;
 }
 
+/** Advance exactly one week after a passed (or overridden) progression test. Re-reads currentWeek. */
+export async function advanceGrammarCurriculumOneWeek(
+  expectedWeek: number,
+  today: string = formatLocalDate(),
+): Promise<GrammarCurriculumState> {
+  const state = await getGrammarCurriculum();
+  if (state.currentWeek !== expectedWeek) return state;
+  if (state.currentWeek >= TOTAL_CURRICULUM_WEEKS) return state;
+
+  const completed = state.completedWeeks.includes(state.currentWeek)
+    ? state.completedWeeks
+    : [...state.completedWeeks, state.currentWeek];
+  const nextWeek = Math.min(TOTAL_CURRICULUM_WEEKS, state.currentWeek + 1);
+  const next = stateFromWeek(nextWeek, today, completed);
+  await saveGrammarCurriculum(next);
+  return next;
+}
+
 /** Set curriculum to a specific starting week (marks prior weeks completed). */
 export async function setGrammarCurriculumStartWeek(week: number): Promise<GrammarCurriculumState> {
   const clamped = Math.max(1, Math.min(TOTAL_CURRICULUM_WEEKS, Math.trunc(week)));
@@ -629,6 +663,12 @@ export async function setGrammarCurriculumStartWeek(week: number): Promise<Gramm
 export async function resetGrammarCurriculum(): Promise<GrammarCurriculumState> {
   const initial = stateFromWeek(1, formatLocalDate(), []);
   await saveGrammarCurriculum(initial);
+  try {
+    const { resetProgressionTestStorage } = await import('@/lib/progression-test');
+    await resetProgressionTestStorage();
+  } catch {
+    // New keys only — curriculum reset still succeeds.
+  }
   return initial;
 }
 

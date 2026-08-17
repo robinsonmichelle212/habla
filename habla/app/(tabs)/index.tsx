@@ -38,6 +38,7 @@ import {
   resolveLessonNudge,
 } from '@/lib/lesson-type-nudge';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
+import { getProgressionHomeCard, type ProgressionHomeCard } from '@/lib/progression-test';
 import { getStreakState } from '@/lib/streak';
 
 const palette = {
@@ -74,6 +75,7 @@ export default function HomeScreen() {
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
   const [javiRecommendation, setJaviRecommendation] = useState<string | null>(null);
   const [showSparkButton, setShowSparkButton] = useState(false);
+  const [progressionCard, setProgressionCard] = useState<ProgressionHomeCard | null>(null);
   const titleTapCountRef = useRef(0);
   const titleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bounceAnim = useRef(new Animated.Value(1)).current;
@@ -199,7 +201,7 @@ export default function HomeScreen() {
           console.log('Last crash breadcrumbs:', crashLog);
 
           await recoverUnregisteredSessions();
-          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary, nudge, fullToday] =
+          const [streak, gems, challenge, shopProgress, name, weekActivity, lastSummary, nudge, fullToday, progression] =
             await Promise.all([
               getStreakState(),
               getTotalGems(),
@@ -210,6 +212,7 @@ export default function HomeScreen() {
               hasLastSummary(),
               resolveLessonNudge(),
               hasFullActivityToday(),
+              getProgressionHomeCard(),
             ]);
           if (cancelled) return;
 
@@ -233,6 +236,7 @@ export default function HomeScreen() {
           setShowLastSummaryLink(lastSummary);
           setJaviRecommendation(homeRecommendationPreview(nudge));
           setShowSparkButton(!fullToday);
+          setProgressionCard(progression);
 
           await refreshShopBadge(gems);
         } finally {
@@ -352,6 +356,29 @@ export default function HomeScreen() {
           </View>
 
           {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
+
+          {progressionCard?.kind === 'ready' ? (
+            <Pressable
+              onPress={() => router.push('/progression-test')}
+              style={({ pressed }) => [styles.progressionCard, pressed && styles.progressionCardPressed]}
+              accessibilityRole="button"
+              accessibilityLabel={`Progression test ready, ${progressionCard.block.displayName}`}>
+              <Text style={styles.progressionTitle}>
+                📝 Progression test ready — {progressionCard.block.displayName}
+              </Text>
+              <Text style={styles.progressionSub}>Pass to unlock the next topic</Text>
+            </Pressable>
+          ) : null}
+
+          {progressionCard?.kind === 'retake_wait' ? (
+            <View style={styles.progressionCard}>
+              <Text style={styles.progressionTitle}>
+                📝 {progressionCard.lessonsRemaining} more lesson
+                {progressionCard.lessonsRemaining === 1 ? '' : 's'} before retaking progression test
+              </Text>
+              <Text style={styles.progressionSub}>{progressionCard.block.displayName}</Text>
+            </View>
+          ) : null}
 
           {dailyChallenge ? (
             <View
@@ -613,6 +640,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: palette.text,
     textAlign: 'center',
+  },
+  progressionCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.accent,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    gap: 4,
+  },
+  progressionCardPressed: { opacity: 0.9 },
+  progressionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: palette.text,
+    lineHeight: 21,
+  },
+  progressionSub: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
   },
   actions: {
     gap: 12,
