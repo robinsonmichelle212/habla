@@ -375,7 +375,7 @@ export async function getDaysPractisingForQuiz(): Promise<number> {
 }
 
 export async function queueMissedQuizItemsForDrills(
-  misses: { drillTag: string; explanation: string }[],
+  misses: { drillTag: string; explanation: string; source?: string }[],
 ): Promise<void> {
   if (!misses.length) return;
   const raw = await AsyncStorage.getItem(DRILL_QUEUE_KEY);
@@ -392,7 +392,10 @@ export async function queueMissedQuizItemsForDrills(
   }
   const merged = [...existing];
   for (const miss of misses) {
-    const tip = `Review from milestone quiz: ${miss.drillTag} — ${miss.explanation}`;
+    const tip =
+      miss.source === 'progression_test_error'
+        ? `[progression_test_error] ${miss.drillTag} — ${miss.explanation}`
+        : `Review from milestone quiz: ${miss.drillTag} — ${miss.explanation}`;
     if (!merged.includes(tip)) merged.push(tip);
   }
   await AsyncStorage.setItem(DRILL_QUEUE_KEY, JSON.stringify(merged.slice(-10)));

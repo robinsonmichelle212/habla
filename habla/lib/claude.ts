@@ -15,7 +15,13 @@ import type {
   WritingDrillQuestion,
 } from '@/lib/writing-drill';
 import { TOTAL_CURRICULUM_WEEKS } from '@/lib/grammar-curriculum';
-import type { ProgressionTestQuestion, ProgressionQuestionType } from '@/lib/progression-test';
+import type {
+  ProgressionEvaluation,
+  ProgressionQuestionType,
+  ProgressionSpeakingPrompt,
+  ProgressionTestQuestion,
+  ProgressionWrittenScore,
+} from '@/lib/progression-test';
 import type { InterleavingContext } from '@/lib/interleaving';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 import type { SpanishWrappedReport } from '@/lib/wrapped-data';
@@ -3210,10 +3216,10 @@ function normalizeProgressionQuestion(
 ): ProgressionTestQuestion | null {
   const types: ProgressionQuestionType[] = [
     'conjugation',
-    'fill_blank',
     'correct_mistake',
     'sentence_stem',
     'translation',
+    'word_order',
   ];
   const type = types.includes(raw.type as ProgressionQuestionType)
     ? (raw.type as ProgressionQuestionType)
@@ -3241,16 +3247,20 @@ export async function generateProgressionTestQuestions(input: {
   focusVerbs: string[];
   errorDna: { error: string; example: string; correction: string }[];
   commonMistakes: string[];
-}): Promise<ProgressionTestQuestion[]> {
+  unlockedTopics: string[];
+  currentWeek: number;
+}): Promise<{ questions: ProgressionTestQuestion[]; speaking: ProgressionSpeakingPrompt | null }> {
   const anthropic = getClient();
   const model = getModel();
 
   const system = `You are Javi writing a B1 Spanish progression test.
 Return ONLY valid JSON. No markdown.
 Questions use ONLY this topic's grammar and high-frequency vocabulary.
+Only use grammar from unlocked curriculum weeks: ${input.unlockedTopics.join(', ')}.
 No timer — this is a knowledge check, not a speed test.`;
 
-  const user = `Create exactly 10 questions for topic: ${input.topicName} (${input.topicSpanish}).
+  const user = `Create exactly 5 written questions PLUS one speaking prompt for topic: ${input.topicName} (${input.topicSpanish}).
+Current curriculum week: ${input.currentWeek}
 Week focus: ${input.weekSummary}
 Focus verbs: ${input.focusVerbs.join(', ')}
 
@@ -3260,19 +3270,20 @@ ${JSON.stringify(input.errorDna)}
 Common mistakes from lesson history:
 ${JSON.stringify(input.commonMistakes)}
 
-Mix EXACTLY:
-- 3 conjugation
-- 2 fill_blank
-- 2 correct_mistake
-- 2 sentence_stem
-- 1 translation
+Written questions MUST be exactly this order and types:
+1. conjugation — fill in the blank / conjugate a form
+2. correct_mistake — rewrite the sentence correctly
+3. sentence_stem — complete with two possible endings (mention that in the prompt)
+4. translation — short Spanish sentence the learner translates / or English to Spanish to show understanding
+5. word_order — give 5 words in the wrong order; learner arranges them into a correct sentence
+
+Also include one speaking prompt in Spanish that asks the learner to talk about their life using this topic's grammar (e.g. at least 3 verbs in this tense). Include an English translation.
 
 Rules:
-- Prompts can be Spanish or a short English instruction + Spanish sentence.
-- expectedAnswer is the main correct Spanish answer.
-- acceptableAnswers: 1-4 reasonable variants.
 - Target the learner's error DNA when possible.
 - Keep items short enough to type on a phone.
+- expectedAnswer is the main correct Spanish answer.
+- acceptableAnswers: 1-4 reasonable variants.
 
 Return JSON:
 {
@@ -3286,22 +3297,126 @@ Return JSON:
       "acceptableAnswers": ["..."],
       "explanation": "short why"
     }
-  ]
+  ],
+  "speakingPrompt": "Spanish prompt...",
+  "speakingPromptEnglish": "English translation..."
 }`;
 
   const response = await anthropic.messages.create({
     model,
-    max_tokens: 1800,
+    max_tokens: 1600,
     system,
     messages: [{ role: 'user', content: user }],
   });
 
   const parsed = extractFirstJsonObject(extractText(response)) as {
     questions?: Partial<ProgressionTestQuestion>[];
+    speakingPrompt?: string;
+    speakingPromptEnglish?: string;
   };
-  return (parsed.questions ?? [])
+  const questions = (parsed.questions ?? [])
     .map((q, i) => normalizeProgressionQuestion(q, i))
     .filter((q): q is ProgressionTestQuestion => q != null);
+  const spanish = typeof parsed.speakingPrompt === 'string' ? parsed.speakingPrompt.trim() : '';
+  const english =
+    typeof parsed.speakingPromptEnglish === 'string' ? parsed.speakingPromptEnglish.trim() : '';
+  return {
+    questions,
+    speaking: spanish ? { spanish, english: english || spanish } : null,
+  };
+}
+
+export async function evaluateProgressionTest(input: {
+  topicName: string;
+  topicSpanish: string;
+  errorDna: { error: string; example: string; correction: string }[];
+  questions: { prompt: string; type: string; expectedAnswer: string; userAnswer: string }[];
+  speakingPrompt: string;
+  speakingTranscript: string;
+}): Promise<ProgressionEvaluation> {
+  const anthropic = getClient();
+  const model = getModel();
+  const system = `You are Javi scoring a B1 Spanish progression test.
+Return ONLY valid JSON. Be fair and consistent. Short feedback, one key point each.`;
+
+  const user = `Topic: ${input.topicName} (${input.topicSpanish})
+Error DNA: ${JSON.stringify(input.errorDna)}
+
+Written answers:
+${JSON.stringify(input.questions)}
+
+Speaking prompt: ${input.speakingPrompt}
+Speaking transcript: ${input.speakingTranscript || '(empty)'}
+
+Scoring:
+- Each written question: 1 if acceptably correct (ignore minor accents/punctuation), else 0.
+- Speaking out of 3:
+  3 = used 3+ topic-grammar verbs correctly, natural flow
+  2 = used 2 topic-grammar verbs correctly
+  1 = attempted but significant errors
+  0 = did not address the prompt
+- Bonus 0-2: 2 if speaking used the topic grammar consistently throughout, else 0 or 1.
+- totalScore = written (0-5) + speaking (0-3) + bonus (0-2), max 10.
+- passed = totalScore >= 7.
+
+javiFeedback: one warm personalised Spanish sentence about this attempt.
+topicMastery: one English sentence on what they control vs what to practise.
+
+Return JSON:
+{
+  "writtenScores": [
+    { "question": 1, "score": 1, "correct": true, "correctAnswer": "...", "feedback": "..." }
+  ],
+  "speakingScore": 2,
+  "speakingBonus": 0,
+  "speakingFeedback": "...",
+  "totalScore": 7,
+  "passed": true,
+  "topicMastery": "...",
+  "javiFeedback": "..."
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1200,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  const parsed = extractFirstJsonObject(extractText(response)) as Record<string, unknown>;
+  const writtenRaw = Array.isArray(parsed.writtenScores) ? parsed.writtenScores : [];
+  const writtenScores: ProgressionWrittenScore[] = input.questions.map((q, i) => {
+    const raw = (writtenRaw[i] ?? {}) as Record<string, unknown>;
+    const score = Number(raw.score) === 1 ? 1 : 0;
+    return {
+      question: i + 1,
+      score,
+      correct: raw.correct === true || score === 1,
+      correctAnswer:
+        typeof raw.correctAnswer === 'string' && raw.correctAnswer.trim()
+          ? raw.correctAnswer.trim()
+          : q.expectedAnswer,
+      feedback: typeof raw.feedback === 'string' && raw.feedback.trim() ? raw.feedback.trim() : '',
+    };
+  });
+  const writtenTotal = writtenScores.reduce((sum, item) => sum + item.score, 0);
+  const speakingScore = Math.max(0, Math.min(3, Math.trunc(Number(parsed.speakingScore) || 0)));
+  const speakingBonus = Math.max(0, Math.min(2, Math.trunc(Number(parsed.speakingBonus) || 0)));
+  const totalScore = Math.max(
+    0,
+    Math.min(10, Math.trunc(Number(parsed.totalScore) || writtenTotal + speakingScore + speakingBonus)),
+  );
+  return {
+    writtenScores,
+    speakingScore,
+    speakingBonus,
+    speakingFeedback:
+      typeof parsed.speakingFeedback === 'string' ? parsed.speakingFeedback.trim() : '',
+    totalScore,
+    passed: parsed.passed === true || totalScore >= 7,
+    topicMastery: typeof parsed.topicMastery === 'string' ? parsed.topicMastery.trim() : '',
+    javiFeedback: typeof parsed.javiFeedback === 'string' ? parsed.javiFeedback.trim() : '',
+  };
 }
 
 export async function generateProgressionRetakeTip(input: {
