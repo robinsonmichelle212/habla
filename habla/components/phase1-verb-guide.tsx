@@ -1,9 +1,9 @@
-import { ConjugationTableCard } from '@/components/conjugation-table';
-import { getFocusVerbsForTopic } from '@/lib/conjugation-data';
+import { Phase1VerbDeck } from '@/components/phase1-verb-deck';
+import { getFocusVerbsForTopic, sortVerbsForPhase1Deck } from '@/lib/conjugation-data';
 import type { LessonFocusContext } from '@/lib/lesson-focus';
 import { TENSE_GUIDE_CONTENT } from '@/lib/tense-guide-content';
-import { useEffect, useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View, Platform } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 const palette = {
   background: '#0B0F14',
@@ -12,8 +12,6 @@ const palette = {
   text: '#F4F6F8',
   muted: '#8B95A5',
   accent: '#FF7A59',
-  green: '#34D399',
-  amber: '#FBBF24',
 };
 
 type Props = {
@@ -22,132 +20,51 @@ type Props = {
 
 export function Phase1VerbGuide({ focus }: Props) {
   const guide = TENSE_GUIDE_CONTENT[focus.topic];
-  const verbs = useMemo(
-    () => getFocusVerbsForTopic(focus.focusVerbs, focus.topic),
-    [focus.focusVerbs, focus.topic],
-  );
+  const verbs = useMemo(() => {
+    const loaded = getFocusVerbsForTopic(focus.focusVerbs, focus.topic);
+    return sortVerbsForPhase1Deck(loaded, focus.focusVerbs);
+  }, [focus.focusVerbs, focus.topic]);
 
-  const [expanded, setExpanded] = useState(true);
-  const [activeVerb, setActiveVerb] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (verbs.length && !activeVerb) {
-      setActiveVerb(verbs[0].infinitive);
-    }
-  }, [verbs, activeVerb]);
-
-  const selectedVerb = verbs.find((v) => v.infinitive === activeVerb) ?? null;
-  const regularLines = guide.howToForm.filter((line) => /-ar|-er|-ir/i.test(line));
-  const otherFormLines = guide.howToForm.filter((line) => !/-ar|-er|-ir/i.test(line));
+  const [whenToUseExpanded, setWhenToUseExpanded] = useState(false);
 
   return (
-    <View style={styles.card}>
-      <Pressable
-        onPress={() => setExpanded((v) => !v)}
-        style={({ pressed }) => [styles.header, pressed && styles.headerPressed]}
-        accessibilityRole="button"
-        accessibilityState={{ expanded }}>
-        <View style={styles.headerText}>
-          <Text style={styles.eyebrow}>Phase 1 · Week {focus.weekNumber}</Text>
-          <Text style={styles.title}>
-            {focus.topic} — {focus.topicSpanish}
-          </Text>
-        </View>
-        <Text style={styles.chevron}>{expanded ? '▼' : '›'}</Text>
-      </Pressable>
+    <View style={styles.wrap}>
+      <View style={styles.topicHeader}>
+        <Text style={styles.eyebrow}>Phase 1 · Week {focus.weekNumber}</Text>
+        <Text style={styles.title}>
+          {focus.topic} — {focus.topicSpanish}
+        </Text>
+        {focus.weekSummary ? <Text style={styles.summary}>{focus.weekSummary}</Text> : null}
+      </View>
 
-      {expanded ? (
-        <View style={styles.body}>
-          <Text style={styles.summary}>{focus.weekSummary}</Text>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>When to use it</Text>
+      <View style={styles.whenToUseCard}>
+        <Pressable
+          onPress={() => setWhenToUseExpanded((v) => !v)}
+          style={({ pressed }) => [styles.whenToUseHeader, pressed && styles.pressed]}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: whenToUseExpanded }}>
+          <Text style={styles.whenToUseTitle}>When to use it</Text>
+          <Text style={styles.chevron}>{whenToUseExpanded ? '▼' : '›'}</Text>
+        </Pressable>
+        {whenToUseExpanded ? (
+          <View style={styles.whenToUseBody}>
             {guide.whenToUse.map((line, i) => (
               <Text key={`when-${i}`} style={styles.bullet}>
                 • {line}
               </Text>
             ))}
           </View>
+        ) : null}
+      </View>
 
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Regular verb endings</Text>
-            <Text style={styles.sectionHint}>
-              Remove -ar / -er / -ir, then add these endings. Irregular verbs change the stem
-              or form — see the tables below.
-            </Text>
-            {regularLines.map((line, i) => (
-              <Text key={`form-${i}`} style={styles.formLine}>
-                {line}
-              </Text>
-            ))}
-            {otherFormLines.map((line, i) => (
-              <Text key={`extra-${i}`} style={styles.bullet}>
-                • {line}
-              </Text>
-            ))}
-          </View>
-
-          <View style={styles.section}>
-            <Text style={styles.sectionTitle}>
-              This week&apos;s 10 verbs — regular & irregular
-            </Text>
-            <Text style={styles.sectionHint}>
-              Tap a verb to see every form. Orange highlights are irregular endings. Tap any
-              conjugation to hear it.
-            </Text>
-            <View style={styles.verbTabs}>
-              {verbs.map((verb) => {
-                const active = activeVerb === verb.infinitive;
-                return (
-                  <Pressable
-                    key={verb.infinitive}
-                    onPress={() => setActiveVerb(verb.infinitive)}
-                    style={[styles.verbTab, active && styles.verbTabActive]}>
-                    <Text style={[styles.verbTabText, active && styles.verbTabTextActive]}>
-                      {verb.infinitive}
-                    </Text>
-                    {!verb.regular ? (
-                      <Text style={styles.irregularDot}>★</Text>
-                    ) : null}
-                  </Pressable>
-                );
-              })}
-            </View>
-            {selectedVerb ? (
-              <ConjugationTableCard verb={selectedVerb} compact />
-            ) : null}
-          </View>
-
-          {guide.memoryTips.length ? (
-            <View style={styles.tipBox}>
-              <Text style={styles.tipTitle}>💡 Memory tip</Text>
-              <Text style={styles.tipText}>{guide.memoryTips[0]}</Text>
-            </View>
-          ) : null}
-        </View>
-      ) : null}
+      <Phase1VerbDeck verbs={verbs} weekNumber={focus.weekNumber} examples={guide.examples} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: palette.surface,
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    marginBottom: 14,
-    overflow: 'hidden',
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 14,
-    gap: 10,
-  },
-  headerPressed: { opacity: 0.92 },
-  headerText: { flex: 1, gap: 2 },
+  wrap: { marginBottom: 14, gap: 12 },
+  topicHeader: { gap: 4, paddingHorizontal: 2 },
   eyebrow: {
     fontSize: 11,
     fontWeight: '800',
@@ -156,106 +73,52 @@ const styles = StyleSheet.create({
     letterSpacing: 0.6,
   },
   title: {
-    fontSize: 16,
+    fontSize: 17,
     fontWeight: '900',
     color: palette.text,
-    lineHeight: 21,
-  },
-  chevron: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: palette.muted,
-  },
-  body: {
-    paddingHorizontal: 14,
-    paddingBottom: 14,
-    gap: 14,
-    borderTopWidth: 1,
-    borderTopColor: palette.surfaceBorder,
+    lineHeight: 22,
   },
   summary: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     color: palette.muted,
-    lineHeight: 20,
-    paddingTop: 12,
+    lineHeight: 18,
   },
-  section: { gap: 6 },
-  sectionTitle: {
+  whenToUseCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    overflow: 'hidden',
+  },
+  whenToUseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 10,
+  },
+  whenToUseTitle: {
     fontSize: 13,
     fontWeight: '900',
     color: palette.text,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },
-  sectionHint: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: palette.muted,
-    lineHeight: 17,
+  chevron: { fontSize: 18, fontWeight: '700', color: palette.muted },
+  whenToUseBody: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    gap: 6,
+    borderTopWidth: 1,
+    borderTopColor: palette.surfaceBorder,
   },
   bullet: {
     fontSize: 13,
     fontWeight: '600',
     color: palette.text,
     lineHeight: 19,
-    paddingLeft: 2,
   },
-  formLine: {
-    fontSize: 13,
-    fontWeight: '800',
-    color: palette.green,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    lineHeight: 20,
-  },
-  verbTabs: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 4,
-  },
-  verbTab: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    backgroundColor: palette.background,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: palette.surfaceBorder,
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-  },
-  verbTabActive: {
-    borderColor: palette.accent,
-    backgroundColor: 'rgba(255, 122, 89, 0.12)',
-  },
-  verbTabText: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: palette.muted,
-  },
-  verbTabTextActive: { color: palette.accent },
-  irregularDot: {
-    fontSize: 9,
-    color: palette.amber,
-  },
-  tipBox: {
-    backgroundColor: 'rgba(251, 191, 36, 0.1)',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(251, 191, 36, 0.35)',
-    padding: 12,
-    gap: 4,
-  },
-  tipTitle: {
-    fontSize: 12,
-    fontWeight: '900',
-    color: palette.amber,
-  },
-  tipText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: palette.text,
-    lineHeight: 18,
-  },
+  pressed: { opacity: 0.92 },
 });

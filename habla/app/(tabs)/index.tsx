@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ensureVocabWeekFresh } from '@/lib/daily-vocab-intro';
+import { restoreLevelFromHistory } from '@/lib/level-progress';
 import {
   dismissShopBadge,
   getAffordableNextLevels,
@@ -194,6 +195,7 @@ export default function HomeScreen() {
         try {
           await logCrashBreadcrumb('home_screen_mounted');
           await ensureVocabWeekFresh();
+          await restoreLevelFromHistory();
           const crashLog = await getCrashLog();
           console.log('Last crash breadcrumbs:', crashLog);
 

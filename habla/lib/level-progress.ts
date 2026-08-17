@@ -2,17 +2,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { isStreakSessionLesson, overallLessonScore } from '@/lib/practice-storage';
 import type { LessonHistoryEntry } from '@/lib/practice-storage';
+import { getLessonHistory } from '@/lib/practice-storage';
 
 export const HIGHEST_LEVEL_KEY = 'highestLevelAchieved';
+export const LEVEL_RESTORATION_KEY = 'levelRestorationApplied';
 
+/** Score thresholds — label derived from recent average via calculateLevelFromScore. */
 export const LEVEL_BANDS = [
-  { id: 'b1-beginner', label: 'B1 Beginner', min: 0, max: 60 },
-  { id: 'b1-developing', label: 'B1 Developing', min: 60, max: 70 },
-  { id: 'b1-confident', label: 'B1 Confident', min: 70, max: 85 },
-  { id: 'b1-strong', label: 'B1 Strong', min: 85, max: 90 },
-  { id: 'b2-emerging', label: 'B2 Emerging', min: 90, max: 93 },
-  { id: 'b2-developing', label: 'B2 Developing', min: 93, max: 97 },
-  { id: 'b2-confident', label: 'B2 Confident', min: 97, max: 100 },
+  { id: 'b1-beginner', label: 'B1 Beginner', min: 0, max: 59 },
+  { id: 'b1-developing', label: 'B1 Developing', min: 60, max: 69 },
+  { id: 'b1-confident', label: 'B1 Confident', min: 70, max: 79 },
+  { id: 'b1-strong', label: 'B1 Strong', min: 80, max: 84 },
+  { id: 'b2-emerging', label: 'B2 Emerging', min: 85, max: 89 },
+  { id: 'b2-developing', label: 'B2 Developing', min: 90, max: 94 },
+  { id: 'b2-confident', label: 'B2 Confident', min: 95, max: 100 },
 ] as const;
 
 export type LevelBandId = (typeof LEVEL_BANDS)[number]['id'];
@@ -44,6 +47,7 @@ export type NextLevelRequirements = {
 };
 
 const RECENT_SESSION_COUNT = 10;
+const CONFIDENT_FLOOR_LABEL = 'B1 Confident';
 
 function clampScore(n: number): number {
   return Math.max(0, Math.min(100, Math.round(n)));
@@ -69,11 +73,26 @@ export function getBandForScore(avg: number): { band: LevelBand; index: number }
   return { band: LEVEL_BANDS[0], index: 0 };
 }
 
+/** Map a single session score to its level label. */
+export function calculateLevelFromScore(score: number): string {
+  return getBandForScore(score).band.label;
+}
+
 export function getLevelRank(level: string | null | undefined): number {
   if (!level) return -1;
   const trimmed = level.trim();
   const index = LEVEL_BANDS.findIndex((b) => b.id === trimmed || b.label === trimmed);
   return index;
+}
+
+export function levelLabelFromStored(level: string | null | undefined): string {
+  const rank = getLevelRank(level);
+  return rank >= 0 ? LEVEL_BANDS[rank].label : 'B1 Beginner';
+}
+
+export function levelIdFromStored(level: string | null | undefined): LevelBandId {
+  const rank = getLevelRank(level);
+  return rank >= 0 ? LEVEL_BANDS[rank].id : 'b1-beginner';
 }
 
 export function parseStoredLevel(raw: string | null | undefined): LevelBand | null {
@@ -83,7 +102,7 @@ export function parseStoredLevel(raw: string | null | undefined): LevelBand | nu
 
 export function getProgressInBand(avg: number, band: LevelBand): number {
   const score = clampScore(avg);
-  const range = band.max - band.min;
+  const range = band.max - band.min + 1;
   if (range <= 0) return 100;
   const position = score - band.min;
   return clampScore(Math.round((position / range) * 100));
@@ -123,7 +142,7 @@ export function getLevelBarometer(
 
   const calculated = getBandForScore(averageScore);
   const highestRank = getLevelRank(highestLevel);
-  const displayIndex = Math.max(calculated.index, highestRank);
+  const displayIndex = Math.max(calculated.index, highestRank >= 0 ? highestRank : calculated.index);
   return buildBarometer(averageScore, displayIndex);
 }
 
@@ -137,37 +156,108 @@ export async function getHighestLevelAchieved(): Promise<string | null> {
 
 export async function recordHighestLevelIfNeeded(level: string): Promise<void> {
   const highestEver = await getHighestLevelAchieved();
-  if (getLevelRank(level) > getLevelRank(highestEver)) {
-    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, level);
+  const levelRank = getLevelRank(level);
+  if (levelRank > getLevelRank(highestEver)) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, LEVEL_BANDS[levelRank].id);
   }
 }
 
-/** Floors displayed band to the highest ever achieved and stores new peaks. */
+/**
+ * One-time migration: rebuild highestLevelAchieved from full lesson history.
+ * Floors to at least B1 Confident when the user has lesson history.
+ */
+export async function restoreLevelFromHistory(): Promise<void> {
+  try {
+    const applied = await AsyncStorage.getItem(LEVEL_RESTORATION_KEY);
+    if (applied) return;
+
+    const history = await getLessonHistory();
+    let highestRank = -1;
+    let highestLevel = 'B1 Developing';
+    let highestId: LevelBandId = 'b1-developing';
+
+    for (const lesson of history) {
+      if (lesson.placeholder || isStreakSessionLesson(lesson)) continue;
+      if (lesson.overallScore == null) continue;
+      const score = overallLessonScore(lesson);
+      if (score <= 0) continue;
+      const band = getBandForScore(score);
+      if (band.index > highestRank) {
+        highestRank = band.index;
+        highestLevel = band.band.label;
+        highestId = band.band.id;
+      }
+    }
+
+    const storedHighest = await getHighestLevelAchieved();
+    const storedRank = getLevelRank(storedHighest);
+    if (storedRank > highestRank) {
+      highestRank = storedRank;
+      highestLevel = levelLabelFromStored(storedHighest);
+      highestId = levelIdFromStored(storedHighest);
+    }
+
+    const hasLessonHistory = history.some(
+      (lesson) =>
+        !lesson.placeholder &&
+        !isStreakSessionLesson(lesson) &&
+        lesson.overallScore != null &&
+        overallLessonScore(lesson) > 0,
+    );
+
+    const confidentRank = getLevelRank(CONFIDENT_FLOOR_LABEL);
+    if (hasLessonHistory && highestRank < confidentRank) {
+      highestRank = confidentRank;
+      highestLevel = CONFIDENT_FLOOR_LABEL;
+      highestId = 'b1-confident';
+    }
+
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, highestId);
+    await AsyncStorage.setItem(LEVEL_RESTORATION_KEY, 'true');
+    console.log('[Habla] Level restored to:', highestLevel);
+  } catch (err) {
+    console.warn('[Habla] restoreLevelFromHistory failed:', err);
+  }
+}
+
+/**
+ * Returns the displayed level — never below historical best.
+ * Updates highestLevelAchieved when the calculated level is a new peak.
+ */
+export async function getCurrentLevel(recentAverage: number): Promise<string> {
+  const calculated = getBandForScore(recentAverage);
+  const calculatedLabel = calculated.band.label;
+  const highestRaw = await getHighestLevelAchieved();
+  const highestLabel = levelLabelFromStored(highestRaw);
+
+  const calculatedRank = getLevelRank(calculatedLabel);
+  const highestRank = getLevelRank(highestLabel);
+
+  if (calculatedRank >= highestRank) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, calculated.band.id);
+    return calculatedLabel;
+  }
+
+  return highestLabel;
+}
+
+/** Floors displayed band to highest ever achieved; progress reflects position within displayed band. */
 export async function resolveLevelBarometer(
   history: LessonHistoryEntry[],
 ): Promise<LevelBarometer | null> {
+  await restoreLevelFromHistory();
+
   const averageScore = getRecentAverageScore(history);
   if (averageScore == null) return null;
 
-  const newLevel = getBandForScore(averageScore);
-  const highestEver = await getHighestLevelAchieved();
-  const displayIndex =
-    getLevelRank(newLevel.band.id) >= getLevelRank(highestEver)
-      ? newLevel.index
-      : getLevelRank(highestEver);
-
-  if (getLevelRank(newLevel.band.id) > getLevelRank(highestEver)) {
-    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, newLevel.band.id);
-  } else if (!highestEver) {
-    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, newLevel.band.id);
-  }
-
-  return buildBarometer(averageScore, displayIndex);
+  const displayLabel = await getCurrentLevel(averageScore);
+  const displayIndex = getLevelRank(displayLabel);
+  return buildBarometer(averageScore, displayIndex >= 0 ? displayIndex : 0);
 }
 
-/** B1→B2 label from average score across the last 10 sessions. */
-export function getProgressionLevel(history: LessonHistoryEntry[]): string | null {
-  const barometer = getLevelBarometer(history);
+/** B1→B2 label from recent average, floored to historical best. */
+export async function getProgressionLevel(history: LessonHistoryEntry[]): Promise<string | null> {
+  const barometer = await resolveLevelBarometer(history);
   return barometer?.band.label ?? null;
 }
 

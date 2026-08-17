@@ -25,6 +25,7 @@ import {
   type OnboardingProfile,
   type SelfAssessedLevel,
 } from '@/lib/onboarding-storage';
+import { getLevelRank, recordHighestLevelIfNeeded } from '@/lib/level-progress';
 import { formatLocalDate } from '@/lib/streak';
 import {
   MIN_RECORDING_MS,
@@ -365,6 +366,9 @@ export default function OnboardingScreen() {
         return;
       }
       await completeOnboarding(profile, { retake: isRetake, skipAssessment: profile.assessmentSkipped });
+      if (getLevelRank(profile.confirmedLevel) >= 0) {
+        await recordHighestLevelIfNeeded(profile.confirmedLevel);
+      }
       router.replace('/(tabs)' as Href);
     } finally {
       setCompleting(false);

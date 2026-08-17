@@ -27,6 +27,7 @@ import {
   YOUR_DAY_TOPICS,
 } from '@/lib/lesson-focus';
 import { getWeeklyVocabIntroducedCount } from '@/lib/daily-vocab-intro';
+import { resolveLevelBarometer } from '@/lib/level-progress';
 import {
   getSavedVocabulary,
   getVocabStats,
@@ -90,6 +91,7 @@ export default function LevelScreen() {
   const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
   const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
   const [weeklyVocabIntroduced, setWeeklyVocabIntroduced] = useState(0);
+  const [progressionLevel, setProgressionLevel] = useState<string | null>(null);
   const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [showResetModal, setShowResetModal] = useState(false);
@@ -152,6 +154,8 @@ export default function LevelScreen() {
           setVocabStats(stats);
           setSavedWords(words);
           setWeeklyVocabIntroduced(weeklyCount);
+          const barometer = await resolveLevelBarometer(lessonHistory);
+          if (!cancelled) setProgressionLevel(barometer?.band.label ?? null);
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
           setReminderTimeState(reminder);
@@ -235,6 +239,13 @@ export default function LevelScreen() {
                 ]}>
                 <Text style={styles.assessmentBannerBtnText}>Take level assessment</Text>
               </Pressable>
+            </View>
+          ) : null}
+
+          {progressionLevel ? (
+            <View style={styles.progressionLevelCard}>
+              <Text style={styles.progressionLevelLabel}>Current level</Text>
+              <Text style={styles.progressionLevelValue}>{progressionLevel}</Text>
             </View>
           ) : null}
 
@@ -481,6 +492,23 @@ const styles = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: '900', color: palette.text, marginBottom: 8 },
   emptyText: { fontSize: 15, fontWeight: '600', color: palette.muted, textAlign: 'center' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 16 },
+  progressionLevelCard: {
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 122, 89, 0.35)',
+    padding: 14,
+    marginBottom: 16,
+    gap: 4,
+  },
+  progressionLevelLabel: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  progressionLevelValue: { fontSize: 20, fontWeight: '900', color: palette.accent },
   progressLink: {
     backgroundColor: palette.surface,
     borderRadius: 16,

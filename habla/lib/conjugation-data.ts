@@ -574,6 +574,22 @@ export function getFocusVerbsForTopic(
   return results;
 }
 
+/** Irregular verbs first, then curriculum focus order. */
+export function sortVerbsForPhase1Deck(
+  verbs: VerbConjugationEntry[],
+  focusVerbs: string[],
+): VerbConjugationEntry[] {
+  const order = new Map(
+    focusVerbs.map((v, i) => [parseFocusVerb(v).toLowerCase(), i]),
+  );
+  return [...verbs].sort((a, b) => {
+    if (a.regular !== b.regular) return a.regular ? 1 : -1;
+    const aIdx = order.get(a.infinitive.toLowerCase()) ?? 99;
+    const bIdx = order.get(b.infinitive.toLowerCase()) ?? 99;
+    return aIdx - bIdx;
+  });
+}
+
 export function normalizeSearchVerb(query: string): string {
   return query.trim().toLowerCase().replace(/^to\s+/, '');
 }

@@ -1,6 +1,7 @@
 import { AppTextInput } from '@/components/app-text-input';
 import { ScoreHistoryChart } from '@/components/score-history-chart';
 import { progressPalette } from '@/components/progress/chart-theme';
+import { getHighestLevelAchieved } from '@/lib/level-progress';
 import { getLessonHistory } from '@/lib/practice-storage';
 import {
   addDaysToDateKey,
@@ -55,13 +56,18 @@ export default function ScoreHistoryScreen() {
   const [customEnd, setCustomEnd] = useState(today);
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end' | null>(null);
 
+  const [highestLevel, setHighestLevel] = useState<string | null>(null);
+
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       setLoading(true);
-      void getLessonHistory()
-        .then((history) => {
-          if (!cancelled) setLessons(history);
+      void Promise.all([getLessonHistory(), getHighestLevelAchieved()])
+        .then(([history, highest]) => {
+          if (!cancelled) {
+            setLessons(history);
+            setHighestLevel(highest);
+          }
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -79,8 +85,10 @@ export default function ScoreHistoryScreen() {
         period,
         period === 'custom' ? customStart : undefined,
         period === 'custom' ? customEnd : undefined,
+        formatLocalDate(),
+        highestLevel,
       ),
-    [lessons, period, customStart, customEnd],
+    [lessons, period, customStart, customEnd, highestLevel],
   );
 
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {

@@ -1233,6 +1233,20 @@ export function isCurrentPalaceGroup(group: MemoryPalaceWeekGroup, currentWeek: 
   return currentWeek >= group.minWeek && currentWeek <= group.maxWeek;
 }
 
+export function getPalaceGroupForWeek(weekNumber: number): MemoryPalaceWeekGroup | null {
+  const groups = buildVerbSetsForUser('friend');
+  return (
+    groups.find((g) => weekNumber >= g.minWeek && weekNumber <= g.maxWeek) ?? null
+  );
+}
+
+/** First verb-set id for deep-linking from a grammar lesson to the palace. */
+export function getFirstPalaceVerbSetIdForWeek(weekNumber: number): string | null {
+  const group = getPalaceGroupForWeek(weekNumber);
+  if (!group || group.kind === 'skip' || !group.verbSets.length) return null;
+  return group.verbSets[0]?.id ?? null;
+}
+
 export function getAllPalaceVerbIds(): string[] {
   return buildVerbSetsForUser('friend').flatMap((g) => g.verbSets.map((v) => v.id));
 }

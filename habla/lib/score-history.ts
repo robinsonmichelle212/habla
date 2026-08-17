@@ -123,6 +123,7 @@ export function buildScoreHistory(
   customStart?: string,
   customEnd?: string,
   today: string = formatLocalDate(),
+  highestLevel?: string | null,
 ): ScoreHistoryData {
   const { start, end } = resolvePeriodRange(period, customStart, customEnd, today);
   const inRange = scoredLessonsInRange(lessons, start, end);
@@ -160,7 +161,7 @@ export function buildScoreHistory(
   const change =
     startScore != null && endScore != null ? Math.round(endScore - startScore) : null;
 
-  const barometer = getLevelBarometer(lessons);
+  const barometer = getLevelBarometer(lessons, highestLevel);
   const threshold =
     barometer?.nextBandThreshold != null && barometer.nextBand
       ? {
