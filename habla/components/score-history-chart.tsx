@@ -1,23 +1,29 @@
-import { progressPalette } from '@/components/progress/chart-theme';
-import type { ScoreHistoryPoint, ScoreHistoryThreshold } from '@/lib/score-history';
+import type { SkillKey, SkillSeries, SkillStat } from '@/lib/score-history';
 import { formatScoreHistoryDate, parseDateKey } from '@/lib/score-history';
-import { useMemo } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
-const CHART_HEIGHT = 148;
+const CHART_HEIGHT = 168;
 const PAD_LEFT = 28;
 const PAD_RIGHT = 12;
-const PAD_TOP = 14;
+const PAD_TOP = 18;
 const PAD_BOTTOM = 22;
 
 type Props = {
   width: number;
-  points: ScoreHistoryPoint[];
-  threshold: ScoreHistoryThreshold | null;
-  trendLabel: string;
+  series: SkillSeries[];
+  skills: Record<SkillKey, SkillStat>;
   periodStart: string;
   periodEnd: string;
+};
+
+type TooltipState = {
+  skill: SkillKey;
+  score: number;
+  date: string;
+  x: number;
+  y: number;
 };
 
 function scoreToY(score: number, innerHeight: number): number {
@@ -35,7 +41,7 @@ function dateToX(date: string, start: string, end: string, innerWidth: number): 
 }
 
 function buildLinePath(
-  points: ScoreHistoryPoint[],
+  points: { date: string; score: number }[],
   start: string,
   end: string,
   innerWidth: number,
@@ -51,195 +57,213 @@ function buildLinePath(
     .join(' ');
 }
 
-function buildTrendPath(
-  points: ScoreHistoryPoint[],
-  start: string,
-  end: string,
-  innerWidth: number,
-  innerHeight: number,
-): string | null {
-  if (points.length < 2) return null;
-  const n = points.length;
-  let sumX = 0;
-  let sumY = 0;
-  let sumXY = 0;
-  let sumXX = 0;
-  for (let i = 0; i < n; i += 1) {
-    sumX += i;
-    sumY += points[i].score;
-    sumXY += i * points[i].score;
-    sumXX += i * i;
-  }
-  const denom = n * sumXX - sumX * sumX;
-  if (denom === 0) return null;
-  const slope = (n * sumXY - sumX * sumY) / denom;
-  const intercept = (sumY - slope * sumX) / n;
-
-  const x1 = PAD_LEFT;
-  const x2 = PAD_LEFT + innerWidth;
-  const y1 = scoreToY(intercept, innerHeight);
-  const y2 = scoreToY(intercept + slope * (n - 1), innerHeight);
-  return `M ${x1} ${y1} L ${x2} ${y2}`;
-}
-
-export function ScoreHistoryChart({
-  width,
-  points,
-  threshold,
-  trendLabel,
-  periodStart,
-  periodEnd,
-}: Props) {
+export function ScoreHistoryChart({ width, series, skills, periodStart, periodEnd }: Props) {
   const innerWidth = Math.max(1, width - PAD_LEFT - PAD_RIGHT);
   const innerHeight = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
 
-  const linePath = useMemo(
-    () => buildLinePath(points, periodStart, periodEnd, innerWidth, innerHeight),
-    [points, periodStart, periodEnd, innerWidth, innerHeight],
-  );
-
-  const trendPath = useMemo(
-    () => buildTrendPath(points, periodStart, periodEnd, innerWidth, innerHeight),
-    [points, periodStart, periodEnd, innerWidth, innerHeight],
-  );
-
-  const thresholdY =
-    threshold != null ? scoreToY(threshold.value, innerHeight) : null;
+  const [visible, setVisible] = useState<Record<SkillKey, boolean>>({
+    grammar: true,
+    vocabulary: true,
+    fluency: true,
+    writing: true,
+  });
+  const [tooltip, setTooltip] = useState<TooltipState | null>(null);
 
   const xLabels = useMemo(() => {
-    if (points.length === 0) {
+    const allDates = series.flatMap((s) => s.points.map((p) => p.date)).sort();
+    if (!allDates.length) {
       return [
         { x: PAD_LEFT, label: formatScoreHistoryDate(periodStart) },
         { x: PAD_LEFT + innerWidth, label: formatScoreHistoryDate(periodEnd) },
       ];
     }
-    const first = points[0].date;
-    const last = points[points.length - 1].date;
+    const first = allDates[0];
+    const last = allDates[allDates.length - 1];
     return [
-      { x: dateToX(first, periodStart, periodEnd, innerWidth), label: formatScoreHistoryDate(first) },
-      { x: dateToX(last, periodStart, periodEnd, innerWidth), label: formatScoreHistoryDate(last) },
+      {
+        x: dateToX(first, periodStart, periodEnd, innerWidth),
+        label: formatScoreHistoryDate(first),
+      },
+      {
+        x: dateToX(last, periodStart, periodEnd, innerWidth),
+        label: formatScoreHistoryDate(last),
+      },
     ];
-  }, [points, periodStart, periodEnd, innerWidth]);
+  }, [series, periodStart, periodEnd, innerWidth]);
+
+  const toggleSkill = (skill: SkillKey) => {
+    setVisible((prev) => ({ ...prev, [skill]: !prev[skill] }));
+    setTooltip(null);
+  };
 
   return (
     <View style={styles.wrap}>
-      <Svg width={width} height={CHART_HEIGHT}>
-        {[0, 50, 100].map((tick) => {
-          const y = scoreToY(tick, innerHeight);
-          return (
-            <Line
-              key={tick}
-              x1={PAD_LEFT}
-              y1={y}
-              x2={PAD_LEFT + innerWidth}
-              y2={y}
-              stroke={progressPalette.grid}
-              strokeWidth={1}
-              strokeDasharray={tick === 50 ? '4 4' : undefined}
-              opacity={0.55}
-            />
-          );
-        })}
+      <View style={styles.chartArea}>
+        {tooltip ? (
+          <View
+            style={[
+              styles.tooltip,
+              {
+                left: Math.max(4, Math.min(width - 120, tooltip.x - 58)),
+                top: Math.max(0, tooltip.y - 36),
+              },
+            ]}>
+            <Text style={styles.tooltipScore}>{tooltip.score}%</Text>
+            <Text style={styles.tooltipDate}>{formatScoreHistoryDate(tooltip.date)}</Text>
+          </View>
+        ) : null}
 
-        {thresholdY != null && threshold ? (
-          <>
-            <Line
-              x1={PAD_LEFT}
-              y1={thresholdY}
-              x2={PAD_LEFT + innerWidth}
-              y2={thresholdY}
-              stroke={progressPalette.muted}
-              strokeWidth={1}
-              strokeDasharray="6 4"
-              opacity={0.7}
-            />
+        <Svg width={width} height={CHART_HEIGHT}>
+          {[0, 50, 100].map((tick) => {
+            const y = scoreToY(tick, innerHeight);
+            return (
+              <Line
+                key={tick}
+                x1={PAD_LEFT}
+                y1={y}
+                x2={PAD_LEFT + innerWidth}
+                y2={y}
+                stroke="#252D3A"
+                strokeWidth={1}
+                strokeDasharray={tick === 50 ? '4 4' : undefined}
+                opacity={0.55}
+              />
+            );
+          })}
+
+          {series.map((line) => {
+            if (!visible[line.skill] || !line.points.length) return null;
+            const path = buildLinePath(
+              line.points,
+              periodStart,
+              periodEnd,
+              innerWidth,
+              innerHeight,
+            );
+            return (
+              <Path
+                key={`line-${line.skill}`}
+                d={path}
+                stroke={line.color}
+                strokeWidth={2.5}
+                fill="none"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            );
+          })}
+
+          {series.map((line) => {
+            if (!visible[line.skill]) return null;
+            return line.points.map((p, idx) => {
+              const x = dateToX(p.date, periodStart, periodEnd, innerWidth);
+              const y = scoreToY(p.score, innerHeight);
+              return (
+                <Circle
+                  key={`${line.skill}-${p.date}-${idx}`}
+                  cx={x}
+                  cy={y}
+                  r={5}
+                  fill={line.color}
+                  stroke="#0B0F14"
+                  strokeWidth={1.5}
+                  onPress={() =>
+                    setTooltip((current) =>
+                      current?.skill === line.skill &&
+                      current.date === p.date &&
+                      current.score === p.score
+                        ? null
+                        : { skill: line.skill, score: p.score, date: p.date, x, y },
+                    )
+                  }
+                />
+              );
+            });
+          })}
+
+          {xLabels.map((item, idx) => (
             <SvgText
-              x={PAD_LEFT + innerWidth - 2}
-              y={thresholdY - 4}
-              fill={progressPalette.muted}
+              key={`${item.label}-${idx}`}
+              x={item.x}
+              y={CHART_HEIGHT - 4}
+              fill="#8B95A5"
               fontSize={9}
               fontWeight="600"
-              textAnchor="end">
-              {threshold.value}% · {threshold.label}
+              textAnchor={idx === 0 ? 'start' : 'end'}>
+              {item.label}
             </SvgText>
-          </>
-        ) : null}
+          ))}
 
-        {trendPath ? (
-          <Path d={trendPath} stroke={progressPalette.muted} strokeWidth={1.5} opacity={0.35} />
-        ) : null}
+          <SvgText x={4} y={PAD_TOP + 4} fill="#8B95A5" fontSize={9} fontWeight="600">
+            100
+          </SvgText>
+          <SvgText x={8} y={PAD_TOP + innerHeight / 2} fill="#8B95A5" fontSize={9} fontWeight="600">
+            50
+          </SvgText>
+          <SvgText x={12} y={PAD_TOP + innerHeight} fill="#8B95A5" fontSize={9} fontWeight="600">
+            0
+          </SvgText>
+        </Svg>
+      </View>
 
-        {linePath ? (
-          <Path
-            d={linePath}
-            stroke={progressPalette.accent}
-            strokeWidth={2.5}
-            fill="none"
-            strokeLinejoin="round"
-            strokeLinecap="round"
-          />
-        ) : null}
+      <View style={styles.legendRow}>
+        {series.map((line) => {
+          const isVisible = visible[line.skill];
+          const trend = skills[line.skill].trendArrow;
 
-        {points.map((p, idx) => {
-          const x = dateToX(p.date, periodStart, periodEnd, innerWidth);
-          const y = scoreToY(p.score, innerHeight);
           return (
-            <Circle
-              key={`${p.date}-${idx}`}
-              cx={x}
-              cy={y}
-              r={p.isPersonalBest ? 5 : 4}
-              fill={progressPalette.accent}
-              stroke={p.isPersonalBest ? '#FBBF24' : progressPalette.background}
-              strokeWidth={p.isPersonalBest ? 2 : 1.5}
-            />
+            <Pressable
+              key={line.skill}
+              onPress={() => toggleSkill(line.skill)}
+              style={[styles.legendItem, !isVisible && styles.legendItemHidden]}
+              accessibilityRole="button"
+              accessibilityState={{ selected: isVisible }}>
+              <Text style={[styles.legendDot, { color: line.color }]}>●</Text>
+              <Text style={[styles.legendLabel, !isVisible && styles.legendLabelHidden]}>
+                {line.label} {line.points.length ? trend : ''}
+              </Text>
+            </Pressable>
           );
         })}
-
-        {xLabels.map((item, idx) => (
-          <SvgText
-            key={`${item.label}-${idx}`}
-            x={item.x}
-            y={CHART_HEIGHT - 4}
-            fill={progressPalette.muted}
-            fontSize={9}
-            fontWeight="600"
-            textAnchor={idx === 0 ? 'start' : 'end'}>
-            {item.label}
-          </SvgText>
-        ))}
-
-        <SvgText x={4} y={PAD_TOP + 4} fill={progressPalette.muted} fontSize={9} fontWeight="600">
-          100
-        </SvgText>
-        <SvgText x={8} y={PAD_TOP + innerHeight / 2} fill={progressPalette.muted} fontSize={9} fontWeight="600">
-          50
-        </SvgText>
-        <SvgText x={12} y={PAD_TOP + innerHeight} fill={progressPalette.muted} fontSize={9} fontWeight="600">
-          0
-        </SvgText>
-      </Svg>
-
-      <Text style={styles.trend}>{trendLabel}</Text>
-      {points.some((p) => p.isPersonalBest) ? (
-        <Text style={styles.legend}>⭐ Personal best in period</Text>
-      ) : null}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { gap: 4 },
-  trend: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: progressPalette.muted,
-    textAlign: 'center',
+  wrap: { gap: 8 },
+  chartArea: { position: 'relative' },
+  tooltip: {
+    position: 'absolute',
+    zIndex: 2,
+    backgroundColor: '#151B24',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#252D3A',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    minWidth: 72,
+    alignItems: 'center',
   },
-  legend: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: progressPalette.muted,
-    textAlign: 'center',
+  tooltipScore: { fontSize: 14, fontWeight: '900', color: '#F4F6F8' },
+  tooltipDate: { fontSize: 11, fontWeight: '600', color: '#8B95A5', marginTop: 2 },
+  legendRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 10,
   },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(21, 27, 36, 0.6)',
+  },
+  legendItemHidden: { opacity: 0.45 },
+  legendDot: { fontSize: 12, fontWeight: '900' },
+  legendLabel: { fontSize: 12, fontWeight: '700', color: '#F4F6F8' },
+  legendLabelHidden: { color: '#8B95A5' },
 });

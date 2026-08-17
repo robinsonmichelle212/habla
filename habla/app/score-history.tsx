@@ -1,14 +1,18 @@
 import { AppTextInput } from '@/components/app-text-input';
 import { ScoreHistoryChart } from '@/components/score-history-chart';
 import { progressPalette } from '@/components/progress/chart-theme';
-import { getHighestLevelAchieved } from '@/lib/level-progress';
 import { getLessonHistory } from '@/lib/practice-storage';
 import {
   addDaysToDateKey,
   buildScoreHistory,
+  drillParamForSkill,
   formatScoreHistoryDate,
+  SKILL_KEYS,
+  SKILL_LABELS,
   type ScoreHistoryPeriod,
   type ScoreHistoryPeriodDays,
+  type SkillKey,
+  type SkillStat,
 } from '@/lib/score-history';
 import { formatLocalDate } from '@/lib/streak';
 import DateTimePicker, { type DateTimePickerEvent } from '@react-native-community/datetimepicker';
@@ -20,6 +24,7 @@ import {
   ActivityIndicator,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   useWindowDimensions,
@@ -34,12 +39,30 @@ const PERIOD_OPTIONS: { id: ScoreHistoryPeriodDays | 'custom'; label: string }[]
   { id: 'custom', label: 'Custom' },
 ];
 
+const CHANGE_COLORS = {
+  up: '#27AE60',
+  steady: '#F39C12',
+  down: '#E74C3C',
+} as const;
+
 function dateFromPickerValue(value: Date): string {
   return formatLocalDate(value);
 }
 
 function pickerValueFromDate(date: string): Date {
   return new Date(`${date}T12:00:00`);
+}
+
+function formatChange(stat: SkillStat): string {
+  if (stat.change == null) return '—';
+  const sign = stat.change > 0 ? '+' : '';
+  const arrow =
+    stat.changeDirection === 'up' ? ' ↗' : stat.changeDirection === 'down' ? ' ↘' : ' →';
+  return `${sign}${stat.change}%${arrow}`;
+}
+
+function changeColor(stat: SkillStat): string {
+  return CHANGE_COLORS[stat.changeDirection];
 }
 
 export default function ScoreHistoryScreen() {
@@ -56,18 +79,13 @@ export default function ScoreHistoryScreen() {
   const [customEnd, setCustomEnd] = useState(today);
   const [pickerTarget, setPickerTarget] = useState<'start' | 'end' | null>(null);
 
-  const [highestLevel, setHighestLevel] = useState<string | null>(null);
-
   useFocusEffect(
     useCallback(() => {
       let cancelled = false;
       setLoading(true);
-      void Promise.all([getLessonHistory(), getHighestLevelAchieved()])
-        .then(([history, highest]) => {
-          if (!cancelled) {
-            setLessons(history);
-            setHighestLevel(highest);
-          }
+      void getLessonHistory()
+        .then((history) => {
+          if (!cancelled) setLessons(history);
         })
         .finally(() => {
           if (!cancelled) setLoading(false);
@@ -85,10 +103,8 @@ export default function ScoreHistoryScreen() {
         period,
         period === 'custom' ? customStart : undefined,
         period === 'custom' ? customEnd : undefined,
-        formatLocalDate(),
-        highestLevel,
       ),
-    [lessons, period, customStart, customEnd, highestLevel],
+    [lessons, period, customStart, customEnd],
   );
 
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
@@ -100,20 +116,9 @@ export default function ScoreHistoryScreen() {
     if (Platform.OS === 'ios') setPickerTarget(null);
   };
 
-  const changeColor =
-    data.stats.changeDirection === 'up'
-      ? progressPalette.accent
-      : data.stats.changeDirection === 'down'
-        ? '#FBBF24'
-        : progressPalette.muted;
-
-  const changeText = (() => {
-    if (data.stats.change == null) return 'Change: —';
-    if (data.stats.changeDirection === 'steady') return 'Change: steady →';
-    const sign = data.stats.change > 0 ? '+' : '';
-    const arrow = data.stats.changeDirection === 'up' ? ' ↗' : ' ↘';
-    return `Change: ${sign}${data.stats.change}%${arrow}`;
-  })();
+  const openFocusDrill = (skill: SkillKey) => {
+    router.push(`/practice?drill=${drillParamForSkill(skill)}`);
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
@@ -211,68 +216,94 @@ export default function ScoreHistoryScreen() {
             <ActivityIndicator color={progressPalette.accent} />
           </View>
         ) : (
-          <View style={styles.body}>
-            {data.points.length === 0 ? (
+          <ScrollView
+            style={styles.scroll}
+            contentContainerStyle={styles.body}
+            showsVerticalScrollIndicator={false}>
+            {!data.hasAnyData ? (
               <View style={styles.emptyCard}>
                 <Text style={styles.emptyText}>No scored lessons in this period yet.</Text>
               </View>
             ) : (
               <ScoreHistoryChart
                 width={chartWidth}
-                points={data.points}
-                threshold={data.threshold}
-                trendLabel={data.stats.trendLabel}
+                series={data.series}
+                skills={data.skills}
                 periodStart={data.periodStart}
                 periodEnd={data.periodEnd}
               />
             )}
 
             <View style={styles.statsGrid}>
-              <Text style={styles.statLine}>
-                Average score in period: {data.stats.average != null ? `${data.stats.average}%` : '—'}
+              {SKILL_KEYS.map((skill) => {
+                const stat = data.skills[skill];
+                return (
+                  <Text key={`best-${skill}`} style={styles.statLine}>
+                    Best {SKILL_LABELS[skill].toLowerCase()} score:{' '}
+                    {stat.best
+                      ? `${stat.best.score}% (${formatScoreHistoryDate(stat.best.date)})`
+                      : '—'}
+                  </Text>
+                );
+              })}
+              <Text style={[styles.statLine, styles.avgLine]}>
+                Average per skill across the period:
               </Text>
               <Text style={styles.statLine}>
-                Highest score in period:{' '}
-                {data.stats.highest
-                  ? `${data.stats.highest.score}% (${formatScoreHistoryDate(data.stats.highest.date)})`
-                  : '—'}
+                Grammar avg: {data.skills.grammar.average != null ? `${data.skills.grammar.average}%` : '—'}
+                {' · '}
+                Vocabulary avg:{' '}
+                {data.skills.vocabulary.average != null ? `${data.skills.vocabulary.average}%` : '—'}
               </Text>
               <Text style={styles.statLine}>
-                Lowest score in period:{' '}
-                {data.stats.lowest
-                  ? `${data.stats.lowest.score}% (${formatScoreHistoryDate(data.stats.lowest.date)})`
-                  : '—'}
+                Fluency avg: {data.skills.fluency.average != null ? `${data.skills.fluency.average}%` : '—'}
+                {' · '}
+                Writing avg: {data.skills.writing.average != null ? `${data.skills.writing.average}%` : '—'}
               </Text>
               <Text style={styles.statLine}>
-                Sessions completed in period: {data.stats.sessionsCompleted}
+                Sessions completed in period: {data.sessionsInPeriod}
               </Text>
             </View>
 
             <View style={styles.compareCard}>
-              {period === 'custom' ? (
-                <>
-                  <Text style={styles.compareLine}>
-                    {formatScoreHistoryDate(data.periodStart)}:{' '}
-                    {data.stats.startScore != null ? `${data.stats.startScore}%` : '—'}
-                  </Text>
-                  <Text style={styles.compareLine}>
-                    {formatScoreHistoryDate(data.periodEnd)}:{' '}
-                    {data.stats.endScore != null ? `${data.stats.endScore}%` : '—'}
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.compareLine}>
-                    Start of period: {data.stats.startScore != null ? `${data.stats.startScore}%` : '—'}
-                  </Text>
-                  <Text style={styles.compareLine}>
-                    End of period: {data.stats.endScore != null ? `${data.stats.endScore}%` : '—'}
-                  </Text>
-                </>
-              )}
-              <Text style={[styles.compareChange, { color: changeColor }]}>{changeText}</Text>
+              <View style={styles.compareHeader}>
+                <Text style={[styles.compareCell, styles.compareLabelCol]} />
+                <Text style={[styles.compareCell, styles.compareHeaderText]}>Start</Text>
+                <Text style={[styles.compareCell, styles.compareHeaderText]}>End</Text>
+                <Text style={[styles.compareCell, styles.compareHeaderText]}>Change</Text>
+              </View>
+              {SKILL_KEYS.map((skill) => {
+                const stat = data.skills[skill];
+                return (
+                  <View key={`compare-${skill}`} style={styles.compareRow}>
+                    <Text style={[styles.compareCell, styles.compareLabelCol]}>
+                      {SKILL_LABELS[skill]}:
+                    </Text>
+                    <Text style={styles.compareCell}>
+                      {stat.start != null ? `${stat.start}%` : '—'}
+                    </Text>
+                    <Text style={styles.compareCell}>
+                      {stat.end != null ? `${stat.end}%` : '—'}
+                    </Text>
+                    <Text style={[styles.compareCell, { color: changeColor(stat) }]}>
+                      {formatChange(stat)}
+                    </Text>
+                  </View>
+                );
+              })}
             </View>
-          </View>
+
+            {data.focusSkill ? (
+              <Pressable
+                onPress={() => openFocusDrill(data.focusSkill!)}
+                style={styles.focusRow}
+                accessibilityRole="button">
+                <Text style={styles.focusText}>
+                  Focus: {SKILL_LABELS[data.focusSkill]} — your lowest scoring skill this period 🎯
+                </Text>
+              </Pressable>
+            ) : null}
+          </ScrollView>
         )}
       </View>
     </SafeAreaView>
@@ -363,7 +394,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  body: { flex: 1, gap: 12, justifyContent: 'flex-start' },
+  scroll: { flex: 1 },
+  body: { gap: 12, paddingBottom: 16 },
   emptyCard: {
     backgroundColor: progressPalette.surface,
     borderRadius: 12,
@@ -375,14 +407,57 @@ const styles = StyleSheet.create({
   emptyText: { fontSize: 14, fontWeight: '600', color: progressPalette.muted, textAlign: 'center' },
   statsGrid: { gap: 6 },
   statLine: { fontSize: 13, fontWeight: '600', color: progressPalette.text, lineHeight: 18 },
+  avgLine: { marginTop: 2 },
   compareCard: {
     backgroundColor: progressPalette.surface,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: progressPalette.surfaceBorder,
     padding: 12,
-    gap: 4,
+    gap: 6,
   },
-  compareLine: { fontSize: 13, fontWeight: '700', color: progressPalette.text },
-  compareChange: { fontSize: 14, fontWeight: '800', marginTop: 4 },
+  compareHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: progressPalette.surfaceBorder,
+    paddingBottom: 6,
+    marginBottom: 2,
+  },
+  compareRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  compareCell: {
+    flex: 1,
+    fontSize: 12,
+    fontWeight: '700',
+    color: progressPalette.text,
+    textAlign: 'center',
+  },
+  compareLabelCol: {
+    flex: 1.35,
+    textAlign: 'left',
+  },
+  compareHeaderText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: progressPalette.muted,
+    textTransform: 'uppercase',
+  },
+  focusRow: {
+    backgroundColor: 'rgba(255, 122, 89, 0.12)',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 122, 89, 0.35)',
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  focusText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: progressPalette.accent,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
 });
