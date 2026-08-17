@@ -1,5 +1,5 @@
 import type { BonusRoundId } from '@/lib/gem-shop';
-import { getLevelBarometer } from '@/lib/level-progress';
+import { resolveLevelBarometer } from '@/lib/level-progress';
 import { getLessonHistory } from '@/lib/practice-storage';
 
 export type RoundLevel = 1 | 2 | 3 | 4 | 5;
@@ -45,7 +45,7 @@ export async function buildRoundCalibration(
   roundLevel: RoundLevel,
 ): Promise<RoundCalibration> {
   const history = await getLessonHistory();
-  const bar = getLevelBarometer(history);
+  const bar = await resolveLevelBarometer(history);
   const currentLevelBand = bar?.band.label ?? 'B1 Confident';
 
   return {

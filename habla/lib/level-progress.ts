@@ -1,5 +1,9 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
 import { isStreakSessionLesson, overallLessonScore } from '@/lib/practice-storage';
 import type { LessonHistoryEntry } from '@/lib/practice-storage';
+
+export const HIGHEST_LEVEL_KEY = 'highestLevelAchieved';
 
 export const LEVEL_BANDS = [
   { id: 'b1-beginner', label: 'B1 Beginner', min: 0, max: 60 },
@@ -65,6 +69,18 @@ export function getBandForScore(avg: number): { band: LevelBand; index: number }
   return { band: LEVEL_BANDS[0], index: 0 };
 }
 
+export function getLevelRank(level: string | null | undefined): number {
+  if (!level) return -1;
+  const trimmed = level.trim();
+  const index = LEVEL_BANDS.findIndex((b) => b.id === trimmed || b.label === trimmed);
+  return index;
+}
+
+export function parseStoredLevel(raw: string | null | undefined): LevelBand | null {
+  const rank = getLevelRank(raw);
+  return rank >= 0 ? LEVEL_BANDS[rank] : null;
+}
+
 export function getProgressInBand(avg: number, band: LevelBand): number {
   const score = clampScore(avg);
   const range = band.max - band.min;
@@ -73,11 +89,9 @@ export function getProgressInBand(avg: number, band: LevelBand): number {
   return clampScore(Math.round((position / range) * 100));
 }
 
-export function getLevelBarometer(history: LessonHistoryEntry[]): LevelBarometer | null {
-  const averageScore = getRecentAverageScore(history);
-  if (averageScore == null) return null;
-
-  const { band, index } = getBandForScore(averageScore);
+function buildBarometer(averageScore: number, bandIndex: number): LevelBarometer {
+  const index = Math.max(0, Math.min(LEVEL_BANDS.length - 1, bandIndex));
+  const band = LEVEL_BANDS[index];
   const nextBand = index < LEVEL_BANDS.length - 1 ? LEVEL_BANDS[index + 1] : null;
   const progressInBand = getProgressInBand(averageScore, band);
   const nextBandThreshold = nextBand?.min ?? null;
@@ -98,6 +112,57 @@ export function getLevelBarometer(history: LessonHistoryEntry[]): LevelBarometer
     nextBandThreshold,
     message,
   };
+}
+
+export function getLevelBarometer(
+  history: LessonHistoryEntry[],
+  highestLevel?: string | null,
+): LevelBarometer | null {
+  const averageScore = getRecentAverageScore(history);
+  if (averageScore == null) return null;
+
+  const calculated = getBandForScore(averageScore);
+  const highestRank = getLevelRank(highestLevel);
+  const displayIndex = Math.max(calculated.index, highestRank);
+  return buildBarometer(averageScore, displayIndex);
+}
+
+export async function getHighestLevelAchieved(): Promise<string | null> {
+  try {
+    return await AsyncStorage.getItem(HIGHEST_LEVEL_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export async function recordHighestLevelIfNeeded(level: string): Promise<void> {
+  const highestEver = await getHighestLevelAchieved();
+  if (getLevelRank(level) > getLevelRank(highestEver)) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, level);
+  }
+}
+
+/** Floors displayed band to the highest ever achieved and stores new peaks. */
+export async function resolveLevelBarometer(
+  history: LessonHistoryEntry[],
+): Promise<LevelBarometer | null> {
+  const averageScore = getRecentAverageScore(history);
+  if (averageScore == null) return null;
+
+  const newLevel = getBandForScore(averageScore);
+  const highestEver = await getHighestLevelAchieved();
+  const displayIndex =
+    getLevelRank(newLevel.band.id) >= getLevelRank(highestEver)
+      ? newLevel.index
+      : getLevelRank(highestEver);
+
+  if (getLevelRank(newLevel.band.id) > getLevelRank(highestEver)) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, newLevel.band.id);
+  } else if (!highestEver) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, newLevel.band.id);
+  }
+
+  return buildBarometer(averageScore, displayIndex);
 }
 
 /** B1→B2 label from average score across the last 10 sessions. */
@@ -147,8 +212,11 @@ export function getSkillSnapshots(history: LessonHistoryEntry[]): SkillSnapshot[
 }
 
 /** Sessions needed at recent improvement rate to reach next band. */
-export function getNextLevelRequirements(history: LessonHistoryEntry[]): NextLevelRequirements | null {
-  const barometer = getLevelBarometer(history);
+export function getNextLevelRequirements(
+  history: LessonHistoryEntry[],
+  barometerOverride?: LevelBarometer | null,
+): NextLevelRequirements | null {
+  const barometer = barometerOverride ?? getLevelBarometer(history);
   if (!barometer) return null;
 
   const currentAverage = barometer.averageScore;

@@ -15,7 +15,7 @@ import { demoLessonAnalysis } from '@/lib/demo-mode';
 import { parseJaviResponse, safeSpanish } from '@/lib/javi-response';
 import { speakJavi, stopJaviSpeech, stopJaviSpeechAsync } from '@/lib/javi-speech';
 import { getTopErrorsForLesson } from '@/lib/error-dna';
-import { getLevelBarometer } from '@/lib/level-progress';
+import { resolveLevelBarometer } from '@/lib/level-progress';
 import { lessonFocusLabel, prepareLessonFocus } from '@/lib/lesson-focus';
 import {
   conversationToJaviMessages,
@@ -186,7 +186,7 @@ export default function ReadLessonScreen() {
     void (async () => {
       try {
         const history = await getLessonHistory();
-        const barometer = getLevelBarometer(history);
+        const barometer = await resolveLevelBarometer(history);
         const bandId = barometer?.band.id ?? 'b1-beginner';
         const bandLabel = barometer?.band.label ?? 'B1 Beginner';
 

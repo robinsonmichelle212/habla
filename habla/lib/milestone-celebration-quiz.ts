@@ -2,7 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curriculum';
 import { getLastSummary } from '@/lib/last-summary-storage';
-import { getLevelBarometer } from '@/lib/level-progress';
+import { resolveLevelBarometer } from '@/lib/level-progress';
 import type { MilestoneCelebration, MilestoneId } from '@/lib/milestones';
 import { getLessonHistory } from '@/lib/practice-storage';
 import { getSavedVocabulary } from '@/lib/saved-vocabulary';
@@ -312,7 +312,7 @@ export async function gatherMilestoneQuizContext(
     getLastSummary(),
   ]);
 
-  const barometer = getLevelBarometer(history);
+  const barometer = await resolveLevelBarometer(history);
   const completedGrammarWeeks = [...new Set(curriculum.completedWeeks)]
     .sort((a, b) => a - b)
     .map((week) => ({

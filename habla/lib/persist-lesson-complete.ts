@@ -18,7 +18,7 @@ import { lessonFocusLabel } from '@/lib/lesson-focus';
 import { lessonKindFromHistoryLabel, recordLessonTypeCompletion } from '@/lib/lesson-type-nudge';
 import type { LessonSessionState } from '@/lib/lesson-session';
 import { saveLastSummary } from '@/lib/last-summary-storage';
-import { getLevelBarometer } from '@/lib/level-progress';
+import { resolveLevelBarometer } from '@/lib/level-progress';
 import {
   checkLevelUpMilestone,
   checkPersonalBestMilestone,
@@ -233,11 +233,11 @@ export async function persistLessonComplete(
           focusAreas,
           lessonType: lessonTypeLabel(lessonType),
         };
-        const before = getLevelBarometer(existing);
+        const before = await resolveLevelBarometer(existing);
         const withoutDup = existing.filter(
           (e) => !(e.date === entry.date && e.lessonType === entry.lessonType),
         );
-        const after = getLevelBarometer([...withoutDup, entry]);
+        const after = await resolveLevelBarometer([...withoutDup, entry]);
         if (after && before && after.bandIndex > before.bandIndex) {
           levelUpLabel = after.band.label;
           const levelUp = await checkLevelUpMilestone(levelUpLabel, today);

@@ -3,7 +3,7 @@ import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
 import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
 import { LevelBarometerSection } from '@/components/level-barometer-section';
 import { LevelDetailModal } from '@/components/level-detail-modal';
-import { getLevelBarometer, getNextLevelRequirements, type LevelBandId } from '@/lib/level-progress';
+import { getNextLevelRequirements, resolveLevelBarometer, type LevelBandId, type LevelBarometer, type NextLevelRequirements } from '@/lib/level-progress';
 import {
   getBestDayThisWeek,
   getDrillHistory,
@@ -78,6 +78,8 @@ export default function ProgressScreen() {
   const [showLastSummaryLink, setShowLastSummaryLink] = useState(false);
   const [weeklyBalance, setWeeklyBalance] = useState<WeeklyLessonBalance | null>(null);
   const [weeklyActivity, setWeeklyActivity] = useState<WeeklyActivitySummary | null>(null);
+  const [barometer, setBarometer] = useState<LevelBarometer | null>(null);
+  const [nextReq, setNextReq] = useState<NextLevelRequirements | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -129,6 +131,10 @@ export default function ProgressScreen() {
           setBestWeekLessonEntry(bestWeek?.lessonEntry ?? null);
           setBestWeekDrillEntry(bestWeek?.drillEntry ?? null);
           setWeekChart(getWeekScoreChart(lessonHistory, drillHistory));
+          const resolved = await resolveLevelBarometer(lessonHistory);
+          if (cancelled) return;
+          setBarometer(resolved);
+          setNextReq(getNextLevelRequirements(lessonHistory, resolved));
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -139,8 +145,6 @@ export default function ProgressScreen() {
     }, []),
   );
 
-  const barometer = useMemo(() => getLevelBarometer(lessons), [lessons]);
-  const nextReq = useMemo(() => getNextLevelRequirements(lessons), [lessons]);
   const wrappedTeaser = useMemo(
     () => buildWrappedTeaser(lessons, drills, wrappedHistory.length),
     [lessons, drills, wrappedHistory.length],
