@@ -1,11 +1,16 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-import { isStreakSessionLesson, overallLessonScore } from '@/lib/practice-storage';
-import type { LessonHistoryEntry } from '@/lib/practice-storage';
-import { getLessonHistory } from '@/lib/practice-storage';
+import {
+  getLessonHistory,
+  isStreakSessionLesson,
+  overallLessonScore,
+  type LessonHistoryEntry,
+} from '@/lib/practice-storage';
 
 export const HIGHEST_LEVEL_KEY = 'highestLevelAchieved';
 export const LEVEL_RESTORATION_KEY = 'levelRestorationApplied';
+export const LEVEL_LAST_UPDATED_KEY = 'levelLastUpdated';
+const LEVEL_DIAGNOSIS_APPLIED_KEY = 'levelDiagnosisApplied';
 
 /** Score thresholds — label derived from recent average via calculateLevelFromScore. */
 export const LEVEL_BANDS = [
@@ -171,6 +176,110 @@ function collectRealLessonScores(history: LessonHistoryEntry[]): number[] {
 
 function levelIdFromAverageScore(avg: number): LevelBandId {
   return getBandForScore(avg).band.id;
+}
+
+function parseLessonHistoryRaw(raw: string | null): any[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getRealLessonsFromRaw(history: any[]): any[] {
+  return history.filter(
+    (l) =>
+      l?.overallScore &&
+      !l?.spark &&
+      !l?.placeholder &&
+      !l?.demo &&
+      l?.type !== 'streak_session' &&
+      l?.type !== 'spark',
+  );
+}
+
+export async function diagnoseLevelData(): Promise<void> {
+  const historyRaw = await AsyncStorage.getItem('lessonHistory');
+  const history = parseLessonHistoryRaw(historyRaw);
+  const highest = await AsyncStorage.getItem(HIGHEST_LEVEL_KEY);
+  const restored = await AsyncStorage.getItem(LEVEL_RESTORATION_KEY);
+  const currentWeek = await AsyncStorage.getItem('grammarCurriculumWeek');
+
+  const realLessons = getRealLessonsFromRaw(history);
+  const scores = realLessons.map((l) => Number(l.overallScore)).filter((s) => Number.isFinite(s));
+  const last10 = scores.slice(-10);
+  const last5 = scores.slice(-5);
+
+  const avg10 = last10.length > 0 ? last10.reduce((a, b) => a + b, 0) / last10.length : 0;
+  const avg5 = last5.length > 0 ? last5.reduce((a, b) => a + b, 0) / last5.length : 0;
+  const avgAll = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
+
+  console.log('=== LEVEL DIAGNOSIS ===');
+  console.log('Stored highestLevel:', highest);
+  console.log('Restoration applied:', restored);
+  console.log('Current curriculum week:', currentWeek);
+  console.log('Total real lessons:', realLessons.length);
+  console.log('All scores:', scores);
+  console.log('Last 5 scores:', last5);
+  console.log('Last 10 scores:', last10);
+  console.log('Average all time:', `${avgAll.toFixed(1)}%`);
+  console.log('Average last 10:', `${avg10.toFixed(1)}%`);
+  console.log('Average last 5:', `${avg5.toFixed(1)}%`);
+  console.log('======================');
+}
+
+export async function surgicalLevelFix(): Promise<void> {
+  const historyRaw = await AsyncStorage.getItem('lessonHistory');
+  const history = parseLessonHistoryRaw(historyRaw);
+  const realScores = history
+    .filter(
+      (l) =>
+        l?.overallScore &&
+        !l?.spark &&
+        !l?.placeholder &&
+        !l?.demo &&
+        l?.type !== 'streak_session' &&
+        l?.type !== 'spark' &&
+        Number(l?.overallScore) > 0,
+    )
+    .map((l) => Number(l.overallScore))
+    .filter((s) => Number.isFinite(s));
+
+  if (realScores.length === 0) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, 'B1 Confident');
+    await AsyncStorage.setItem(LEVEL_LAST_UPDATED_KEY, new Date().toISOString());
+    return;
+  }
+
+  const recentScores = realScores.slice(-10);
+  const avg = recentScores.reduce((a, b) => a + b, 0) / recentScores.length;
+
+  console.log('Surgical fix — using average:', `${avg.toFixed(1)}%`);
+
+  let correctLevel: string;
+  if (avg >= 95) correctLevel = 'B2 Confident';
+  else if (avg >= 90) correctLevel = 'B2 Developing';
+  else if (avg >= 85) correctLevel = 'B2 Emerging';
+  else if (avg >= 80) correctLevel = 'B1 Strong';
+  else if (avg >= 70) correctLevel = 'B1 Confident';
+  else if (avg >= 60) correctLevel = 'B1 Developing';
+  else correctLevel = 'B1 Beginner';
+
+  console.log('Surgical fix — setting level to:', correctLevel);
+
+  await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, correctLevel);
+  await AsyncStorage.removeItem(LEVEL_RESTORATION_KEY);
+  await AsyncStorage.setItem(LEVEL_LAST_UPDATED_KEY, new Date().toISOString());
+}
+
+export async function runLevelDiagnosisAndFixOnce(): Promise<void> {
+  const applied = await AsyncStorage.getItem(LEVEL_DIAGNOSIS_APPLIED_KEY);
+  if (applied) return;
+  await diagnoseLevelData();
+  await surgicalLevelFix();
+  await AsyncStorage.setItem(LEVEL_DIAGNOSIS_APPLIED_KEY, 'true');
 }
 
 /**

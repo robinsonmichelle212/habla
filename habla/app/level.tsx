@@ -60,6 +60,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const palette = {
   background: '#0B0F14',
@@ -99,6 +100,7 @@ export default function LevelScreen() {
   const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
   const [assessmentSkipped, setAssessmentSkipped] = useState(false);
   const [confirmedLevel, setConfirmedLevel] = useState<string | null>(null);
+  const [currentLevel, setCurrentLevel] = useState<string>('B1 Confident');
 
   useFocusEffect(
     useCallback(() => {
@@ -130,6 +132,7 @@ export default function LevelScreen() {
             skippedAssessment,
             onboardingProfile,
             weeklyCount,
+            level,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredYourDayTopicsFromStorage(),
@@ -143,6 +146,7 @@ export default function LevelScreen() {
             isAssessmentSkipped(),
             getOnboardingProfile(),
             getWeeklyVocabIntroducedCount(),
+            AsyncStorage.getItem('highestLevelAchieved'),
           ]);
           if (cancelled) return;
 
@@ -165,6 +169,7 @@ export default function LevelScreen() {
           setMilestonesAchieved(achievedIds.size);
           setAssessmentSkipped(skippedAssessment);
           setConfirmedLevel(onboardingProfile?.confirmedLevel ?? null);
+          setCurrentLevel(level || 'B1 Confident');
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -242,10 +247,10 @@ export default function LevelScreen() {
             </View>
           ) : null}
 
-          {progressionLevel ? (
+          {currentLevel || progressionLevel ? (
             <View style={styles.progressionLevelCard}>
               <Text style={styles.progressionLevelLabel}>Current level</Text>
-              <Text style={styles.progressionLevelValue}>{progressionLevel}</Text>
+              <Text style={styles.progressionLevelValue}>{currentLevel || progressionLevel}</Text>
             </View>
           ) : null}
 

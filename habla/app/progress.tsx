@@ -47,6 +47,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ProgressScreen() {
   const router = useRouter();
@@ -80,6 +81,7 @@ export default function ProgressScreen() {
   const [weeklyActivity, setWeeklyActivity] = useState<WeeklyActivitySummary | null>(null);
   const [barometer, setBarometer] = useState<LevelBarometer | null>(null);
   const [nextReq, setNextReq] = useState<NextLevelRequirements | null>(null);
+  const [currentLevel, setCurrentLevel] = useState<string>('B1 Confident');
 
   useFocusEffect(
     useCallback(() => {
@@ -132,8 +134,10 @@ export default function ProgressScreen() {
           setBestWeekDrillEntry(bestWeek?.drillEntry ?? null);
           setWeekChart(getWeekScoreChart(lessonHistory, drillHistory));
           const resolved = await resolveLevelBarometer(lessonHistory);
+          const level = await AsyncStorage.getItem('highestLevelAchieved');
           if (cancelled) return;
           setBarometer(resolved);
+          setCurrentLevel(level || 'B1 Confident');
           setNextReq(getNextLevelRequirements(lessonHistory, resolved));
         } finally {
           if (!cancelled) setLoading(false);
@@ -151,7 +155,7 @@ export default function ProgressScreen() {
   );
   const levelSummary = barometer
     ? `${barometer.band.label} — ${barometer.progressInBand}% through band`
-    : 'Complete lessons to see your level';
+    : `${currentLevel} — historical floor active`;
 
   const openTodayBreakdown = useCallback(async () => {
     if (Platform.OS !== 'web') {

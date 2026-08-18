@@ -16,7 +16,7 @@ import { SyncIndicator } from '@/components/sync-indicator';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { initStreakNotifications } from '@/lib/streak-notifications';
 import { parseRoundLevel, type BonusRoundId } from '@/lib/gem-shop';
-import { correctHighestLevelFromHistory } from '@/lib/level-progress';
+import { runLevelDiagnosisAndFixOnce } from '@/lib/level-progress';
 import { processPendingCelebrationQuiz } from '@/lib/milestone-celebration-quiz';
 import { runOneTimeGemRestoration } from '@/lib/gem-restoration';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
@@ -57,7 +57,7 @@ function WrappedBootstrap() {
 
   useEffect(() => {
     void (async () => {
-      await correctHighestLevelFromHistory();
+      await runLevelDiagnosisAndFixOnce();
       await processPendingCelebrationQuiz();
       await runOneTimeGemRestoration();
       await recoverUnregisteredSessions();
