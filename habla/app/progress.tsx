@@ -3,7 +3,7 @@ import { LessonScoreBreakdownModal } from '@/components/lesson-score-breakdown';
 import { CollapsibleProfileSection } from '@/components/collapsible-profile-section';
 import { LevelBarometerSection } from '@/components/level-barometer-section';
 import { LevelDetailModal } from '@/components/level-detail-modal';
-import { getNextLevelRequirements, resolveLevelBarometer, type LevelBandId, type LevelBarometer, type NextLevelRequirements } from '@/lib/level-progress';
+import { getDisplayLevel, getNextLevelRequirements, resolveLevelBarometer, type LevelBandId, type LevelBarometer, type NextLevelRequirements } from '@/lib/level-progress';
 import {
   getBestDayThisWeek,
   getDrillHistory,
@@ -47,7 +47,6 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function ProgressScreen() {
   const router = useRouter();
@@ -134,10 +133,10 @@ export default function ProgressScreen() {
           setBestWeekDrillEntry(bestWeek?.drillEntry ?? null);
           setWeekChart(getWeekScoreChart(lessonHistory, drillHistory));
           const resolved = await resolveLevelBarometer(lessonHistory);
-          const level = await AsyncStorage.getItem('highestLevelAchieved');
+          const displayLevel = await getDisplayLevel();
           if (cancelled) return;
           setBarometer(resolved);
-          setCurrentLevel(level || 'B1 Confident');
+          setCurrentLevel(displayLevel);
           setNextReq(getNextLevelRequirements(lessonHistory, resolved));
         } finally {
           if (!cancelled) setLoading(false);
@@ -153,9 +152,9 @@ export default function ProgressScreen() {
     () => buildWrappedTeaser(lessons, drills, wrappedHistory.length),
     [lessons, drills, wrappedHistory.length],
   );
-  const levelSummary = barometer
-    ? `${barometer.band.label} — ${barometer.progressInBand}% through band`
-    : `${currentLevel} — historical floor active`;
+  const levelSummary = `${currentLevel}${
+    barometer ? ` — ${barometer.progressInBand}% through band` : ''
+  }`;
 
   const openTodayBreakdown = useCallback(async () => {
     if (Platform.OS !== 'web') {

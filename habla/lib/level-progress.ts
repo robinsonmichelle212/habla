@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+import { CONFIRMED_LEVEL_KEY } from '@/lib/onboarding-storage';
 import {
   getLessonHistory,
   isStreakSessionLesson,
@@ -145,10 +146,9 @@ export function getLevelBarometer(
   const averageScore = getRecentAverageScore(history);
   if (averageScore == null) return null;
 
-  const calculated = getBandForScore(averageScore);
   const highestRank = getLevelRank(highestLevel);
-  const displayIndex = Math.max(calculated.index, highestRank >= 0 ? highestRank : calculated.index);
-  return buildBarometer(averageScore, displayIndex);
+  const index = highestRank >= 0 ? highestRank : getBandForScore(averageScore).index;
+  return buildBarometer(averageScore, index);
 }
 
 export async function getHighestLevelAchieved(): Promise<string | null> {
@@ -396,38 +396,54 @@ export async function restoreLevelFromHistory(): Promise<void> {
 }
 
 /**
- * Returns the displayed level — never below historical best.
- * Updates highestLevelAchieved when the calculated level is a new peak.
+ * User-facing level — always from storage, never from recent scores.
+ * Priority: highestLevelAchieved → confirmedLevel → B1 Confident.
+ */
+export async function getDisplayLevel(): Promise<string> {
+  const highest = await getHighestLevelAchieved();
+  if (getLevelRank(highest) >= 0) return levelLabelFromStored(highest);
+  try {
+    const confirmed = await AsyncStorage.getItem(CONFIRMED_LEVEL_KEY);
+    if (getLevelRank(confirmed) >= 0) return levelLabelFromStored(confirmed);
+  } catch {
+    // ignore
+  }
+  return CONFIDENT_FLOOR_LABEL;
+}
+
+/**
+ * Upgrade storage only when recent average is a new peak.
+ * Never writes a lower level.
  */
 export async function getCurrentLevel(recentAverage: number): Promise<string> {
   const calculated = getBandForScore(recentAverage);
-  const calculatedLabel = calculated.band.label;
-  const highestRaw = await getHighestLevelAchieved();
-  const highestLabel = levelLabelFromStored(highestRaw);
+  const displayLabel = await getDisplayLevel();
+  const highestRank = getLevelRank(displayLabel);
 
-  const calculatedRank = getLevelRank(calculatedLabel);
-  const highestRank = getLevelRank(highestLabel);
-
-  if (calculatedRank >= highestRank) {
-    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, calculated.band.id);
-    return calculatedLabel;
+  if (calculated.index > highestRank) {
+    await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, calculated.band.label);
+    await AsyncStorage.setItem(LEVEL_LAST_UPDATED_KEY, new Date().toISOString());
+    return calculated.band.label;
   }
 
-  return highestLabel;
+  return displayLabel;
 }
 
-/** Floors displayed band to highest ever achieved; progress reflects position within displayed band. */
+/** Display band from stored highest; recent average only upgrades, never lowers. */
 export async function resolveLevelBarometer(
   history: LessonHistoryEntry[],
 ): Promise<LevelBarometer | null> {
-  await restoreLevelFromHistory();
-
   const averageScore = getRecentAverageScore(history);
-  if (averageScore == null) return null;
 
-  const displayLabel = await getCurrentLevel(averageScore);
-  const displayIndex = getLevelRank(displayLabel);
-  return buildBarometer(averageScore, displayIndex >= 0 ? displayIndex : 0);
+  if (averageScore != null) {
+    await getCurrentLevel(averageScore);
+  }
+
+  const resolvedLabel = await getDisplayLevel();
+  const displayIndex = getLevelRank(resolvedLabel);
+  const index = displayIndex >= 0 ? displayIndex : getLevelRank(CONFIDENT_FLOOR_LABEL);
+  const scoreForBar = averageScore ?? LEVEL_BANDS[index].min;
+  return buildBarometer(scoreForBar, index);
 }
 
 /** B1→B2 label from recent average, floored to historical best. */

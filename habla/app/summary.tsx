@@ -181,6 +181,13 @@ function SummaryBody({
         </Text>
       </View>
 
+      {data.currentLevel ? (
+        <View style={styles.levelCard}>
+          <Text style={styles.levelCardLabel}>Current level</Text>
+          <Text style={styles.levelCardValue}>{data.currentLevel}</Text>
+        </View>
+      ) : null}
+
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>Strong Areas ✅</Text>
         {data.strongAreas.map((t, idx) => (
@@ -421,6 +428,29 @@ const styles = StyleSheet.create({
     color: palette.muted,
     textAlign: 'center',
     marginTop: 8,
+  },
+  levelCard: {
+    alignItems: 'center',
+    backgroundColor: palette.surface,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: palette.surfaceBorder,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 16,
+  },
+  levelCardLabel: {
+    fontSize: 11,
+    fontWeight: '900',
+    color: palette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 4,
+  },
+  levelCardValue: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: palette.accent,
   },
   section: { marginBottom: 16 },
   sectionTitle: {

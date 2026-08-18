@@ -18,7 +18,7 @@ import { lessonFocusLabel } from '@/lib/lesson-focus';
 import { lessonKindFromHistoryLabel, recordLessonTypeCompletion } from '@/lib/lesson-type-nudge';
 import type { LessonSessionState } from '@/lib/lesson-session';
 import { saveLastSummary } from '@/lib/last-summary-storage';
-import { resolveLevelBarometer } from '@/lib/level-progress';
+import { getDisplayLevel, resolveLevelBarometer } from '@/lib/level-progress';
 import {
   checkLevelUpMilestone,
   checkPersonalBestMilestone,
@@ -351,6 +351,9 @@ export async function persistLessonComplete(
       : undefined,
     dailyVocabRecap,
   };
+
+  const currentLevel = await getDisplayLevel();
+  display.currentLevel = currentLevel;
 
   setSummaryDisplayPayload(display);
 

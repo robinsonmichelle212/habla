@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ensureVocabWeekFresh } from '@/lib/daily-vocab-intro';
-import { restoreLevelFromHistory } from '@/lib/level-progress';
 import {
   dismissShopBadge,
   getAffordableNextLevels,
@@ -39,7 +38,11 @@ import {
   homeRecommendationPreview,
   resolveLessonNudge,
 } from '@/lib/lesson-type-nudge';
-import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
+import {
+  getUserName,
+  shouldShowOnboarding,
+  timeBasedGreeting,
+} from '@/lib/onboarding-storage';
 import { getProgressionHomeCard, type ProgressionHomeCard } from '@/lib/progression-test';
 import { formatLocalDate, getStreakState } from '@/lib/streak';
 
@@ -164,13 +167,14 @@ export default function HomeScreen() {
   }, []);
 
   useEffect(() => {
-    void shouldShowOnboarding().then((show) => {
+    void (async () => {
+      const show = await shouldShowOnboarding();
       if (show) {
         router.replace('/onboarding' as Href);
         return;
       }
       setOnboardingChecked(true);
-    });
+    })();
   }, [router]);
 
   useEffect(() => {
@@ -200,7 +204,6 @@ export default function HomeScreen() {
         try {
           await logCrashBreadcrumb('home_screen_mounted');
           await ensureVocabWeekFresh();
-          await restoreLevelFromHistory();
           const crashLog = await getCrashLog();
           console.log('Last crash breadcrumbs:', crashLog);
 

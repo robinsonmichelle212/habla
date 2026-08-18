@@ -27,7 +27,7 @@ import {
   YOUR_DAY_TOPICS,
 } from '@/lib/lesson-focus';
 import { getWeeklyVocabIntroducedCount } from '@/lib/daily-vocab-intro';
-import { resolveLevelBarometer } from '@/lib/level-progress';
+import { getDisplayLevel } from '@/lib/level-progress';
 import {
   getSavedVocabulary,
   getVocabStats,
@@ -60,7 +60,6 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const palette = {
   background: '#0B0F14',
@@ -92,7 +91,7 @@ export default function LevelScreen() {
   const [vocabStats, setVocabStats] = useState<VocabStats | null>(null);
   const [savedWords, setSavedWords] = useState<SavedVocabWord[]>([]);
   const [weeklyVocabIntroduced, setWeeklyVocabIntroduced] = useState(0);
-  const [progressionLevel, setProgressionLevel] = useState<string | null>(null);
+  const [currentLevel, setCurrentLevel] = useState<string>('B1 Confident');
   const [errorDna, setErrorDna] = useState<ErrorDNAItem[]>([]);
   const [archivedErrorDna, setArchivedErrorDna] = useState<ArchivedErrorDNAItem[]>([]);
   const [showResetModal, setShowResetModal] = useState(false);
@@ -100,7 +99,6 @@ export default function LevelScreen() {
   const [reminderTime, setReminderTimeState] = useState<ReminderTime | null>(null);
   const [assessmentSkipped, setAssessmentSkipped] = useState(false);
   const [confirmedLevel, setConfirmedLevel] = useState<string | null>(null);
-  const [currentLevel, setCurrentLevel] = useState<string>('B1 Confident');
 
   useFocusEffect(
     useCallback(() => {
@@ -132,7 +130,7 @@ export default function LevelScreen() {
             skippedAssessment,
             onboardingProfile,
             weeklyCount,
-            level,
+            displayLevel,
           ] = await Promise.all([
             getLessonHistory(),
             getCoveredYourDayTopicsFromStorage(),
@@ -146,7 +144,7 @@ export default function LevelScreen() {
             isAssessmentSkipped(),
             getOnboardingProfile(),
             getWeeklyVocabIntroducedCount(),
-            AsyncStorage.getItem('highestLevelAchieved'),
+            getDisplayLevel(),
           ]);
           if (cancelled) return;
 
@@ -158,8 +156,6 @@ export default function LevelScreen() {
           setVocabStats(stats);
           setSavedWords(words);
           setWeeklyVocabIntroduced(weeklyCount);
-          const barometer = await resolveLevelBarometer(lessonHistory);
-          if (!cancelled) setProgressionLevel(barometer?.band.label ?? null);
           setErrorDna(activeErrors);
           setArchivedErrorDna(archivedErrors);
           setReminderTimeState(reminder);
@@ -169,7 +165,7 @@ export default function LevelScreen() {
           setMilestonesAchieved(achievedIds.size);
           setAssessmentSkipped(skippedAssessment);
           setConfirmedLevel(onboardingProfile?.confirmedLevel ?? null);
-          setCurrentLevel(level || 'B1 Confident');
+          setCurrentLevel(displayLevel);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -247,10 +243,10 @@ export default function LevelScreen() {
             </View>
           ) : null}
 
-          {currentLevel || progressionLevel ? (
+          {currentLevel ? (
             <View style={styles.progressionLevelCard}>
               <Text style={styles.progressionLevelLabel}>Current level</Text>
-              <Text style={styles.progressionLevelValue}>{currentLevel || progressionLevel}</Text>
+              <Text style={styles.progressionLevelValue}>{currentLevel}</Text>
             </View>
           ) : null}
 

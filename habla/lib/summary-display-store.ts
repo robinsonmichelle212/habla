@@ -54,6 +54,7 @@ export type SummaryDisplayPayload = {
       revisiting?: boolean;
     }[];
   };
+  currentLevel?: string;
 };
 
 let displayPayload: SummaryDisplayPayload | null = null;
@@ -86,6 +87,7 @@ export type SummaryRouteParams = {
   challenge: string;
   lessonType: string;
   encouragingMessage: string;
+  currentLevel: string;
 };
 
 export function toSummaryRouteParams(payload: SummaryDisplayPayload): SummaryRouteParams {
@@ -104,6 +106,7 @@ export function toSummaryRouteParams(payload: SummaryDisplayPayload): SummaryRou
     challenge: payload.challenge,
     lessonType: payload.lessonType,
     encouragingMessage: payload.encouragingMessage,
+    currentLevel: payload.currentLevel ?? '',
   };
 }
 
@@ -173,6 +176,7 @@ export function resolveSummaryDisplayFromParams(
       pick('encouragingMessage') ||
       stored?.encouragingMessage ||
       '¡Buen trabajo! / Great work completing your lesson.',
+    currentLevel: pick('currentLevel') || stored?.currentLevel,
     summaryNotice: stored?.summaryNotice,
     isDemoSession: stored?.isDemoSession,
     speaking: stored?.speaking,
