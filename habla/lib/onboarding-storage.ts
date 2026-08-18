@@ -229,6 +229,8 @@ export async function getOnboardingProfile(): Promise<OnboardingProfile | null> 
 }
 
 export async function isAssessmentSkipped(): Promise<boolean> {
+  const assessmentDate = await AsyncStorage.getItem(ASSESSMENT_DATE_KEY);
+  if (assessmentDate) return false;
   return (await AsyncStorage.getItem(ASSESSMENT_SKIPPED_KEY)) === 'true';
 }
 

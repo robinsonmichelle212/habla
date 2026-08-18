@@ -25,6 +25,11 @@ import {
 import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
 import { DailyActivityRow } from '@/components/daily-activity-row';
+import {
+  completeDailyChallenge,
+  getTodaysChallengeForHome,
+  type DailyChallenge,
+} from '@/lib/daily-challenge';
 import { getLast7DaysActivity, type DailyActivityDay } from '@/lib/daily-activity';
 import { hasFullActivityToday } from '@/lib/practice-storage';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
@@ -36,7 +41,7 @@ import {
 } from '@/lib/lesson-type-nudge';
 import { getUserName, shouldShowOnboarding, timeBasedGreeting } from '@/lib/onboarding-storage';
 import { getProgressionHomeCard, type ProgressionHomeCard } from '@/lib/progression-test';
-import { getStreakState } from '@/lib/streak';
+import { formatLocalDate, getStreakState } from '@/lib/streak';
 
 const palette = {
   background: '#0B0F14',
@@ -232,7 +237,7 @@ export default function HomeScreen() {
           setUrgentUnlock(getUrgentPendingUnlock(shopProgress));
           setGreeting(name ? timeBasedGreeting(name) : null);
           setActivityDays(weekActivity);
-          setShowLastSummaryLink(lastSummary);
+          setShowLastSummaryLink(lastSummary && streak.lastSessionDate === formatLocalDate());
           setJaviRecommendation(homeRecommendationPreview(nudge));
           setShowSparkButton(!fullToday);
           setProgressionCard(progression);
@@ -356,6 +361,20 @@ export default function HomeScreen() {
 
           {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
 
+          {showLastSummaryLink ? (
+            <Pressable
+              onPress={() => router.push('/last-summary' as Href)}
+              style={({ pressed }) => [styles.lastSummaryLink, pressed && styles.lastSummaryPressed]}
+              accessibilityRole="button"
+              accessibilityLabel="View last summary">
+              <Text style={styles.lastSummaryText}>View last summary →</Text>
+            </Pressable>
+          ) : null}
+
+          {javiRecommendation ? (
+            <Text style={styles.javiRecommendation}>{javiRecommendation}</Text>
+          ) : null}
+
           {progressionCard?.kind === 'ready' ? (
             <Pressable
               onPress={() => router.push('/progression-test')}
@@ -421,16 +440,6 @@ export default function HomeScreen() {
                 </View>
               )}
             </View>
-          ) : null}
-
-          {showLastSummaryLink ? (
-            <Pressable
-              onPress={() => router.push('/last-summary' as Href)}
-              style={({ pressed }) => [styles.lastSummaryLink, pressed && styles.lastSummaryPressed]}
-              accessibilityRole="button"
-              accessibilityLabel="View last summary">
-              <Text style={styles.lastSummaryText}>View last summary →</Text>
-            </Pressable>
           ) : null}
 
           <View style={styles.flexSpacer} />
@@ -541,6 +550,12 @@ const styles = StyleSheet.create({
   },
   streakEmoji: { fontSize: 36 },
   streakNumber: { fontSize: 44, fontWeight: '900', color: palette.text, letterSpacing: -1 },
+  javiRecommendation: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 18,
+  },
   gemsPill: {
     flexDirection: 'row',
     alignItems: 'center',

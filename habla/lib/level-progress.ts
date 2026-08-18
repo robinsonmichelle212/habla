@@ -162,6 +162,61 @@ export async function recordHighestLevelIfNeeded(level: string): Promise<void> {
   }
 }
 
+function collectRealLessonScores(history: LessonHistoryEntry[]): number[] {
+  return history
+    .filter((lesson) => !lesson.placeholder && !isStreakSessionLesson(lesson) && lesson.overallScore != null)
+    .map((lesson) => overallLessonScore(lesson))
+    .filter((score) => score > 0);
+}
+
+function levelIdFromAverageScore(avg: number): LevelBandId {
+  return getBandForScore(avg).band.id;
+}
+
+/**
+ * Correct an incorrectly stored B2+ level using full score history.
+ * Runs on app open; clears the one-time restoration flag so history can be rebuilt.
+ */
+export async function correctHighestLevelFromHistory(): Promise<void> {
+  try {
+    const storedRaw = await getHighestLevelAchieved();
+    const storedRank = getLevelRank(storedRaw);
+    const b2MinRank = getLevelRank('B2 Emerging');
+
+    const history = await getLessonHistory();
+    const realScores = collectRealLessonScores(history);
+    const hasLessonHistory = realScores.length > 0;
+
+    let correctId: LevelBandId = 'b1-confident';
+    if (hasLessonHistory) {
+      const avgScore = realScores.reduce((sum, score) => sum + score, 0) / realScores.length;
+      correctId = levelIdFromAverageScore(avgScore);
+      const confidentRank = getLevelRank(CONFIDENT_FLOOR_LABEL);
+      if (getLevelRank(correctId) < confidentRank) {
+        correctId = 'b1-confident';
+      }
+    }
+
+    const correctRank = getLevelRank(correctId);
+    if (storedRank >= b2MinRank || storedRank > correctRank) {
+      await AsyncStorage.setItem(HIGHEST_LEVEL_KEY, correctId);
+      console.log(
+        '[Habla] Level corrected from',
+        storedRaw,
+        'to',
+        levelLabelFromStored(correctId),
+        hasLessonHistory
+          ? `based on avg: ${Math.round(realScores.reduce((sum, score) => sum + score, 0) / realScores.length)}`
+          : '',
+      );
+    }
+
+    await AsyncStorage.removeItem(LEVEL_RESTORATION_KEY);
+  } catch (err) {
+    console.warn('[Habla] correctHighestLevelFromHistory failed:', err);
+  }
+}
+
 /**
  * One-time migration: rebuild highestLevelAchieved from full lesson history.
  * Floors to at least B1 Confident when the user has lesson history.
@@ -172,20 +227,37 @@ export async function restoreLevelFromHistory(): Promise<void> {
     if (applied) return;
 
     const history = await getLessonHistory();
+    const realScores = collectRealLessonScores(history);
     let highestRank = -1;
     let highestLevel = 'B1 Developing';
     let highestId: LevelBandId = 'b1-developing';
 
-    for (const lesson of history) {
-      if (lesson.placeholder || isStreakSessionLesson(lesson)) continue;
-      if (lesson.overallScore == null) continue;
-      const score = overallLessonScore(lesson);
-      if (score <= 0) continue;
+    for (const score of realScores) {
       const band = getBandForScore(score);
       if (band.index > highestRank) {
         highestRank = band.index;
         highestLevel = band.band.label;
         highestId = band.band.id;
+      }
+    }
+
+    if (realScores.length > 0) {
+      const avgScore = realScores.reduce((sum, score) => sum + score, 0) / realScores.length;
+      const avgBand = getBandForScore(avgScore);
+      if (avgBand.index > highestRank) {
+        highestRank = avgBand.index;
+        highestLevel = avgBand.band.label;
+        highestId = avgBand.band.id;
+      }
+
+      const b2MinRank = getLevelRank('B2 Emerging');
+      if (avgScore < 85 && highestRank >= b2MinRank) {
+        const b1StrongRank = getLevelRank('B1 Strong');
+        if (highestRank > b1StrongRank) {
+          highestRank = b1StrongRank;
+          highestLevel = 'B1 Strong';
+          highestId = 'b1-strong';
+        }
       }
     }
 
@@ -197,13 +269,7 @@ export async function restoreLevelFromHistory(): Promise<void> {
       highestId = levelIdFromStored(storedHighest);
     }
 
-    const hasLessonHistory = history.some(
-      (lesson) =>
-        !lesson.placeholder &&
-        !isStreakSessionLesson(lesson) &&
-        lesson.overallScore != null &&
-        overallLessonScore(lesson) > 0,
-    );
+    const hasLessonHistory = realScores.length > 0;
 
     const confidentRank = getLevelRank(CONFIDENT_FLOOR_LABEL);
     if (hasLessonHistory && highestRank < confidentRank) {
