@@ -16,6 +16,7 @@ import { formatLocalDate } from '@/lib/streak';
 export const PROGRESSION_TESTS_KEY = 'progressionTests';
 export const LESSONS_COMPLETED_SINCE_TEST_KEY = 'lessonsCompletedSinceTest';
 export const HAS_SEEN_PROGRESSION_ANIMATION_KEY = 'hasSeenProgressionAnimation';
+export const LAST_PROGRESSION_TEST_DATE_KEY = 'lastProgressionTestDate';
 
 export const PROGRESSION_PASS_SCORE = 7;
 export const PROGRESSION_BORDERLINE_SCORE = 6;
@@ -709,6 +710,10 @@ export async function recordProgressionTestResult(params: {
   };
   tests[params.block.key] = next;
   await saveProgressionTests(tests);
+
+  if (params.completed) {
+    await AsyncStorage.setItem(LAST_PROGRESSION_TEST_DATE_KEY, formatLocalDate());
+  }
 
   if (!params.passed) {
     await saveLessonsSinceTest({ topic: params.block.key, count: 0 });

@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 
 import type { MilestoneQuizContext } from '@/lib/milestone-celebration-quiz';
-import type { MilestoneQuizTriggerId } from '@/lib/milestone-celebration-quiz';
+import { normalizeQuizTriggerId, type MilestoneQuizTriggerId } from '@/lib/milestone-celebration-quiz';
 
 function getClient(): Anthropic {
   const key = process.env.EXPO_PUBLIC_ANTHROPIC_API_KEY?.trim();
@@ -171,24 +171,33 @@ export async function generateMilestoneCelebrationQuiz(
 
   try {
     const client = getClient();
-    const levelFocus =
-      triggerId === 'level-up' && context.levelLabel
-        ? `Focus questions on content appropriate for ${context.levelLabel}.`
-        : triggerId === 'grammar-complete'
-          ? 'Span questions across ALL completed grammar weeks.'
-          : '';
+    const activeTrigger = normalizeQuizTriggerId(triggerId);
+    const levelFocus = (() => {
+      switch (activeTrigger) {
+        case 'streak-21':
+          return `Focus on present tense (curriculum weeks 1–2), any preterite already covered, vocabulary from the first 2–3 themes seen, and personal questions using the learner's name (${context.userName}).`;
+        case 'streak-63':
+          return `Draw from ALL completed grammar weeks so far (roughly weeks 1–12: present, preterite, imperfect, preterite vs imperfect, future, conditional). Broader mix across the curriculum.`;
+        case 'streak-100':
+          return 'Comprehensive recap spanning every completed grammar topic and saved vocabulary.';
+        case 'grammar-complete':
+          return 'Span questions across ALL completed grammar weeks.';
+      }
+    })();
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 4000,
       system: `You are Javi creating a warm, celebratory Spanish recap quiz — a reward, NOT a test.
-Return ONLY valid JSON. Questions must use ONLY the learner data provided — never generic textbook content.`,
+Return ONLY valid JSON. Questions must use ONLY the learner data provided — never generic textbook content.
+Address the learner as ${context.userName} in at least 2 personal_recall questions when possible.`,
       messages: [
         {
           role: 'user',
           content: `Create exactly ${questionCount} personalised milestone quiz questions.
 
 Milestone: ${context.milestone}
+Learner name: ${context.userName}
 Current level: ${context.currentLevel}
 ${levelFocus}
 

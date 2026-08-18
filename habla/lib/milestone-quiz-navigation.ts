@@ -7,23 +7,21 @@ import {
 import type { MilestoneCelebration } from '@/lib/milestones';
 import { formatLocalDate } from '@/lib/streak';
 
+const QUIZ_ELIGIBLE_MILESTONES = new Set<MilestoneCelebration['id']>([
+  'streak-21',
+  'streak-63',
+  'streak-100',
+  'grammar-complete',
+]);
+
 export async function offerMilestoneCelebrationQuiz(
   router: Router,
   celebrations: MilestoneCelebration[],
-  options?: { levelLabel?: string },
 ): Promise<void> {
-  const quizEligible = celebrations.filter(
-    (c) =>
-      c.id === 'streak-14' ||
-      c.id === 'streak-30' ||
-      c.id === 'streak-100' ||
-      c.id === 'level-up' ||
-      c.id === 'grammar-complete',
-  );
+  const quizEligible = celebrations.filter((c) => QUIZ_ELIGIBLE_MILESTONES.has(c.id));
   if (!quizEligible.length) return;
 
   await queueMilestoneQuizzesFromCelebrations(quizEligible, {
-    levelLabel: options?.levelLabel,
     achievedDate: formatLocalDate(),
   });
   const next = await getNextPendingMilestoneQuiz();

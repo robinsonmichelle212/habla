@@ -4,6 +4,7 @@ import { getWeekDefinition, resolveGrammarCurriculum } from '@/lib/grammar-curri
 import { getLastSummary } from '@/lib/last-summary-storage';
 import { resolveLevelBarometer } from '@/lib/level-progress';
 import type { MilestoneCelebration, MilestoneId } from '@/lib/milestones';
+import { getUserName } from '@/lib/onboarding-storage';
 import { getLessonHistory } from '@/lib/practice-storage';
 import { getSavedVocabulary } from '@/lib/saved-vocabulary';
 import { getStreakState, formatLocalDate } from '@/lib/streak';
@@ -11,13 +12,32 @@ import type { MilestoneQuizQuestion } from '@/lib/milestone-quiz-generator';
 
 const QUIZ_RECORDS_KEY = 'milestoneCelebrationQuizzes';
 const DRILL_QUEUE_KEY = 'milestoneQuizDrillQueue';
+const PENDING_CELEBRATION_QUIZ_KEY = 'pendingCelebrationQuiz';
+const LAST_PROGRESSION_TEST_DATE_KEY = 'lastProgressionTestDate';
+const PROGRESSION_CLASH_DAYS = 5;
+
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  const start = Date.UTC(ay, (am ?? 1) - 1, ad ?? 1);
+  const end = Date.UTC(by, (bm ?? 1) - 1, bd ?? 1);
+  return Math.round((end - start) / 86_400_000);
+}
+
+async function daysSinceLastProgressionTest(): Promise<number> {
+  const last = await AsyncStorage.getItem(LAST_PROGRESSION_TEST_DATE_KEY);
+  if (!last) return PROGRESSION_CLASH_DAYS;
+  return daysBetween(last, formatLocalDate());
+}
 
 export type MilestoneQuizTriggerId =
+  | 'streak-21'
+  | 'streak-63'
+  | 'streak-100'
+  | 'grammar-complete'
   | 'streak-14'
   | 'streak-30'
-  | 'streak-100'
-  | 'level-up'
-  | 'grammar-complete';
+  | 'level-up';
 
 export type MilestoneQuizStatus = 'pending' | 'skipped' | 'completed';
 
@@ -45,6 +65,7 @@ export type MilestoneQuizRecord = {
 
 export type MilestoneQuizContext = {
   milestone: string;
+  userName: string;
   completedGrammarWeeks: { week: number; topic: string }[];
   savedVocabulary: { spanish: string; english: string }[];
   lessonTypes: string[];
@@ -54,31 +75,78 @@ export type MilestoneQuizContext = {
   levelLabel?: string;
 };
 
+export type CelebrationQuizCatalogItem = {
+  triggerId: MilestoneQuizTriggerId;
+  emoji: string;
+  label: string;
+  description: string;
+};
+
+export const CELEBRATION_QUIZ_CATALOG: CelebrationQuizCatalogItem[] = [
+  {
+    triggerId: 'streak-21',
+    emoji: '🎉',
+    label: '21 day celebration quiz',
+    description: 'Present tense, early preterite, and your first themes — personalised for you.',
+  },
+  {
+    triggerId: 'streak-63',
+    emoji: '🔥',
+    label: '63 day celebration quiz',
+    description: 'Everything covered so far — roughly weeks 1–12 of the curriculum.',
+  },
+  {
+    triggerId: 'streak-100',
+    emoji: '🏆',
+    label: '100 day celebration quiz',
+    description: 'A comprehensive recap across everything you have learned.',
+  },
+  {
+    triggerId: 'grammar-complete',
+    emoji: '📚',
+    label: 'Curriculum complete quiz',
+    description: 'All 30 grammar weeks finished — the final celebration.',
+  },
+];
+
 const QUIZ_TRIGGER_PRIORITY: MilestoneQuizTriggerId[] = [
   'streak-100',
   'grammar-complete',
-  'streak-30',
-  'streak-14',
-  'level-up',
+  'streak-63',
+  'streak-21',
 ];
 
 const MILESTONE_TO_TRIGGER: Partial<Record<MilestoneId, MilestoneQuizTriggerId>> = {
-  'streak-14': 'streak-14',
-  'streak-30': 'streak-30',
+  'streak-21': 'streak-21',
+  'streak-63': 'streak-63',
   'streak-100': 'streak-100',
-  'level-up': 'level-up',
   'grammar-complete': 'grammar-complete',
+};
+
+const LEGACY_TRIGGER_MAP: Partial<Record<MilestoneQuizTriggerId, MilestoneQuizTriggerId>> = {
+  'streak-14': 'streak-21',
+  'streak-30': 'streak-63',
 };
 
 export const JAVI_QUIZ_INTRO =
   "This isn't a test. There's no failing here. I just want to show you something — how much Spanish is already living in your head. ¿Listos? Let's go.";
 
+export function normalizeQuizTriggerId(
+  triggerId: MilestoneQuizTriggerId,
+): Exclude<MilestoneQuizTriggerId, 'streak-14' | 'streak-30' | 'level-up'> {
+  if (triggerId === 'level-up') return 'streak-21';
+  return (LEGACY_TRIGGER_MAP[triggerId] ?? triggerId) as Exclude<
+    MilestoneQuizTriggerId,
+    'streak-14' | 'streak-30' | 'level-up'
+  >;
+}
+
 export function questionCountForTrigger(triggerId: MilestoneQuizTriggerId): number {
-  switch (triggerId) {
-    case 'streak-14':
-    case 'level-up':
+  const id = normalizeQuizTriggerId(triggerId);
+  switch (id) {
+    case 'streak-21':
       return 10;
-    case 'streak-30':
+    case 'streak-63':
       return 15;
     case 'streak-100':
     case 'grammar-complete':
@@ -86,21 +154,72 @@ export function questionCountForTrigger(triggerId: MilestoneQuizTriggerId): numb
   }
 }
 
+export function celebrationGemBonusForTrigger(triggerId: MilestoneQuizTriggerId): number {
+  const id = normalizeQuizTriggerId(triggerId);
+  switch (id) {
+    case 'streak-21':
+      return 21;
+    case 'streak-63':
+      return 63;
+    case 'streak-100':
+      return 100;
+    case 'grammar-complete':
+      return 0;
+  }
+}
+
+export function quizPresentationForTrigger(triggerId: MilestoneQuizTriggerId): {
+  title: string;
+  javiMessage: string;
+  eyebrow: string;
+} {
+  const id = normalizeQuizTriggerId(triggerId);
+  switch (id) {
+    case 'streak-21':
+      return {
+        eyebrow: '¡Tres semanas! 🎉',
+        title: '21 day celebration quiz',
+        javiMessage:
+          'Tres semanas seguidas. Ya es un hábito.\nVamos a ver lo que has aprendido.',
+      };
+    case 'streak-63':
+      return {
+        eyebrow: '¡Nueve semanas! 🔥',
+        title: '63 day celebration quiz',
+        javiMessage: 'Nueve semanas de español.\nMira todo lo que sabes ahora.',
+      };
+    case 'streak-100':
+      return {
+        eyebrow: '¡Cien días! 🏆',
+        title: '100 day celebration quiz',
+        javiMessage:
+          'Cien días. Extraordinario.\nEres de los pocos que llegan hasta aquí.',
+      };
+    case 'grammar-complete':
+      return {
+        eyebrow: 'One more thing before you go... 🎉',
+        title: 'Curriculum complete quiz',
+        javiMessage: JAVI_QUIZ_INTRO,
+      };
+  }
+}
+
 export function milestoneLabelForTrigger(
   triggerId: MilestoneQuizTriggerId,
   levelLabel?: string,
 ): string {
-  switch (triggerId) {
-    case 'streak-14':
-      return '14 day streak';
-    case 'streak-30':
-      return '30 day streak';
+  const id = normalizeQuizTriggerId(triggerId);
+  switch (id) {
+    case 'streak-21':
+      return '21 day streak';
+    case 'streak-63':
+      return '63 day streak';
     case 'streak-100':
       return '100 day streak';
     case 'grammar-complete':
       return 'Grammar curriculum complete';
-    case 'level-up':
-      return levelLabel ? `Level up to ${levelLabel}` : 'Level up';
+    default:
+      return levelLabel ? `Level up to ${levelLabel}` : 'Celebration quiz';
   }
 }
 
@@ -141,13 +260,15 @@ function normalizeRecord(raw: unknown): MilestoneQuizRecord | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Partial<MilestoneQuizRecord>;
   if (!o.id || !o.triggerId || !o.milestoneLabel || !o.achievedDate || !o.status) return null;
+  const triggerId = o.triggerId as MilestoneQuizTriggerId;
+  const normalizedTrigger = normalizeQuizTriggerId(triggerId);
   return {
     id: o.id,
-    triggerId: o.triggerId as MilestoneQuizTriggerId,
-    milestoneLabel: o.milestoneLabel,
+    triggerId: normalizedTrigger,
+    milestoneLabel: milestoneLabelForTrigger(normalizedTrigger, o.levelLabel),
     achievedDate: o.achievedDate,
     status: o.status as MilestoneQuizStatus,
-    questionCount: Math.max(1, Math.trunc(Number(o.questionCount) || 10)),
+    questionCount: Math.max(1, Math.trunc(Number(o.questionCount) || questionCountForTrigger(normalizedTrigger))),
     levelLabel: typeof o.levelLabel === 'string' ? o.levelLabel : undefined,
     correctCount: o.correctCount != null ? Math.trunc(Number(o.correctCount)) : undefined,
     gemsEarned: o.gemsEarned != null ? Math.trunc(Number(o.gemsEarned)) : undefined,
@@ -184,8 +305,8 @@ export async function getNextPendingMilestoneQuiz(): Promise<MilestoneQuizRecord
   const pending = records.filter((r) => r.status === 'pending');
   if (!pending.length) return null;
   pending.sort((a, b) => {
-    const pa = QUIZ_TRIGGER_PRIORITY.indexOf(a.triggerId);
-    const pb = QUIZ_TRIGGER_PRIORITY.indexOf(b.triggerId);
+    const pa = QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(a.triggerId));
+    const pb = QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(b.triggerId));
     if (pa !== pb) return pa - pb;
     return a.achievedDate.localeCompare(b.achievedDate);
   });
@@ -199,18 +320,56 @@ export async function getPendingMilestoneQuizzes(): Promise<MilestoneQuizRecord[
 
 function celebrationToTriggers(
   celebrations: MilestoneCelebration[],
-  levelLabel?: string,
-): { triggerId: MilestoneQuizTriggerId; levelLabel?: string }[] {
-  const out: { triggerId: MilestoneQuizTriggerId; levelLabel?: string }[] = [];
+): { triggerId: MilestoneQuizTriggerId }[] {
+  const out: { triggerId: MilestoneQuizTriggerId }[] = [];
   for (const c of celebrations) {
     const trigger = MILESTONE_TO_TRIGGER[c.id];
     if (!trigger) continue;
-    out.push({
-      triggerId: trigger,
-      levelLabel: trigger === 'level-up' ? levelLabel : undefined,
-    });
+    out.push({ triggerId: trigger });
   }
   return out;
+}
+
+async function storePendingCelebrationQuiz(triggerId: MilestoneQuizTriggerId): Promise<void> {
+  const normalized = normalizeQuizTriggerId(triggerId);
+  const existing = await AsyncStorage.getItem(PENDING_CELEBRATION_QUIZ_KEY);
+  if (existing) {
+    const existingRank = QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(existing as MilestoneQuizTriggerId));
+    const nextRank = QUIZ_TRIGGER_PRIORITY.indexOf(normalized);
+    if (existingRank >= 0 && nextRank >= 0 && existingRank <= nextRank) return;
+  }
+  await AsyncStorage.setItem(PENDING_CELEBRATION_QUIZ_KEY, normalized);
+}
+
+export async function queueMilestoneQuizByTrigger(
+  triggerId: MilestoneQuizTriggerId,
+  achievedDate: string = formatLocalDate(),
+): Promise<MilestoneQuizRecord | null> {
+  const normalized = normalizeQuizTriggerId(triggerId);
+  const records = await getMilestoneQuizRecords();
+  const id = `${normalized}-${achievedDate}`;
+  if (records.some((r) => r.id === id)) {
+    return getNextPendingMilestoneQuiz();
+  }
+  records.push({
+    id,
+    triggerId: normalized,
+    milestoneLabel: milestoneLabelForTrigger(normalized),
+    achievedDate,
+    status: 'pending',
+    questionCount: questionCountForTrigger(normalized),
+  });
+  await saveMilestoneQuizRecords(records);
+  return getNextPendingMilestoneQuiz();
+}
+
+export async function processPendingCelebrationQuiz(): Promise<MilestoneQuizRecord | null> {
+  const pending = await AsyncStorage.getItem(PENDING_CELEBRATION_QUIZ_KEY);
+  if (!pending) return null;
+  const daysSince = await daysSinceLastProgressionTest();
+  if (daysSince < PROGRESSION_CLASH_DAYS) return null;
+  await AsyncStorage.removeItem(PENDING_CELEBRATION_QUIZ_KEY);
+  return queueMilestoneQuizByTrigger(pending as MilestoneQuizTriggerId);
 }
 
 export async function queueMilestoneQuizzesFromCelebrations(
@@ -218,28 +377,40 @@ export async function queueMilestoneQuizzesFromCelebrations(
   options?: { levelLabel?: string; achievedDate?: string },
 ): Promise<MilestoneQuizRecord | null> {
   const achievedDate = options?.achievedDate ?? formatLocalDate();
-  const triggers = celebrationToTriggers(celebrations, options?.levelLabel);
+  const triggers = celebrationToTriggers(celebrations);
   if (!triggers.length) return null;
+
+  const daysSince = await daysSinceLastProgressionTest();
+  if (daysSince < PROGRESSION_CLASH_DAYS) {
+    const sorted = [...triggers].sort(
+      (a, b) =>
+        QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(a.triggerId)) -
+        QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(b.triggerId)),
+    );
+    await storePendingCelebrationQuiz(sorted[0]!.triggerId);
+    return null;
+  }
 
   const records = await getMilestoneQuizRecords();
   const existingIds = new Set(records.map((r) => r.id));
 
   const sorted = [...triggers].sort(
     (a, b) =>
-      QUIZ_TRIGGER_PRIORITY.indexOf(a.triggerId) - QUIZ_TRIGGER_PRIORITY.indexOf(b.triggerId),
+      QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(a.triggerId)) -
+      QUIZ_TRIGGER_PRIORITY.indexOf(normalizeQuizTriggerId(b.triggerId)),
   );
 
   for (const item of sorted) {
-    const id = `${item.triggerId}-${achievedDate}`;
+    const triggerId = normalizeQuizTriggerId(item.triggerId);
+    const id = `${triggerId}-${achievedDate}`;
     if (existingIds.has(id)) continue;
     records.push({
       id,
-      triggerId: item.triggerId,
-      milestoneLabel: milestoneLabelForTrigger(item.triggerId, item.levelLabel ?? options?.levelLabel),
+      triggerId,
+      milestoneLabel: milestoneLabelForTrigger(triggerId),
       achievedDate,
       status: 'pending',
-      questionCount: questionCountForTrigger(item.triggerId),
-      levelLabel: item.levelLabel ?? options?.levelLabel,
+      questionCount: questionCountForTrigger(triggerId),
     });
     existingIds.add(id);
   }
@@ -305,11 +476,12 @@ function daysSinceFirstLesson(dates: string[]): number {
 export async function gatherMilestoneQuizContext(
   record: MilestoneQuizRecord,
 ): Promise<MilestoneQuizContext> {
-  const [vocab, history, curriculum, lastSummary] = await Promise.all([
+  const [vocab, history, curriculum, lastSummary, userName] = await Promise.all([
     getSavedVocabulary(),
     getLessonHistory(),
     resolveGrammarCurriculum(),
     getLastSummary(),
+    getUserName(),
   ]);
 
   const barometer = await resolveLevelBarometer(history);
@@ -359,6 +531,7 @@ export async function gatherMilestoneQuizContext(
 
   return {
     milestone: record.milestoneLabel,
+    userName: userName?.trim() || 'there',
     completedGrammarWeeks,
     savedVocabulary: vocab.slice(0, 20).map((w) => ({ spanish: w.spanish, english: w.english })),
     lessonTypes,

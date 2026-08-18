@@ -3,15 +3,17 @@ import { useKeyboardScrollToEnd } from '@/components/conversation-input-layout';
 import { addGems } from '@/lib/gems';
 import {
   calculateMilestoneQuizGems,
+  celebrationGemBonusForTrigger,
   completeMilestoneQuiz,
   gatherMilestoneQuizContext,
   getDaysPractisingForQuiz,
   getMilestoneQuizById,
-  JAVI_QUIZ_INTRO,
-  javiReactionForScore,
   queueMissedQuizItemsForDrills,
+  quizPresentationForTrigger,
   skipMilestoneQuiz,
   storeMilestoneQuizQuestions,
+  javiReactionForScore,
+  normalizeQuizTriggerId,
   type MilestoneQuizAnswer,
 } from '@/lib/milestone-celebration-quiz';
 import {
@@ -19,6 +21,7 @@ import {
   generateMilestoneCelebrationQuiz,
   type MilestoneQuizQuestion,
 } from '@/lib/milestone-quiz-generator';
+import { awardBadge } from '@/lib/profile-badges';
 import { speakEnglish, stopJaviSpeech } from '@/lib/javi-speech';
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
@@ -124,11 +127,13 @@ export default function MilestoneQuizScreen() {
     })();
   }, [quizId]);
 
+  const presentation = record ? quizPresentationForTrigger(record.triggerId) : null;
+
   useEffect(() => {
-    if (stage !== 'intro' || didSpeakIntro.current || loading) return;
+    if (stage !== 'intro' || didSpeakIntro.current || loading || !presentation) return;
     didSpeakIntro.current = true;
-    void speakEnglish(JAVI_QUIZ_INTRO);
-  }, [stage, loading]);
+    void speakEnglish(presentation.javiMessage.replace(/\n/g, ' '));
+  }, [stage, loading, presentation]);
 
   const loadQuestions = useCallback(async () => {
     if (!record) return;
@@ -208,13 +213,18 @@ export default function MilestoneQuizScreen() {
     if (!record) return;
     const correctCount = finalAnswers.filter((a) => a.correct).length;
     const gemBreakdown = calculateMilestoneQuizGems(correctCount, questions.length);
-    setGemsEarned(gemBreakdown.totalGems);
-    await addGems(gemBreakdown.totalGems);
+    const celebrationBonus = celebrationGemBonusForTrigger(record.triggerId);
+    const totalGems = gemBreakdown.totalGems + celebrationBonus;
+    setGemsEarned(totalGems);
+    await addGems(totalGems);
+    if (normalizeQuizTriggerId(record.triggerId) === 'streak-100') {
+      await awardBadge('century', 'Centenario 💯', '💯');
+    }
     await completeMilestoneQuiz(record.id, {
       questions,
       answers: finalAnswers,
       correctCount,
-      gemsEarned: gemBreakdown.totalGems,
+      gemsEarned: totalGems,
       daysPractising,
     });
 
@@ -298,12 +308,12 @@ export default function MilestoneQuizScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}>
-        {stage === 'intro' ? (
+        {stage === 'intro' && presentation ? (
           <View style={styles.block}>
-            <Text style={styles.eyebrow}>One more thing before you go... 🎉</Text>
+            <Text style={styles.eyebrow}>{presentation.eyebrow}</Text>
             <View style={styles.quoteCard}>
               <Text style={styles.quoteLabel}>Javi</Text>
-              <Text style={styles.quoteText}>{JAVI_QUIZ_INTRO}</Text>
+              <Text style={styles.quoteText}>{presentation.javiMessage}</Text>
             </View>
             <Pressable onPress={() => void loadQuestions()} style={styles.primaryBtn}>
               <Text style={styles.primaryBtnText}>Show me 💪</Text>

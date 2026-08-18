@@ -17,8 +17,8 @@ const DAILY_SESSIONS_KEY = 'dailySessions';
 export type MilestoneId =
   | 'three-sessions-day'
   | 'streak-7'
-  | 'streak-14'
-  | 'streak-30'
+  | 'streak-21'
+  | 'streak-63'
   | 'streak-100'
   | 'personal-best'
   | 'level-up'
@@ -79,21 +79,21 @@ export const MILESTONE_DEFINITIONS: MilestoneDef[] = [
     repeat: 'once',
   },
   {
-    id: 'streak-14',
-    name: '14 Day Streak',
-    emoji: '🔥',
-    description: 'Practice fourteen days in a row without missing a day.',
-    message: 'Two weeks straight. This is becoming real. 🔥 +1 🌟 +15 💎',
+    id: 'streak-21',
+    name: '21 Day Streak',
+    emoji: '🎉',
+    description: 'Practice twenty-one days in a row — unlock your first celebration quiz.',
+    message: 'Three weeks straight. This is a habit now. 🎉 +15 💎',
     gems: 15,
-    stars: 1,
+    stars: 2,
     repeat: 'once',
   },
   {
-    id: 'streak-30',
-    name: '30 Day Streak',
-    emoji: '🔥🔥',
-    description: 'Keep your streak alive for thirty consecutive days.',
-    message: 'Thirty days. This is no longer a habit — it\'s who you are. 🔥 + 5 🌟 +50 💎',
+    id: 'streak-63',
+    name: '63 Day Streak',
+    emoji: '🔥',
+    description: 'Keep your streak alive for sixty-three consecutive days.',
+    message: 'Nine weeks of Spanish. Look how far you\'ve come. 🔥 +50 💎',
     gems: 50,
     stars: 5,
     repeat: 'once',
@@ -101,13 +101,13 @@ export const MILESTONE_DEFINITIONS: MilestoneDef[] = [
   {
     id: 'streak-100',
     name: '100 Day Streak',
-    emoji: '🌟',
+    emoji: '🏆',
     description: 'One hundred consecutive days of Spanish practice.',
     message: 'One hundred days. Extraordinary. +50 🌟 +200 💎',
     gems: 200,
     stars: 50,
     repeat: 'once',
-    badge: { id: 'century', label: 'Century 💯', emoji: '💯' },
+    badge: { id: 'century', label: 'Centenario 💯', emoji: '💯' },
   },
   {
     id: 'personal-best',
@@ -268,8 +268,8 @@ export async function checkStreakMilestones(
   const celebrations: MilestoneCelebration[] = [];
   const map: Record<number, MilestoneId> = {
     7: 'streak-7',
-    14: 'streak-14',
-    30: 'streak-30',
+    21: 'streak-21',
+    63: 'streak-63',
     100: 'streak-100',
   };
   const id = map[currentStreak];
@@ -375,17 +375,17 @@ export async function getMilestoneProgress(): Promise<MilestoneProgressItem[]> {
           : `Currently on day ${streak.currentStreak}`;
         progressPercent = Math.min(100, Math.round((streak.currentStreak / 7) * 100));
         break;
-      case 'streak-14':
+      case 'streak-21':
         progressLabel = achieved
           ? `Achieved ${latest?.achievedDate ?? ''}`
           : `Currently on day ${streak.currentStreak}`;
-        progressPercent = Math.min(100, Math.round((streak.currentStreak / 14) * 100));
+        progressPercent = Math.min(100, Math.round((streak.currentStreak / 21) * 100));
         break;
-      case 'streak-30':
+      case 'streak-63':
         progressLabel = achieved
           ? `Achieved ${latest?.achievedDate ?? ''}`
           : `Currently on day ${streak.currentStreak}`;
-        progressPercent = Math.min(100, Math.round((streak.currentStreak / 30) * 100));
+        progressPercent = Math.min(100, Math.round((streak.currentStreak / 63) * 100));
         break;
       case 'streak-100':
         progressLabel = achieved
