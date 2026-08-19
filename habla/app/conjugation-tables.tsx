@@ -1,6 +1,6 @@
-import { ConjugationTableCard } from '@/components/conjugation-table';
+import { GrammarVerbDeck } from '@/components/grammar-verb-deck';
 import { lookupVerbConjugation } from '@/lib/claude-conjugation';
-import { getFocusVerbsForTopic } from '@/lib/conjugation-data';
+import { getFocusVerbsForTopic, sortVerbsForPhase1Deck } from '@/lib/conjugation-data';
 import {
   GRAMMAR_WEEK_DEFINITIONS,
   TOTAL_CURRICULUM_WEEKS,
@@ -22,6 +22,7 @@ import {
 } from 'react-native';
 import { AppTextInput } from '@/components/app-text-input';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import type { VerbConjugationEntry } from '@/lib/conjugation-data';
 
 const palette = {
   background: '#0B0F14',
@@ -57,16 +58,20 @@ export default function ConjugationTablesScreen() {
     return Number.isFinite(w) ? w : null;
   }, [params.week]);
 
-  const weekDef = weekNum ? getWeekDefinition(weekNum) : GRAMMAR_WEEK_DEFINITIONS.find((w) => w.topic === topic);
-  const focusTables = useMemo(
-    () => getFocusVerbsForTopic(weekDef?.focusVerbs ?? [], topic),
-    [weekDef?.focusVerbs, topic],
-  );
+  const weekDef = weekNum
+    ? getWeekDefinition(weekNum)
+    : GRAMMAR_WEEK_DEFINITIONS.find((w) => w.topic === topic);
+
+  // Focus verbs for this week/topic — irregular first
+  const focusVerbs: VerbConjugationEntry[] = useMemo(() => {
+    const raw = getFocusVerbsForTopic(weekDef?.focusVerbs ?? [], topic);
+    return sortVerbsForPhase1Deck(raw, weekDef?.focusVerbs ?? []);
+  }, [weekDef?.focusVerbs, topic]);
 
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const [searchResult, setSearchResult] = useState<ReturnType<typeof getFocusVerbsForTopic>[number] | null>(null);
+  const [searchResult, setSearchResult] = useState<VerbConjugationEntry | null>(null);
 
   const handleSearch = useCallback(() => {
     const trimmed = query.trim();
@@ -75,12 +80,12 @@ export default function ConjugationTablesScreen() {
     void (async () => {
       setSearching(true);
       setSearchError(null);
+      setSearchResult(null);
       try {
         const result = await lookupVerbConjugation(trimmed, topic);
         setSearchResult(result);
       } catch (err) {
         setSearchError(err instanceof Error ? err.message : 'Lookup failed');
-        setSearchResult(null);
       } finally {
         setSearching(false);
       }
@@ -110,9 +115,14 @@ export default function ConjugationTablesScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}>
-          <Text style={styles.topicLabel}>{topic}</Text>
-          {weekDef ? <Text style={styles.weekMeta}>Week {weekDef.week} focus verbs</Text> : null}
 
+          {/* ── Page heading ── */}
+          <Text style={styles.topicLabel}>{topic}</Text>
+          {weekDef ? (
+            <Text style={styles.weekMeta}>Week {weekDef.week} focus verbs</Text>
+          ) : null}
+
+          {/* ── Search bar ── */}
           <View style={styles.searchCard}>
             <Text style={styles.searchLabel}>Search any verb</Text>
             <View style={styles.searchRow}>
@@ -133,7 +143,10 @@ export default function ConjugationTablesScreen() {
               <Pressable
                 onPress={handleSearch}
                 disabled={searching || !query.trim()}
-                style={[styles.searchBtn, (searching || !query.trim()) && styles.searchBtnDisabled]}>
+                style={[
+                  styles.searchBtn,
+                  (searching || !query.trim()) && styles.searchBtnDisabled,
+                ]}>
                 {searching ? (
                   <ActivityIndicator color="#0B0F14" size="small" />
                 ) : (
@@ -144,22 +157,39 @@ export default function ConjugationTablesScreen() {
             {searchError ? <Text style={styles.errorText}>{searchError}</Text> : null}
           </View>
 
+          {/* ── Search result — single swipeable card ── */}
           {searchResult ? (
             <View style={styles.section}>
               <Text style={styles.sectionTitle}>Search result</Text>
-              <ConjugationTableCard verb={searchResult} />
+              <Text style={styles.sectionHint}>
+                Swipe tense tabs above the card to explore all tenses · tap any form to hear it
+              </Text>
+              <GrammarVerbDeck
+                verbs={[searchResult]}
+                hidePalaceLink
+                title={`${searchResult.infinitive} — ${searchResult.english}`}
+              />
             </View>
           ) : null}
 
+          {/* ── Focus verbs for this week ── */}
           <View style={styles.section}>
-            <Text style={styles.sectionTitle}>Common verbs for this tense</Text>
-            <Text style={styles.sectionHint}>
-              Pre-built tables for this week&apos;s focus verbs — tap any form to hear it
+            <Text style={styles.sectionTitle}>
+              {focusVerbs.length
+                ? `${focusVerbs.length} verb${focusVerbs.length === 1 ? '' : 's'} for this ${weekNum ? 'week' : 'tense'}`
+                : 'Common verbs for this tense'}
             </Text>
-            {focusTables.length ? (
-              focusTables.map((verb) => (
-                <ConjugationTableCard key={verb.infinitive} verb={verb} />
-              ))
+            {focusVerbs.length ? (
+              <>
+                <Text style={styles.sectionHint}>
+                  Irregular verbs first · tap any form to pronounce · tap verb name to save
+                </Text>
+                <GrammarVerbDeck
+                  verbs={focusVerbs}
+                  weekNumber={weekNum ?? undefined}
+                  title={weekDef ? `Week ${weekDef.week} · ${topic}` : topic}
+                />
+              </>
             ) : (
               <Text style={styles.emptyText}>
                 Use the search bar above to look up verbs for this topic.
@@ -229,8 +259,14 @@ const styles = StyleSheet.create({
   searchBtnDisabled: { opacity: 0.55 },
   searchBtnText: { fontSize: 14, fontWeight: '900', color: '#0B0F14' },
   errorText: { fontSize: 13, fontWeight: '700', color: '#F87171' },
-  section: { gap: 12 },
+  section: { gap: 8 },
   sectionTitle: { fontSize: 16, fontWeight: '900', color: palette.text },
-  sectionHint: { fontSize: 13, fontWeight: '600', color: palette.muted, lineHeight: 18, marginTop: -6 },
+  sectionHint: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: palette.muted,
+    lineHeight: 18,
+    marginTop: -2,
+  },
   emptyText: { fontSize: 14, fontWeight: '600', color: palette.muted, lineHeight: 20 },
 });
