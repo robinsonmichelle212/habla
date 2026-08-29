@@ -24,6 +24,7 @@ import {
 import { formatExpiryCountdownShort } from '@/lib/gem-shop-expiry';
 import { addGems, getTotalGems } from '@/lib/gems';
 import { DailyActivityRow } from '@/components/daily-activity-row';
+import { StreakRescueCard } from '@/components/streak-rescue-card';
 import {
   completeDailyChallenge,
   getTodaysChallengeForHome,
@@ -45,6 +46,32 @@ import {
 } from '@/lib/onboarding-storage';
 import { getProgressionHomeCard, type ProgressionHomeCard } from '@/lib/progression-test';
 import { formatLocalDate, getStreakState } from '@/lib/streak';
+import {
+  STREAK_RESCUE_COST_GEMS,
+  getCurrentRescueState,
+  isEligibleForRescue,
+  type RescueEligibility,
+  type RescueState,
+} from '@/lib/streak-rescue';
+
+/** Same local YYYY-MM-DD gap as lib/streak.ts daysBetween — do not use UTC. */
+function parseLocalDate(dateStr: string): Date {
+  const [y, m, d] = dateStr.split('-').map((p) => Number(p));
+  return new Date(y, (m ?? 1) - 1, d ?? 1);
+}
+
+function daysBetween(a: string, b: string): number {
+  const da = parseLocalDate(a);
+  const db = parseLocalDate(b);
+  const ms = db.getTime() - da.getTime();
+  return Math.floor(ms / (24 * 60 * 60 * 1000));
+}
+
+function addLocalDays(dateStr: string, days: number): string {
+  const d = parseLocalDate(dateStr);
+  d.setDate(d.getDate() + days);
+  return formatLocalDate(d);
+}
 
 const palette = {
   background: '#0B0F14',
@@ -81,6 +108,17 @@ export default function HomeScreen() {
   const [javiRecommendation, setJaviRecommendation] = useState<string | null>(null);
   const [showSparkButton, setShowSparkButton] = useState(false);
   const [progressionCard, setProgressionCard] = useState<ProgressionHomeCard | null>(null);
+  const [rescueOffer, setRescueOffer] = useState<RescueEligibility | null>(null);
+  const [rescueState, setRescueState] = useState<RescueState>({
+    status: 'none',
+    missedDate: null,
+    deadline: null,
+    gemsCost: STREAK_RESCUE_COST_GEMS,
+    purchasedAt: null,
+    streakAtPurchase: null,
+  });
+  const [dayMissed, setDayMissed] = useState(false);
+  const [missedDate, setMissedDate] = useState<string | null>(null);
   const titleTapCountRef = useRef(0);
   const titleTapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bounceAnim = useRef(new Animated.Value(1)).current;
@@ -225,6 +263,25 @@ export default function HomeScreen() {
 
           setCurrentStreak(streak.currentStreak);
           setTotalGems(gems);
+
+          const today = formatLocalDate();
+          const lastSessionDate = streak.lastSessionDate;
+          const missedDay =
+            lastSessionDate != null && daysBetween(lastSessionDate, today) >= 2;
+          setDayMissed(missedDay);
+          setMissedDate(missedDay ? addLocalDays(today, -1) : null);
+          const currentRescue = await getCurrentRescueState();
+          if (cancelled) return;
+          setRescueState(currentRescue);
+
+          let offer: RescueEligibility | null = null;
+          if (missedDay && streak.currentStreak > 0 && currentRescue.status === 'none') {
+            offer = await isEligibleForRescue();
+            if (cancelled) return;
+          }
+          setRescueOffer(offer);
+          console.log('Rescue eligibility check:', offer);
+          console.log('Current rescue state:', currentRescue);
           if (!gemsHydratedOnce.current) {
             setDisplayGems(gems);
             previousGems.current = gems;
@@ -361,6 +418,24 @@ export default function HomeScreen() {
             </Animated.Text>
             <Text style={styles.streakNumber}>{streakHydrated ? String(displayStreak) : '—'}</Text>
           </View>
+
+          <StreakRescueCard
+            hydrated={streakHydrated}
+            rescueState={rescueState}
+            rescueOffer={rescueOffer}
+            dayMissed={dayMissed}
+            missedDate={missedDate}
+            now={tick}
+            onPurchased={(next) => {
+              setRescueState(next);
+              setRescueOffer(null);
+              void getTotalGems().then((gems) => {
+                setTotalGems(gems);
+                setDisplayGems(gems);
+                previousGems.current = gems;
+              });
+            }}
+          />
 
           {streakHydrated ? <DailyActivityRow days={activityDays} /> : null}
 

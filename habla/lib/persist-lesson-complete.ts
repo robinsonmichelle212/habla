@@ -44,6 +44,7 @@ import {
   safeNumber,
 } from '@/lib/summary-safe-data';
 import { formatLocalDate, updateStreak } from '@/lib/streak';
+import { resolveRescueOnLessonComplete } from '@/lib/streak-rescue';
 import { syncStreakReminder } from '@/lib/streak-notifications';
 import {
   buildDailyVocabRecap,
@@ -106,7 +107,15 @@ export async function persistLessonComplete(
     challengeText = DEMO_DAILY_CHALLENGE;
   } else {
     await logCrashBreadcrumb('saving_streak');
-    const streakRes = await withOneRetry('updateStreak', updateStreak);
+    const rescue = await resolveRescueOnLessonComplete();
+    const streakRes = await withOneRetry('updateStreak', () =>
+      rescue.resolved && rescue.missedDate != null && rescue.streakAtPurchase != null
+        ? updateStreak(today, {
+            streakAtPurchase: rescue.streakAtPurchase,
+            missedDate: rescue.missedDate,
+          })
+        : updateStreak(),
+    );
     await logCrashBreadcrumb('streak_saved');
 
     const gems = session.discussionIncomplete

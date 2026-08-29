@@ -20,6 +20,7 @@ import { runLevelDiagnosisAndFixOnce } from '@/lib/level-progress';
 import { processPendingCelebrationQuiz } from '@/lib/milestone-celebration-quiz';
 import { runOneTimeGemRestoration } from '@/lib/gem-restoration';
 import { recoverUnregisteredSessions } from '@/lib/session-recovery';
+import { expireRescueIfPastDeadline } from '@/lib/streak-rescue';
 import { setupGlobalErrorHandlers } from '@/lib/setup-global-error-handlers';
 import { preloadJaviVoice } from '@/lib/javi-speech';
 import { ensurePreviousMonthWrapped } from '@/lib/wrapped-storage';
@@ -61,6 +62,7 @@ function WrappedBootstrap() {
       await processPendingCelebrationQuiz();
       await runOneTimeGemRestoration();
       await recoverUnregisteredSessions();
+      await expireRescueIfPastDeadline();
       await initStreakNotifications();
       await scheduleWrappedMonthlyNotification();
       const created = await ensurePreviousMonthWrapped();

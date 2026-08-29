@@ -192,7 +192,15 @@ async function save(state: StreakState) {
   ]);
 }
 
-export async function updateStreak(today: string = formatLocalDate()): Promise<StreakUpdateResult> {
+export type StreakRescueRestore = {
+  streakAtPurchase: number;
+  missedDate: string;
+};
+
+export async function updateStreak(
+  today: string = formatLocalDate(),
+  rescueRestore?: StreakRescueRestore,
+): Promise<StreakUpdateResult> {
   const prev = await getStreakState();
 
   const next: StreakState = {
@@ -202,6 +210,17 @@ export async function updateStreak(today: string = formatLocalDate()): Promise<S
 
   // Always count completed sessions when summary is reached.
   next.totalSessionsCompleted += 1;
+
+  if (rescueRestore) {
+    next.currentStreak = Math.max(0, Math.trunc(rescueRestore.streakAtPurchase)) + 1;
+    next.lastSessionDate = today;
+    next.longestStreak = Math.max(next.longestStreak, next.currentStreak);
+    next.last7Days = next.last7Days.map((d) =>
+      d.date === today || d.date === rescueRestore.missedDate ? { ...d, completed: true } : d,
+    );
+    await save(next);
+    return { state: next };
+  }
 
   if (next.lastSessionDate === null) {
     // First ever session.
