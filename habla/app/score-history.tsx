@@ -3,6 +3,13 @@ import { ScoreHistoryChart } from '@/components/score-history-chart';
 import { progressPalette } from '@/components/progress/chart-theme';
 import { getLessonHistory } from '@/lib/practice-storage';
 import {
+  flagOutliers,
+  getWeekOverWeekChange,
+  getWeeklyAverages,
+  scoredSessionsFromLessonHistory,
+  type WeekOverWeekChange,
+} from '@/lib/progress-trends';
+import {
   addDaysToDateKey,
   buildScoreHistory,
   drillParamForSkill,
@@ -45,6 +52,8 @@ const CHANGE_COLORS = {
   down: '#E74C3C',
 } as const;
 
+const TRAILING_LOOKBACK_DAYS = 7;
+
 function dateFromPickerValue(value: Date): string {
   return formatLocalDate(value);
 }
@@ -63,6 +72,19 @@ function formatChange(stat: SkillStat): string {
 
 function changeColor(stat: SkillStat): string {
   return CHANGE_COLORS[stat.changeDirection];
+}
+
+function wowDirection(change: number): keyof typeof CHANGE_COLORS {
+  if (change > 2) return 'up';
+  if (change < -2) return 'down';
+  return 'steady';
+}
+
+function formatWowChange(row: WeekOverWeekChange): string {
+  const sign = row.change > 0 ? '+' : '';
+  const dir = wowDirection(row.change);
+  const arrow = dir === 'up' ? ' ↗' : dir === 'down' ? ' ↘' : ' →';
+  return `${sign}${row.change}%${arrow}`;
 }
 
 export default function ScoreHistoryScreen() {
@@ -105,6 +127,39 @@ export default function ScoreHistoryScreen() {
         period === 'custom' ? customEnd : undefined,
       ),
     [lessons, period, customStart, customEnd],
+  );
+
+  const scoredAll = useMemo(() => scoredSessionsFromLessonHistory(lessons), [lessons]);
+
+  const lookbackStart = useMemo(
+    () => addDaysToDateKey(data.periodStart, -TRAILING_LOOKBACK_DAYS),
+    [data.periodStart],
+  );
+
+  const scoredWithLookback = useMemo(
+    () =>
+      scoredAll.filter((session) => session.date >= lookbackStart && session.date <= data.periodEnd),
+    [scoredAll, lookbackStart, data.periodEnd],
+  );
+
+  const scoredInRange = useMemo(
+    () =>
+      scoredAll.filter(
+        (session) => session.date >= data.periodStart && session.date <= data.periodEnd,
+      ),
+    [scoredAll, data.periodStart, data.periodEnd],
+  );
+
+  const outliersInRange = useMemo(() => {
+    const flagged = flagOutliers(scoredWithLookback);
+    return flagged.filter(
+      (session) => session.date >= data.periodStart && session.date <= data.periodEnd,
+    );
+  }, [scoredWithLookback, data.periodStart, data.periodEnd]);
+
+  const weekOverWeek = useMemo(
+    () => getWeekOverWeekChange(getWeeklyAverages(scoredInRange, outliersInRange)),
+    [scoredInRange, outliersInRange],
   );
 
   const onPickerChange = (event: DateTimePickerEvent, selected?: Date) => {
@@ -266,32 +321,73 @@ export default function ScoreHistoryScreen() {
             </View>
 
             <View style={styles.compareCard}>
-              <View style={styles.compareHeader}>
-                <Text style={[styles.compareCell, styles.compareLabelCol]} />
-                <Text style={[styles.compareCell, styles.compareHeaderText]}>Start</Text>
-                <Text style={[styles.compareCell, styles.compareHeaderText]}>End</Text>
-                <Text style={[styles.compareCell, styles.compareHeaderText]}>Change</Text>
-              </View>
-              {SKILL_KEYS.map((skill) => {
-                const stat = data.skills[skill];
-                return (
-                  <View key={`compare-${skill}`} style={styles.compareRow}>
-                    <Text style={[styles.compareCell, styles.compareLabelCol]}>
-                      {SKILL_LABELS[skill]}:
-                    </Text>
-                    <Text style={styles.compareCell}>
-                      {stat.start != null ? `${stat.start}%` : '—'}
-                    </Text>
-                    <Text style={styles.compareCell}>
-                      {stat.end != null ? `${stat.end}%` : '—'}
-                    </Text>
-                    <Text style={[styles.compareCell, { color: changeColor(stat) }]}>
-                      {formatChange(stat)}
-                    </Text>
+              {weekOverWeek ? (
+                <>
+                  <View style={styles.compareHeader}>
+                    <Text style={[styles.compareCell, styles.compareLabelCol]} />
+                    <Text style={[styles.compareCell, styles.compareHeaderText]}>Prev week</Text>
+                    <Text style={[styles.compareCell, styles.compareHeaderText]}>This week</Text>
+                    <Text style={[styles.compareCell, styles.compareHeaderText]}>Change</Text>
                   </View>
-                );
-              })}
+                  {weekOverWeek.map((row) => (
+                    <View key={`wow-${row.skill}`} style={styles.compareRow}>
+                      <Text style={[styles.compareCell, styles.compareLabelCol]}>
+                        {SKILL_LABELS[row.skill]}:
+                      </Text>
+                      <Text style={styles.compareCell}>{row.previous}%</Text>
+                      <Text style={styles.compareCell}>{row.current}%</Text>
+                      <Text
+                        style={[
+                          styles.compareCell,
+                          { color: CHANGE_COLORS[wowDirection(row.change)] },
+                        ]}>
+                        {formatWowChange(row)}
+                      </Text>
+                    </View>
+                  ))}
+                </>
+              ) : (
+                <>
+                  <View style={styles.compareHeader}>
+                    <Text style={[styles.compareCell, styles.compareLabelCol]} />
+                    <Text style={[styles.compareCell, styles.compareHeaderText]}>Start</Text>
+                    <Text style={[styles.compareCell, styles.compareHeaderText]}>End</Text>
+                    <Text style={[styles.compareCell, styles.compareHeaderText]}>Change</Text>
+                  </View>
+                  {SKILL_KEYS.map((skill) => {
+                    const stat = data.skills[skill];
+                    return (
+                      <View key={`compare-${skill}`} style={styles.compareRow}>
+                        <Text style={[styles.compareCell, styles.compareLabelCol]}>
+                          {SKILL_LABELS[skill]}:
+                        </Text>
+                        <Text style={styles.compareCell}>
+                          {stat.start != null ? `${stat.start}%` : '—'}
+                        </Text>
+                        <Text style={styles.compareCell}>
+                          {stat.end != null ? `${stat.end}%` : '—'}
+                        </Text>
+                        <Text style={[styles.compareCell, { color: changeColor(stat) }]}>
+                          {formatChange(stat)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </>
+              )}
             </View>
+
+            {outliersInRange.length > 0 ? (
+              <View style={styles.outlierCard}>
+                <Text style={styles.outlierTitle}>Off days in this period</Text>
+                {outliersInRange.map((session, index) => (
+                  <View key={`outlier-${session.date}-${index}`} style={styles.outlierRow}>
+                    <Text style={styles.outlierDate}>{formatScoreHistoryDate(session.date)}</Text>
+                    <Text style={styles.outlierReason}>{session.reason}</Text>
+                  </View>
+                ))}
+              </View>
+            ) : null}
 
             {data.focusSkill ? (
               <Pressable
@@ -444,6 +540,33 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: progressPalette.muted,
     textTransform: 'uppercase',
+  },
+  outlierCard: {
+    backgroundColor: progressPalette.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: progressPalette.surfaceBorder,
+    padding: 12,
+    gap: 8,
+  },
+  outlierTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: progressPalette.muted,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  outlierRow: { gap: 2 },
+  outlierDate: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: progressPalette.text,
+  },
+  outlierReason: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: progressPalette.muted,
+    lineHeight: 16,
   },
   focusRow: {
     backgroundColor: 'rgba(255, 122, 89, 0.12)',

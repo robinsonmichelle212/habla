@@ -45,7 +45,7 @@ function parseDate(dateStr: string): Date {
   return new Date(y, (m ?? 1) - 1, d ?? 1);
 }
 
-function daysBetween(a: string, b: string): number {
+export function daysBetween(a: string, b: string): number {
   const da = parseDate(a);
   const db = parseDate(b);
   const ms = db.getTime() - da.getTime();
