@@ -1,4 +1,5 @@
 import { AppTextInput } from '@/components/app-text-input';
+import { FeynmanCheck } from '@/components/feynman-check';
 import { GatewayAnimation } from '@/components/gateway-animation';
 import { InteractiveSpanishText } from '@/components/interactive-spanish-text';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
@@ -10,8 +11,15 @@ import {
   generateProgressionTestQuestions,
 } from '@/lib/claude';
 import { unlockedTopicsForWeek } from '@/lib/curriculum-drill-gate';
+import {
+  grammarFocusForFeynman,
+  markFeynmanCompletedForWeek,
+  storedFeynmanFromResult,
+  type FeynmanCheckResult,
+} from '@/lib/feynman';
 import { addGems } from '@/lib/gems';
 import { advanceGrammarCurriculumOneWeek, getGrammarCurriculum } from '@/lib/grammar-curriculum';
+import type { LessonFocusContext } from '@/lib/lesson-focus';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import { isDemoModeEnabled } from '@/lib/onboarding-storage';
 import {
@@ -79,9 +87,9 @@ const palette = {
 };
 
 const JAVI_INTRO =
-  'Has trabajado duro estas dos semanas. Ahora vamos a ver lo que has aprendido. 5 preguntas escritas y una tarea oral. Sin prisa — tómate tu tiempo.';
+  'Has trabajado duro estas dos semanas. Ahora vamos a ver lo que has aprendido. 5 preguntas escritas, una explicación, y una tarea oral. Sin prisa — tómate tu tiempo.';
 
-type Stage = 'intro' | 'written' | 'transition' | 'speaking' | 'evaluating' | 'results';
+type Stage = 'intro' | 'written' | 'feynman' | 'transition' | 'speaking' | 'evaluating' | 'results';
 type Outcome = 'pass' | 'borderline' | 'repeat';
 
 export default function ProgressionTestScreen() {
@@ -107,7 +115,10 @@ export default function ProgressionTestScreen() {
   const [gemsEarned, setGemsEarned] = useState(0);
   const [saving, setSaving] = useState(false);
   const [displayScore, setDisplayScore] = useState(0);
+  const [feynmanFocus, setFeynmanFocus] = useState<LessonFocusContext | null>(null);
+  const [feynmanResult, setFeynmanResult] = useState<FeynmanCheckResult | null>(null);
   const finishingRef = useRef(false);
+  const feynmanResultRef = useRef<FeynmanCheckResult | null>(null);
   const voiceStateRef = useRef<VoiceButtonState>('idle');
   voiceStateRef.current = voiceState;
 
@@ -130,6 +141,7 @@ export default function ProgressionTestScreen() {
       getProgressionBlockForWeek(curriculum.currentWeek) ?? getProgressionBlockByKey('present_tense');
     if (!nextBlock) return;
     setBlock(nextBlock);
+    setFeynmanFocus(grammarFocusForFeynman(curriculum, nextBlock.endWeek));
     const tests = await loadProgressionTests();
     const record = tests[nextBlock.key];
     setBestScore(record?.bestScore ?? 0);
@@ -224,10 +236,20 @@ export default function ProgressionTestScreen() {
     setWrittenAnswers(nextAnswers);
     setAnswer('');
     if (questionIdx + 1 >= questions.length) {
-      setStage('transition');
+      setStage(feynmanFocus ? 'feynman' : 'transition');
     } else {
       setQuestionIdx((i) => i + 1);
     }
+  };
+
+  const handleFeynmanComplete = async (result: FeynmanCheckResult) => {
+    feynmanResultRef.current = result;
+    setFeynmanResult(result);
+    const demo = demoMode || (await isDemoModeEnabled());
+    if (!result.skipped && block && !demo) {
+      await markFeynmanCompletedForWeek(block.endWeek);
+    }
+    setStage('transition');
   };
 
   const finishWithTranscript = async (transcript: string) => {
@@ -304,6 +326,7 @@ export default function ProgressionTestScreen() {
         passed: result.passed,
         completed: result.passed,
         advancedTo: result.passed && nextBlock ? nextBlock.displayName : null,
+        feynman: storedFeynmanFromResult(feynmanResultRef.current),
       });
     }
 
@@ -488,6 +511,23 @@ export default function ProgressionTestScreen() {
                 </View>
               ) : null}
 
+              {stage === 'feynman' && feynmanFocus ? (
+                <View style={styles.card}>
+                  <Text style={styles.progress}>Explica el concepto</Text>
+                  <FeynmanCheck
+                    key={block?.key ?? 'feynman'}
+                    focus={feynmanFocus}
+                    lessonType="Grammar"
+                    topic={block?.displayName}
+                    demoMode={demoMode}
+                    showSkip
+                    skipOnFailure
+                    offlineAsSkip
+                    onComplete={(result) => void handleFeynmanComplete(result)}
+                  />
+                </View>
+              ) : null}
+
               {stage === 'transition' ? (
                 <Animated.View style={[styles.transition, { opacity: transitionOpacity }]}>
                   <Text style={styles.transitionEs}>Última parte — ahora hablamos. 🎤</Text>
@@ -577,6 +617,13 @@ export default function ProgressionTestScreen() {
                         contextSentence={evaluation.javiFeedback}
                       />
                     </Animated.View>
+                  ) : null}
+
+                  {feynmanResult && !feynmanResult.skipped && feynmanResult.feedback ? (
+                    <View style={styles.card}>
+                      <Text style={styles.sectionTitle}>Explain-it-back feedback</Text>
+                      <Text style={styles.body}>{feynmanResult.feedback}</Text>
+                    </View>
                   ) : null}
 
                   <Animated.View style={[styles.card, { opacity: reveal[3] }]}>

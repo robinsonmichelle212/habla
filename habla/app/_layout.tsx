@@ -171,7 +171,6 @@ export default function RootLayout() {
           <Stack.Screen name="progression-test" options={{ headerShown: false }} />
           <Stack.Screen name="conjugation-tables" options={{ headerShown: false }} />
           <Stack.Screen name="tense-guide" options={{ headerShown: false }} />
-          <Stack.Screen name="game-test" options={{ headerShown: false }} />
         </Stack>
         <StatusBar style="auto" />
           </MilestoneProvider>

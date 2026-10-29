@@ -51,6 +51,12 @@ export type ProgressionTestQuestion = {
   explanation: string;
 };
 
+export type ProgressionFeynmanResult = {
+  explanation: string;
+  feedback: string;
+  attempts: number;
+};
+
 export type ProgressionTestAttempt = {
   topic: string;
   date: string;
@@ -64,6 +70,7 @@ export type ProgressionTestAttempt = {
   javiFeedback: string;
   gemsEarned: number;
   advancedTo: string | null;
+  feynman?: ProgressionFeynmanResult | null;
 };
 
 export type ProgressionWrittenScore = {
@@ -226,6 +233,17 @@ function normalizeAttempt(raw: unknown): ProgressionTestAttempt | null {
     javiFeedback: typeof o.javiFeedback === 'string' ? o.javiFeedback : '',
     gemsEarned: Math.max(0, Math.trunc(Number(o.gemsEarned) || 0)),
     advancedTo: typeof o.advancedTo === 'string' && o.advancedTo.trim() ? o.advancedTo : null,
+    feynman: normalizeFeynmanResult(o.feynman),
+  };
+}
+
+function normalizeFeynmanResult(raw: unknown): ProgressionFeynmanResult | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  return {
+    explanation: typeof o.explanation === 'string' ? o.explanation : '',
+    feedback: typeof o.feedback === 'string' ? o.feedback : '',
+    attempts: Math.max(0, Math.trunc(Number(o.attempts) || 0)),
   };
 }
 
@@ -682,6 +700,7 @@ export async function recordProgressionTestResult(params: {
   passed: boolean;
   completed: boolean;
   advancedTo: string | null;
+  feynman?: ProgressionFeynmanResult | null;
 }): Promise<ProgressionTopicRecord> {
   const tests = await loadProgressionTests();
   const prev = tests[params.block.key] ?? emptyRecord();
@@ -699,6 +718,7 @@ export async function recordProgressionTestResult(params: {
     javiFeedback: params.javiFeedback,
     gemsEarned: params.gemsEarned,
     advancedTo: params.advancedTo,
+    feynman: params.feynman ?? null,
   };
   const next: ProgressionTopicRecord = {
     completed: params.completed || prev.completed,
