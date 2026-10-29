@@ -16,6 +16,8 @@ export type GameRound = {
   correctAnswer: string;
   /** Scrambled tiles, tiles mode only. */
   tiles?: string[];
+  /** Optional English meaning / hint shown under the prompt. */
+  hint?: string;
 };
 
 export type GameSequence = {

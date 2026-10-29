@@ -3523,6 +3523,165 @@ Return JSON:
     .slice(0, 3);
 }
 
+/** Slot-mode fill-in-the-blank rounds for the vocab sentence game. Uses the same Anthropic client as other Javi calls. */
+export async function requestVocabGameSequence(input: {
+  words: { spanish: string; english: string; partOfSpeech?: string }[];
+  dialect: string;
+}): Promise<unknown> {
+  const anthropic = getClient();
+  const model = getModel();
+  const count = Math.min(Math.max(input.words.length, 0) * 2, 6);
+  const wordList = input.words
+    .map((w) => {
+      const pos = w.partOfSpeech?.trim();
+      return pos ? `${w.spanish} (${w.english}, ${pos})` : `${w.spanish} (${w.english})`;
+    })
+    .join('; ');
+
+  const system = `You are Javi creating beginner-friendly Spanish fill-in-the-blank practice.
+Return ONLY valid JSON. No markdown. No commentary.`;
+
+  const user = `Create exactly ${count} slot-mode rounds (2 per target word, maximum 6).
+
+Target words: ${wordList}
+Dialect preference: ${input.dialect}
+Use vocabulary and phrasing that match this dialect (Spain vs Latin America). If dialect is both, prefer Spain Spanish with widely understood wording.
+
+Each round:
+- A natural beginner-friendly Spanish sentence with ONE target word replaced by the placeholder {{blank}}
+- Exactly 3 options: 1 correct (the target word in the form the sentence needs) and 2 plausible wrong distractors
+- A short English prompt like "Complete the sentence"
+- unique id
+- mode must be "slot"
+- correctAnswer must equal the correct option string exactly
+
+Return JSON:
+{
+  "rounds": [
+    {
+      "id": "1",
+      "mode": "slot",
+      "prompt": "Complete the sentence",
+      "sentenceTemplate": "Yo {{blank}} al mercado",
+      "options": ["voy", "va", "vamos"],
+      "correctAnswer": "voy"
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1600,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  return extractFirstJsonObject(extractText(response));
+}
+
+/** Tiles-mode sentence-building rounds for the current grammar topic. Same Anthropic client as other Javi calls. */
+export async function requestGrammarGameSequence(input: {
+  topic: string;
+  topicSpanish: string;
+  weekNumber: number;
+  focusVerbs: string[];
+  weekSummary: string;
+  dialect: string;
+}): Promise<unknown> {
+  const anthropic = getClient();
+  const model = getModel();
+  const system = `You are Javi creating beginner-friendly Spanish sentence-building practice.
+Return ONLY valid JSON. No markdown. No commentary.`;
+
+  const user = `Create exactly 5 short Spanish sentences that illustrate this grammar topic.
+
+Topic: ${input.topic} (${input.topicSpanish})
+Curriculum week: ${input.weekNumber}
+Week focus: ${input.weekSummary}
+Focus verbs: ${input.focusVerbs.join(', ')}
+Dialect preference: ${input.dialect}
+Use vocabulary and phrasing that match this dialect (Spain vs Latin America). If dialect is both, prefer Spain Spanish with widely understood wording.
+
+Each sentence must:
+- Be natural, beginner-friendly, and clearly practise ${input.topic}
+- Split into an ordered array of word tokens (punctuation attached to the nearest word is fine)
+- Have between 3 and 8 tokens inclusive
+- Include a short English meaning
+
+Return JSON:
+{
+  "rounds": [
+    {
+      "id": "1",
+      "tokens": ["El", "año", "que", "viene", "viajaré", "a", "España"],
+      "meaning": "Next year I will travel to Spain"
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1600,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  return extractFirstJsonObject(extractText(response));
+}
+
+/** Swap-mode verb-replacement rounds sharing one sentence skeleton. Same Anthropic client as other Javi calls. */
+export async function requestStructureGameSequence(input: {
+  id: number;
+  title: string;
+  summary: string;
+  focus: string;
+  examples: string[];
+  dialect: string;
+}): Promise<unknown> {
+  const anthropic = getClient();
+  const model = getModel();
+  const system = `You are Javi creating beginner-friendly Spanish verb-swap practice.
+Return ONLY valid JSON. No markdown. No commentary.`;
+
+  const user = `Create exactly 5 swap-mode rounds that share ONE sentence skeleton.
+
+Structure topic ${input.id}: ${input.title}
+Summary: ${input.summary}
+Focus: ${input.focus}
+Examples: ${input.examples.join(' | ')}
+Dialect preference: ${input.dialect}
+Use vocabulary and phrasing that match this dialect (Spain vs Latin America). If dialect is both, prefer Spain Spanish with widely understood wording.
+
+Rules:
+- One shared sentenceTemplate with the conjugated verb replaced by {{blank}}
+- Each round changes the subject and/or tense (cue in the prompt, e.g. "Now with: nosotros" or "Now in the future: ella")
+- Exactly 3 options: 1 correct conjugation, 2 plausible wrong forms (wrong person or wrong tense)
+- correctAnswer must equal the correct option string exactly
+- Keep the rest of the sentence the same across rounds
+
+Return JSON:
+{
+  "sentenceTemplate": "Yo {{blank}} café por la mañana",
+  "rounds": [
+    {
+      "id": "1",
+      "prompt": "Now with: yo",
+      "options": ["tomo", "toma", "tomamos"],
+      "correctAnswer": "tomo"
+    }
+  ]
+}`;
+
+  const response = await anthropic.messages.create({
+    model,
+    max_tokens: 1600,
+    system,
+    messages: [{ role: 'user', content: user }],
+  });
+
+  return extractFirstJsonObject(extractText(response));
+}
+
 export async function generateProgressionRetakeTip(input: {
   topicName: string;
   attempts: number;

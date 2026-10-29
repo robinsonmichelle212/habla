@@ -5,6 +5,8 @@ import { LessonPhaseIndicator } from '@/components/lesson-phase-indicator';
 import { LessonTimer } from '@/components/lesson-timer';
 import { DailyVocabIntroCard } from '@/components/daily-vocab-intro-card';
 import { Phase1VerbGuide } from '@/components/phase1-verb-guide';
+import { SentenceGame } from '@/components/sentence-game/sentence-game';
+import type { GameSequence } from '@/components/sentence-game/types';
 import { PushToTalkButton, type VoiceButtonState } from '@/components/push-to-talk-button';
 import { TextMessageBubble } from '@/components/text-message-bubble';
 import {
@@ -108,6 +110,12 @@ import {
 } from '@/lib/demo-mode';
 import { saveLastSummary } from '@/lib/last-summary-storage';
 import { buildSafeSummaryPayload } from '@/lib/summary-safe-data';
+import {
+  generateGrammarGameSequence,
+  generateStructureGameSequence,
+  generateVocabGameSequence,
+} from '@/lib/game-sequence-generator';
+import { dialectLabel, getOnboardingProfile } from '@/lib/onboarding-storage';
 import { formatLocalDate } from '@/lib/streak';
 import { ensureMicPermission, MIC_DENIED_MESSAGE } from '@/lib/mic-permission';
 import {
@@ -150,13 +158,14 @@ const palette = {
 
 const LESSON_OPTIONS: { id: LessonKind; label: string }[] = [
   { id: 'grammar', label: 'Grammar 📚' },
+  { id: 'vocabulary', label: 'Vocab 🔤' },
   { id: 'your-day', label: 'Your Day 🗣️' },
   { id: 'structure', label: 'Structure 🏗️' },
   { id: 'read', label: 'Read 📖' },
 ];
 
-type LessonKind = 'grammar' | 'your-day' | 'structure' | 'read';
-type LessonPhase = 'warmup' | 'feynman' | 'writing' | 'speaking';
+type LessonKind = 'grammar' | 'vocabulary' | 'your-day' | 'structure' | 'read';
+type LessonPhase = 'warmup' | 'game' | 'feynman' | 'writing' | 'speaking';
 type SpeakingStep = 'intro' | 'conversation';
 
 type ChatMessage = {
@@ -165,6 +174,9 @@ type ChatMessage = {
   spanish: string;
   translation?: string;
 };
+
+/** Feynman is bypassed in regular lessons; milestone tests will reuse it later. */
+const FEYNMAN_IN_REGULAR_LESSONS = false;
 
 const WARMUP_SKIP_AFTER_MESSAGES = 4;
 const WARMUP_MAX_JAVI_MESSAGES = 4;
@@ -186,6 +198,41 @@ function toTurns(messages: ChatMessage[]): LessonConversationTurn[] {
     spanish: m.spanish,
     translation: m.translation,
   }));
+}
+
+function skillGameContextMessages(topicName: string): ChatMessage[] {
+  const topic = topicName.trim() || "today's topic";
+  return [
+    {
+      id: 'skill-game-context',
+      role: 'assistant',
+      spanish: `Hoy practicamos: ${topic}.`,
+      translation: `Today's focus: ${topic}, practised through sentence-building rounds.`,
+    },
+  ];
+}
+
+function vocabGameContextMessages(words: DailyVocabWord[]): ChatMessage[] {
+  const list = words.map((w) => w.spanish.trim()).filter(Boolean).join(', ');
+  const englishList = words
+    .map((w) => {
+      const en = w.english.trim();
+      return en ? `${w.spanish} (${en})` : w.spanish;
+    })
+    .filter(Boolean)
+    .join(', ');
+  return [
+    {
+      id: 'vocab-game-context',
+      role: 'assistant',
+      spanish: list
+        ? `Hoy practicamos estas palabras en frases: ${list}.`
+        : 'Hoy practicamos vocabulario en frases con huecos.',
+      translation: englishList
+        ? `Today's focus words: ${englishList}, practised in fill-in-the-blank sentences.`
+        : "Today's focus words practised in fill-in-the-blank sentences.",
+    },
+  ];
 }
 
 function ProgressBar({ label, value }: { label: string; value: number }) {
@@ -231,6 +278,8 @@ export default function LessonScreen() {
   const [dailyVocabIntroMessage, setDailyVocabIntroMessage] = useState('');
   const [vocabIntroAcknowledged, setVocabIntroAcknowledged] = useState(false);
   const [loadingGrammarIntro, setLoadingGrammarIntro] = useState(false);
+  const [loadingGameSequence, setLoadingGameSequence] = useState(false);
+  const [gameSequence, setGameSequence] = useState<GameSequence | null>(null);
 
   const [warmUpMessages, setWarmUpMessages] = useState<ChatMessage[]>([]);
   const [warmUpInput, setWarmUpInput] = useState('');
@@ -376,7 +425,7 @@ export default function LessonScreen() {
   );
 
   const indicatorStep = useMemo(() => {
-    if (phase === 'warmup' || phase === 'feynman' || phase === 'writing') return 0;
+    if (phase === 'warmup' || phase === 'game' || phase === 'feynman' || phase === 'writing') return 0;
     if (phase === 'speaking') return speakingUserTurns >= 2 ? 2 : 1;
     return 0;
   }, [phase, speakingUserTurns]);
@@ -441,6 +490,8 @@ export default function LessonScreen() {
     setDailyVocabIntroMessage('');
     setVocabIntroAcknowledged(false);
     setLoadingGrammarIntro(false);
+    setLoadingGameSequence(false);
+    setGameSequence(null);
     setWarmUpMessages([]);
     setWarmUpInput('');
     setWarmUpReadyForWriting(false);
@@ -547,8 +598,56 @@ export default function LessonScreen() {
       await recordDailyVocabWordsShown(dailyVocabWords);
     }
     setVocabIntroAcknowledged(true);
+
+    if (lessonKind === 'vocabulary' || lessonKind === 'grammar' || lessonKind === 'structure') {
+      setLoadingGameSequence(true);
+      try {
+        const profile = await getOnboardingProfile();
+        const dialect = profile
+          ? dialectLabel(profile.dialectPreference)
+          : 'Castilian with Latin American notes';
+        let sequence = null;
+        if (lessonKind === 'vocabulary') {
+          sequence = dailyVocabWords.length
+            ? await generateVocabGameSequence(dailyVocabWords, dialect)
+            : null;
+        } else if (lessonKind === 'grammar' && lessonFocus?.kind === 'grammar') {
+          sequence = await generateGrammarGameSequence(
+            {
+              topic: lessonFocus.topic,
+              topicSpanish: lessonFocus.topicSpanish,
+              weekNumber: lessonFocus.weekNumber,
+              focusVerbs: lessonFocus.focusVerbs,
+              weekSummary: lessonFocus.weekSummary,
+            },
+            dialect,
+          );
+        } else if (lessonKind === 'structure' && lessonFocus?.kind === 'structure') {
+          sequence = await generateStructureGameSequence(
+            {
+              id: lessonFocus.topic.id,
+              title: lessonFocus.topic.title,
+              summary: lessonFocus.topic.summary,
+              focus: lessonFocus.topic.focus,
+              examples: lessonFocus.topic.examples,
+            },
+            dialect,
+          );
+        }
+        if (sequence) {
+          setGameSequence(sequence);
+          setPhase('game');
+          return;
+        }
+      } catch {
+        // Fall through to the existing warm-up chat.
+      } finally {
+        setLoadingGameSequence(false);
+      }
+    }
+
     await loadGrammarIntro();
-  }, [dailyVocabWords, loadGrammarIntro, vocabIntroAcknowledged]);
+  }, [dailyVocabWords, lessonFocus, lessonKind, loadGrammarIntro, vocabIntroAcknowledged]);
 
   useEffect(() => {
     let cancelled = false;
@@ -609,7 +708,7 @@ export default function LessonScreen() {
           buildInterleavingContext(),
         ]);
         if (cancelled) return;
-        setFeynmanNeeded(demoMode ? false : needsFeynman);
+        setFeynmanNeeded(demoMode ? false : FEYNMAN_IN_REGULAR_LESSONS && needsFeynman);
         setInterleavingContext(interleaving);
         setLessonSession({
           lessonType: lessonKindToLessonType(lessonKind),
@@ -886,8 +985,13 @@ export default function LessonScreen() {
     );
   };
 
-  const startWritingPhase = async () => {
+  const startWritingPhase = async (warmUpOverride?: ChatMessage[]) => {
     if (!lessonFocus) return;
+    const warmUpForContext = warmUpOverride ?? warmUpMessages;
+    if (warmUpOverride) {
+      setWarmUpMessages(warmUpOverride);
+      setWarmUpReadyForWriting(true);
+    }
     setPhase('writing');
     setLoadingWritingTask(true);
 
@@ -895,8 +999,8 @@ export default function LessonScreen() {
       if (demoModeRef.current) {
         setWritingPrompt(DEMO_WRITING_PROMPT);
         setLessonSession({
-          warmUpConversation: toTurns(warmUpMessages),
-          conversation: toTurns(warmUpMessages),
+          warmUpConversation: toTurns(warmUpForContext),
+          conversation: toTurns(warmUpForContext),
           writingTask: { prompt: DEMO_WRITING_PROMPT },
           demoSession: true,
         });
@@ -911,14 +1015,14 @@ export default function LessonScreen() {
         const prompt = cached ?? getOfflineWritingPrompt(lessonFocus);
         setWritingPrompt(prompt);
         setLessonSession({
-          warmUpConversation: toTurns(warmUpMessages),
-          conversation: toTurns(warmUpMessages),
+          warmUpConversation: toTurns(warmUpForContext),
+          conversation: toTurns(warmUpForContext),
           writingTask: { prompt },
         });
         return;
       }
 
-      const prior = conversationToJaviMessages(toTurns(warmUpMessages));
+      const prior = conversationToJaviMessages(toTurns(warmUpForContext));
       const task = await generateWritingTask(
         lessonType,
         prior,
@@ -929,8 +1033,8 @@ export default function LessonScreen() {
       setWritingPrompt(task.prompt);
       await cacheWritingTask(lessonType, focusKey, task.prompt);
       setLessonSession({
-        warmUpConversation: toTurns(warmUpMessages),
-        conversation: toTurns(warmUpMessages),
+        warmUpConversation: toTurns(warmUpForContext),
+        conversation: toTurns(warmUpForContext),
         writingTask: { prompt: task.prompt },
       });
     } catch {
@@ -939,6 +1043,15 @@ export default function LessonScreen() {
     } finally {
       setLoadingWritingTask(false);
     }
+  };
+
+  const beginWritingAfterVocabGame = () => {
+    if (lessonKind === 'vocabulary') {
+      void startWritingPhase(vocabGameContextMessages(dailyVocabWords));
+      return;
+    }
+    const topicName = lessonFocus ? lessonFocusLabel(lessonFocus) : "today's topic";
+    void startWritingPhase(skillGameContextMessages(topicName));
   };
 
   const submitWriting = async () => {
@@ -1954,7 +2067,13 @@ export default function LessonScreen() {
                   <Pressable
                     key={opt.id}
                     onPress={() => {
-                      if (phase !== 'warmup' || (vocabIntroAcknowledged && warmUpMessages.length >= 1)) return;
+                      if (
+                        phase !== 'warmup' ||
+                        loadingGameSequence ||
+                        (vocabIntroAcknowledged && warmUpMessages.length >= 1)
+                      ) {
+                        return;
+                      }
 
                       if (opt.id === lessonKind) {
                         if (opt.id === 'read') {
@@ -1986,7 +2105,11 @@ export default function LessonScreen() {
                       }
                       setLessonKind(opt.id);
                     }}
-                    disabled={phase !== 'warmup' || (vocabIntroAcknowledged && warmUpMessages.length >= 1)}
+                    disabled={
+                      phase !== 'warmup' ||
+                      loadingGameSequence ||
+                      (vocabIntroAcknowledged && warmUpMessages.length >= 1)
+                    }
                     style={({ pressed }) => [
                       styles.lessonPill,
                       selected && styles.lessonPillSelected,
@@ -2032,12 +2155,24 @@ export default function LessonScreen() {
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="interactive"
           showsVerticalScrollIndicator={false}>
-          {loadingFocus ? (
+          {loadingFocus || loadingGameSequence ? (
             <ActivityIndicator color={palette.muted} style={{ marginTop: 24 }} />
           ) : null}
 
           {phase === 'warmup' && offlineIntroNote ? (
             <Text style={styles.offlineNote}>📡 Offline — using a saved introduction</Text>
+          ) : null}
+
+          {phase === 'game' && gameSequence ? (
+            <View style={styles.gameBlock}>
+              <SentenceGame sequence={gameSequence} onComplete={beginWritingAfterVocabGame} />
+              <Pressable
+                onPress={beginWritingAfterVocabGame}
+                style={styles.skipIntroBtn}
+                accessibilityRole="button">
+                <Text style={styles.skipIntroText}>Skip</Text>
+              </Pressable>
+            </View>
           ) : null}
 
           {phase === 'warmup' || phase === 'feynman' ? (
@@ -2526,6 +2661,10 @@ const styles = StyleSheet.create({
   sendButtonPressed: { backgroundColor: palette.accentPressed },
   sendButtonDisabled: { opacity: 0.45 },
   sendButtonText: { fontSize: 15, fontWeight: '800', color: '#0B0F14' },
+  gameBlock: {
+    gap: 8,
+    marginTop: 8,
+  },
   skipIntroBtn: {
     alignSelf: 'center',
     paddingVertical: 12,

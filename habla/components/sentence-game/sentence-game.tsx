@@ -91,6 +91,7 @@ export function SentenceGame({ sequence, onComplete }: SentenceGameProps) {
         exiting={FadeOut.duration(160)}
         style={styles.round}>
         <Text style={styles.prompt}>{round.prompt}</Text>
+        {round.hint ? <Text style={styles.hint}>{round.hint}</Text> : null}
         <RoundBody
           key={round.id}
           round={round}
@@ -130,6 +131,12 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '700',
     color: '#F4F6F8',
+  },
+  hint: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '600',
+    color: '#8B95A5',
   },
   correctNote: {
     alignSelf: 'center',
