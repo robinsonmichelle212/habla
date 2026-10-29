@@ -601,11 +601,10 @@ export default function LessonScreen() {
         const dialect = profile
           ? dialectLabel(profile.dialectPreference)
           : 'Castilian with Latin American notes';
+        const localOnly = demoModeRef.current;
         let sequence = null;
         if (lessonKind === 'vocabulary') {
-          sequence = dailyVocabWords.length
-            ? await generateVocabGameSequence(dailyVocabWords, dialect)
-            : null;
+          sequence = await generateVocabGameSequence(dailyVocabWords, dialect, { localOnly });
         } else if (lessonKind === 'grammar' && lessonFocus?.kind === 'grammar') {
           sequence = await generateGrammarGameSequence(
             {
@@ -616,6 +615,7 @@ export default function LessonScreen() {
               weekSummary: lessonFocus.weekSummary,
             },
             dialect,
+            { localOnly },
           );
         } else if (lessonKind === 'structure' && lessonFocus?.kind === 'structure') {
           sequence = await generateStructureGameSequence(
@@ -627,6 +627,7 @@ export default function LessonScreen() {
               examples: lessonFocus.topic.examples,
             },
             dialect,
+            { localOnly },
           );
         }
         if (sequence) {
@@ -634,7 +635,8 @@ export default function LessonScreen() {
           setPhase('game');
           return;
         }
-      } catch {
+      } catch (error) {
+        console.warn('[Habla] game sequence failed, using warm-up:', error);
         // Fall through to the existing warm-up chat.
       } finally {
         setLoadingGameSequence(false);
@@ -862,7 +864,8 @@ export default function LessonScreen() {
         ...prev,
         { id: newId(), role: 'assistant', spanish: parsed.spanish, translation: parsed.translation },
       ]);
-    } catch {
+    } catch (error) {
+      console.warn('[Habla] warmup Claude failed:', error);
       Alert.alert('Connection issue', 'Check your internet and try again.');
     } finally {
       setWarmUpSending(false);

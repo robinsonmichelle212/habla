@@ -291,74 +291,268 @@ async function loadOrGenerate(
   }
 }
 
+export type GameGenerateOptions = {
+  /** Skip Claude and return a local sequence (demo / offline). */
+  localOnly?: boolean;
+};
+
+const STOCK_VOCAB: Pick<DailyVocabWord, 'spanish' | 'english' | 'exampleSpanish'>[] = [
+  { spanish: 'el mercado', english: 'the market', exampleSpanish: 'Voy al mercado por la mañana.' },
+  { spanish: 'el trabajo', english: 'work', exampleSpanish: 'Tengo mucho trabajo hoy.' },
+  { spanish: 'la casa', english: 'the house', exampleSpanish: 'Vivo en una casa pequeña.' },
+  { spanish: 'el tiempo', english: 'the weather / time', exampleSpanish: 'Hoy hace buen tiempo.' },
+];
+
+const OPTION_FILLERS = ['casa', 'tiempo', 'amigo', 'trabajo', 'ciudad', 'agua', 'grande', 'rojo'];
+
+const GRAMMAR_FALLBACK_SENTENCES: { tokens: string[]; meaning: string }[] = [
+  { tokens: ['Hoy', 'tengo', 'clase', 'de', 'español'], meaning: 'Today I have Spanish class' },
+  { tokens: ['Ella', 'está', 'en', 'casa'], meaning: 'She is at home' },
+  { tokens: ['Nosotros', 'vamos', 'al', 'parque'], meaning: 'We go to the park' },
+  { tokens: ['Tú', 'eres', 'muy', 'amable'], meaning: 'You are very kind' },
+];
+
+const STRUCTURE_FALLBACK_ROUNDS: {
+  prompt: string;
+  sentenceTemplate: string;
+  options: string[];
+  correctAnswer: string;
+}[] = [
+  {
+    prompt: 'The red car',
+    sentenceTemplate: `El coche ${BLANK_MARKER}`,
+    options: ['rojo', 'roja', 'red'],
+    correctAnswer: 'rojo',
+  },
+  {
+    prompt: 'I am tired',
+    sentenceTemplate: `${BLANK_MARKER} cansado`,
+    options: ['Estoy', 'Soy', 'Tengo'],
+    correctAnswer: 'Estoy',
+  },
+  {
+    prompt: 'I like coffee',
+    sentenceTemplate: `Me ${BLANK_MARKER} el café`,
+    options: ['gusta', 'gusto', 'quiero'],
+    correctAnswer: 'gusta',
+  },
+];
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function uniqueChoices(correct: string, extras: string[], minCount: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const item of [correct, ...extras, ...OPTION_FILLERS]) {
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    const key = trimmed.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(trimmed);
+    if (out.length >= Math.max(minCount, 4)) break;
+  }
+  return out;
+}
+
+function vocabSentenceTemplate(word: VocabSeed): string {
+  const spanish = word.spanish.trim();
+  const example = word.exampleSpanish.trim();
+  if (example && spanish) {
+    const full = new RegExp(escapeRegExp(spanish), 'i');
+    if (full.test(example)) return example.replace(full, BLANK_MARKER);
+  }
+  return `Hoy practico ${BLANK_MARKER}.`;
+}
+
+type VocabSeed = Pick<DailyVocabWord, 'spanish' | 'english' | 'exampleSpanish'>;
+
+function padVocabWords(words: DailyVocabWord[]): VocabSeed[] {
+  const usable: VocabSeed[] = words.filter((w) => w.spanish.trim());
+  if (usable.length >= 3) return usable.slice(0, 5);
+  const seen = new Set(usable.map((w) => w.spanish.trim().toLowerCase()));
+  const padded = [...usable];
+  for (const stock of STOCK_VOCAB) {
+    if (padded.length >= 3) break;
+    if (seen.has(stock.spanish.toLowerCase())) continue;
+    padded.push(stock);
+  }
+  return padded;
+}
+
+function buildVocabFallbackSequence(words: DailyVocabWord[]): GameSequence | null {
+  const bank = padVocabWords(words);
+  const usedIds = new Set<string>();
+  const rounds: GameRound[] = [];
+  for (let index = 0; index < bank.length; index += 1) {
+    const word = bank[index];
+    const distractors = bank.filter((_, i) => i !== index).map((item) => item.spanish);
+    const options = uniqueChoices(word.spanish, distractors, 3);
+    if (options.length < 3) continue;
+    rounds.push({
+      id: uniqueId(`vocab-demo-${index + 1}`, index, usedIds, 'vocab-round'),
+      mode: 'slot',
+      prompt: 'Complete the sentence',
+      sentenceTemplate: vocabSentenceTemplate(word),
+      options: options.slice(0, 4),
+      correctAnswer: word.spanish,
+      hint: word.english || undefined,
+    });
+  }
+  return takeValidRounds(rounds);
+}
+
+function buildGrammarFallbackSequence(topic: GrammarGameTopic): GameSequence | null {
+  const usedIds = new Set<string>();
+  const hint = topic.topicSpanish.trim() || topic.topic.trim() || undefined;
+  const rounds: GameRound[] = GRAMMAR_FALLBACK_SENTENCES.map((sentence, index) => {
+    const correctAnswer = sentence.tokens.join(' ');
+    return {
+      id: uniqueId(`grammar-demo-${index + 1}`, index, usedIds, 'grammar-round'),
+      mode: 'tiles' as const,
+      prompt: 'Build the sentence',
+      tiles: shuffleTokens(sentence.tokens),
+      correctAnswer,
+      hint: sentence.meaning || hint,
+    };
+  });
+  return takeValidRounds(rounds);
+}
+
+function spanishFromExample(example: string): { english: string; spanish: string } | null {
+  const parts = example.split('→');
+  const english = (parts[0] ?? '').trim();
+  const spanish = (parts[1] ?? parts[0] ?? '')
+    .replace(/\s*\(.*\)\s*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const tokens = spanish.split(/\s+/).filter(Boolean);
+  if (tokens.length < 2) return null;
+  return { english, spanish };
+}
+
+function buildStructureFallbackSequence(topic: StructureGameTopic): GameSequence | null {
+  const usedIds = new Set<string>();
+  const fromExamples: GameRound[] = [];
+  for (let index = 0; index < topic.examples.length; index += 1) {
+    const parsed = spanishFromExample(topic.examples[index]);
+    if (!parsed) continue;
+    const tokens = parsed.spanish.split(/\s+/).filter(Boolean);
+    const answer = tokens[tokens.length - 1]?.replace(/[¿?¡!.,;:]+$/g, '') ?? '';
+    if (!answer) continue;
+    const prefix = tokens.slice(0, -1).join(' ');
+    const options = uniqueChoices(answer, OPTION_FILLERS, 3);
+    if (options.length < 3) continue;
+    fromExamples.push({
+      id: uniqueId(`structure-demo-${index + 1}`, index, usedIds, 'structure-round'),
+      mode: 'swap',
+      prompt: parsed.english || topic.title,
+      sentenceTemplate: `${prefix} ${BLANK_MARKER}`.trim(),
+      options: options.slice(0, 3),
+      correctAnswer: answer,
+    });
+  }
+
+  const canned: GameRound[] = STRUCTURE_FALLBACK_ROUNDS.map((round, index) => ({
+    id: uniqueId(`structure-stock-${index + 1}`, index, usedIds, 'structure-round'),
+    mode: 'swap' as const,
+    prompt: round.prompt,
+    sentenceTemplate: round.sentenceTemplate,
+    options: round.options,
+    correctAnswer: round.correctAnswer,
+  }));
+
+  return takeValidRounds([...fromExamples, ...canned]);
+}
+
 export async function generateVocabGameSequence(
   words: DailyVocabWord[],
   dialect: string,
+  options?: GameGenerateOptions,
 ): Promise<GameSequence | null> {
-  const usable = words.filter((w) => w.spanish.trim());
-  if (!usable.length) return null;
+  const fallback = buildVocabFallbackSequence(words);
+  if (options?.localOnly) return fallback;
 
-  return loadOrGenerate(
-    VOCAB_CACHE_KEY,
-    cacheKeyForWords(usable),
-    () =>
-      requestVocabGameSequence({
-        words: usable.map((w) => ({
-          spanish: w.spanish,
-          english: w.english,
-          partOfSpeech: w.partOfSpeech,
-        })),
-        dialect,
-      }),
-    validateSlotSequence,
-    'vocab-game-sequence',
+  const usable = words.filter((w) => w.spanish.trim());
+  if (!usable.length) return fallback;
+
+  return (
+    (await loadOrGenerate(
+      VOCAB_CACHE_KEY,
+      cacheKeyForWords(usable),
+      () =>
+        requestVocabGameSequence({
+          words: usable.map((w) => ({
+            spanish: w.spanish,
+            english: w.english,
+            partOfSpeech: w.partOfSpeech,
+          })),
+          dialect,
+        }),
+      validateSlotSequence,
+      'vocab-game-sequence',
+    )) ?? fallback
   );
 }
 
 export async function generateGrammarGameSequence(
   topic: GrammarGameTopic,
   dialect: string,
+  options?: GameGenerateOptions,
 ): Promise<GameSequence | null> {
-  const name = topic.topic.trim();
-  if (!name) return null;
+  const fallback = buildGrammarFallbackSequence(topic);
+  if (options?.localOnly) return fallback;
 
-  return loadOrGenerate(
-    GRAMMAR_CACHE_KEY,
-    `grammar:${topic.weekNumber}:${name.toLowerCase()}:${dialect}`,
-    () =>
-      requestGrammarGameSequence({
-        topic: name,
-        topicSpanish: topic.topicSpanish,
-        weekNumber: topic.weekNumber,
-        focusVerbs: topic.focusVerbs,
-        weekSummary: topic.weekSummary,
-        dialect,
-      }),
-    validateTilesSequence,
-    'grammar-game-sequence',
+  const name = topic.topic.trim();
+  if (!name) return fallback;
+
+  return (
+    (await loadOrGenerate(
+      GRAMMAR_CACHE_KEY,
+      `grammar:${topic.weekNumber}:${name.toLowerCase()}:${dialect}`,
+      () =>
+        requestGrammarGameSequence({
+          topic: name,
+          topicSpanish: topic.topicSpanish,
+          weekNumber: topic.weekNumber,
+          focusVerbs: topic.focusVerbs,
+          weekSummary: topic.weekSummary,
+          dialect,
+        }),
+      validateTilesSequence,
+      'grammar-game-sequence',
+    )) ?? fallback
   );
 }
 
 export async function generateStructureGameSequence(
   topic: StructureGameTopic,
   dialect: string,
+  options?: GameGenerateOptions,
 ): Promise<GameSequence | null> {
-  const title = topic.title.trim();
-  if (!title) return null;
+  const fallback = buildStructureFallbackSequence(topic);
+  if (options?.localOnly) return fallback;
 
-  return loadOrGenerate(
-    GRAMMAR_CACHE_KEY,
-    `structure:${topic.id}:${title.toLowerCase()}:${dialect}`,
-    () =>
-      requestStructureGameSequence({
-        id: topic.id,
-        title,
-        summary: topic.summary,
-        focus: topic.focus,
-        examples: [...topic.examples],
-        dialect,
-      }),
-    validateSwapSequence,
-    'structure-game-sequence',
+  const title = topic.title.trim();
+  if (!title) return fallback;
+
+  return (
+    (await loadOrGenerate(
+      GRAMMAR_CACHE_KEY,
+      `structure:${topic.id}:${title.toLowerCase()}:${dialect}`,
+      () =>
+        requestStructureGameSequence({
+          id: topic.id,
+          title,
+          summary: topic.summary,
+          focus: topic.focus,
+          examples: [...topic.examples],
+          dialect,
+        }),
+      validateSwapSequence,
+      'structure-game-sequence',
+    )) ?? fallback
   );
 }
