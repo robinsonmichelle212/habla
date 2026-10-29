@@ -1,5 +1,5 @@
 import { cleanForSpeech } from '@/lib/clean-for-speech';
-import { Audio } from 'expo-av';
+import { setAudioModeAsync } from 'expo-audio';
 import * as Speech from 'expo-speech';
 
 /** System-default es-ES voice — do not pass a `voice` id (invalid ids silently kill TTS). */
@@ -20,12 +20,12 @@ let ttsGate: Promise<void> = Promise.resolve();
 
 export async function prepareAudioForPlayback(): Promise<void> {
   try {
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: false,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
+    await setAudioModeAsync({
+      allowsRecording: false,
+      playsInSilentMode: true,
+      shouldPlayInBackground: false,
+      shouldRouteThroughEarpiece: false,
+      interruptionMode: 'duckOthers',
     });
   } catch (error) {
     console.log('Speech error (audio mode):', error);

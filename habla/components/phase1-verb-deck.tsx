@@ -102,9 +102,9 @@ function VerbDeckCard({
 
       <View style={styles.table}>
         <View style={[styles.tableRow, styles.tableHeader]}>
-          <Text style={[styles.cell, styles.personCol, styles.headerText]}>Pronoun</Text>
-          <Text style={[styles.cell, styles.formCol, styles.headerText]}>Conjugation</Text>
-          <Text style={[styles.cell, styles.englishCol, styles.headerText]}>English</Text>
+          <Text style={[styles.cell, styles.personCol, styles.tableHeaderText]}>Pronoun</Text>
+          <Text style={[styles.cell, styles.formCol, styles.tableHeaderText]}>Conjugation</Text>
+          <Text style={[styles.cell, styles.englishCol, styles.tableHeaderText]}>English</Text>
         </View>
         {rows.map((row) => (
           <View key={row.person} style={styles.tableRow}>
@@ -412,7 +412,7 @@ const styles = StyleSheet.create({
     minHeight: 28,
   },
   tableHeader: { backgroundColor: palette.background },
-  headerText: {
+  tableHeaderText: {
     fontSize: 9,
     fontWeight: '900',
     color: palette.muted,

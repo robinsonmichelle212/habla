@@ -7,7 +7,6 @@
     "icon": "./assets/images/icon.png",
     "scheme": "habla",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -25,7 +24,6 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
@@ -37,9 +35,10 @@
       "expo-font",
       "expo-web-browser",
       [
-        "expo-av",
+        "expo-audio",
         {
-          "microphonePermission": "Habla needs your microphone so you can practise speaking Spanish with Javi."
+          "microphonePermission": "Habla needs your microphone so you can practise speaking Spanish with Javi.",
+          "recordAudioAndroid": true
         }
       ],
       [
@@ -67,7 +66,8 @@
           }
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true,

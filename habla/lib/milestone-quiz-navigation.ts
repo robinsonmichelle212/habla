@@ -1,4 +1,6 @@
-import type { Href, Router } from 'expo-router';
+import { router, type Href } from 'expo-router';
+
+type Router = Pick<typeof router, 'push'>;
 
 import {
   getNextPendingMilestoneQuiz,

@@ -347,11 +347,11 @@ const styles = StyleSheet.create({
   },
   press: { flex: 1 },
   baseFill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: JEWEL_PALETTE.card,
   },
   glowBorder: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     borderRadius: 18,
     borderWidth: 1,
     borderColor: 'rgba(255, 122, 89, 0.55)',
@@ -381,14 +381,14 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   body: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     padding: 16,
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
   },
   revealedCopy: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     padding: 16,
     paddingBottom: 14,
     alignItems: 'center',

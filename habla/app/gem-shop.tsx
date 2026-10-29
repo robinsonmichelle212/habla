@@ -750,11 +750,11 @@ const styles = StyleSheet.create({
     gap: GRID_GAP,
   },
   overlayHost: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     zIndex: 20,
   },
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: '#000',
   },
   expandCard: {

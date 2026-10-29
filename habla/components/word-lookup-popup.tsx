@@ -125,7 +125,7 @@ export function WordLookupPopup({ visible, data, onClose, onSave }: Props) {
 
 const styles = StyleSheet.create({
   backdrop: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
   },
   backdropInner: {
     flex: 1,

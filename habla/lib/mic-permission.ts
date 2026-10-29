@@ -1,5 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Audio } from 'expo-av';
+import {
+  getRecordingPermissionsAsync,
+  requestRecordingPermissionsAsync,
+} from 'expo-audio';
 import { Platform } from 'react-native';
 
 const MIC_PERMISSION_KEY = 'micPermissionStatus';
@@ -26,7 +29,7 @@ export async function ensureMicPermission(): Promise<{
     return { granted: false, status: 'denied' };
   }
 
-  const current = await Audio.getPermissionsAsync();
+  const current = await getRecordingPermissionsAsync();
   if (current.granted) {
     await storeMicPermissionStatus('granted');
     return { granted: true, status: 'granted' };
@@ -37,7 +40,7 @@ export async function ensureMicPermission(): Promise<{
     return { granted: false, status: 'denied' };
   }
 
-  const requested = await Audio.requestPermissionsAsync();
+  const requested = await requestRecordingPermissionsAsync();
   const status: MicPermissionStatus = requested.granted
     ? 'granted'
     : requested.status === 'denied'

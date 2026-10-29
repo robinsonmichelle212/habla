@@ -1,18 +1,30 @@
-import { Audio } from 'expo-av';
+import {
+  AudioModule,
+  RecordingPresets,
+  setAudioModeAsync,
+  type AudioRecorder,
+} from 'expo-audio';
 import { Platform } from 'react-native';
 
 export const MIN_RECORDING_MS = 400;
 
-let activeRecording: Audio.Recording | null = null;
+let activeRecorder: AudioRecorder | null = null;
 let recordingStartedAt = 0;
 
+function getRecorder(): AudioRecorder {
+  if (!activeRecorder) {
+    activeRecorder = new AudioModule.AudioRecorder(RecordingPresets.HIGH_QUALITY);
+  }
+  return activeRecorder;
+}
+
 export async function prepareAudioForRecording(): Promise<void> {
-  await Audio.setAudioModeAsync({
-    allowsRecordingIOS: true,
-    playsInSilentModeIOS: true,
-    staysActiveInBackground: false,
-    shouldDuckAndroid: true,
-    playThroughEarpieceAndroid: false,
+  await setAudioModeAsync({
+    allowsRecording: true,
+    playsInSilentMode: true,
+    shouldPlayInBackground: false,
+    shouldRouteThroughEarpiece: false,
+    interruptionMode: 'duckOthers',
   });
 }
 
@@ -21,22 +33,18 @@ export async function startVoiceRecording(): Promise<void> {
     throw new Error('Voice recording is not supported on web.');
   }
 
-  if (activeRecording) {
+  const recorder = getRecorder();
+  if (recorder.isRecording) {
     try {
-      await activeRecording.stopAndUnloadAsync();
+      await recorder.stop();
     } catch {
       // Ignore stale recording cleanup errors.
     }
-    activeRecording = null;
-    recordingStartedAt = 0;
   }
 
   await prepareAudioForRecording();
-
-  const recording = new Audio.Recording();
-  await recording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-  await recording.startAsync();
-  activeRecording = recording;
+  await recorder.prepareToRecordAsync(RecordingPresets.HIGH_QUALITY);
+  recorder.record();
   recordingStartedAt = Date.now();
 }
 
@@ -44,36 +52,22 @@ export async function stopVoiceRecording(): Promise<{
   uri: string | null;
   durationMs: number;
 }> {
-  if (!activeRecording) {
+  const recorder = activeRecorder;
+  if (!recorder || (!recorder.isRecording && recordingStartedAt === 0)) {
     return { uri: null, durationMs: 0 };
   }
 
-  const recording = activeRecording;
   const durationMs = Math.max(0, Date.now() - recordingStartedAt);
-  // Clear the global before unload so concurrent callers never touch a half-dead recorder.
-  activeRecording = null;
   recordingStartedAt = 0;
 
-  let uri: string | null = null;
+  let uri: string | null = recorder.uri ?? null;
   try {
-    uri = recording.getURI();
-  } catch {
-    uri = null;
-  }
-
-  try {
-    await recording.stopAndUnloadAsync();
+    await recorder.stop();
   } catch (error) {
-    console.log('[Habla] stopAndUnloadAsync failed:', error);
+    console.log('[Habla] recorder.stop failed:', error);
   }
 
-  try {
-    // Prefer post-unload URI when available; fall back to pre-unload.
-    uri = recording.getURI() ?? uri;
-  } catch {
-    // keep prior uri
-  }
-
+  uri = recorder.uri ?? uri;
   return { uri, durationMs };
 }
 
@@ -83,11 +77,10 @@ export async function ensureRecordingStopped(): Promise<void> {
     await stopVoiceRecording();
   } catch (error) {
     console.log('[Habla] ensureRecordingStopped failed:', error);
-    activeRecording = null;
     recordingStartedAt = 0;
   }
 }
 
 export function isRecordingActive(): boolean {
-  return activeRecording != null;
+  return recordingStartedAt > 0 || (activeRecorder?.isRecording ?? false);
 }

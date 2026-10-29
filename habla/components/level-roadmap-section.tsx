@@ -470,7 +470,7 @@ const styles = StyleSheet.create({
     overflow: 'visible',
   },
   lineBg: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: palette.track,
     borderRadius: 999,
   },
@@ -532,7 +532,7 @@ const styles = StyleSheet.create({
     backgroundColor: palette.background,
   },
   circleFill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: palette.accent,
     borderRadius: CIRCLE / 2,
   },
@@ -546,7 +546,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   circleCurrentFill: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     backgroundColor: palette.accent,
     borderRadius: CIRCLE_CURRENT / 2,
   },
