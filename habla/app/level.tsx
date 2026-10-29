@@ -46,8 +46,7 @@ import {
 } from '@/lib/streak-notifications';
 import { getOnboardingProfile, isAssessmentSkipped } from '@/lib/onboarding-storage';
 import { useCallback, useState } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
-import { useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import {
   ActivityIndicator,
   Alert,

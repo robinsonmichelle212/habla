@@ -23,7 +23,7 @@ import { getShopRecommendation, type ShopRecommendation } from '@/lib/gem-shop-r
 import { clearDemoUnlocks } from '@/lib/gem-shop-demo-session';
 import { getTotalGems } from '@/lib/gems';
 import { useDemoMode } from '@/contexts/demo-mode-context';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
@@ -41,7 +41,6 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 const GRID_PAD = 16;

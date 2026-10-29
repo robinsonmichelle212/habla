@@ -32,10 +32,9 @@ import {
   isWrappedOverdue,
 } from '@/lib/wrapped-storage';
 import * as Haptics from 'expo-haptics';
-import { useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Alert,

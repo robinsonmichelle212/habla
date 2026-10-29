@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { fetch as expoFetch } from 'expo/fetch';
 
 import { formatErrorDnaForDrillPrompt, type ErrorDNAInput } from '@/lib/error-dna';
 import { formatFocusTipsForDrillPrompt } from '@/lib/current-focus-tips';
@@ -83,6 +84,7 @@ function getClient(): Anthropic {
   return new Anthropic({
     apiKey,
     dangerouslyAllowBrowser: true,
+    fetch: expoFetch,
   });
 }
 

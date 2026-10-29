@@ -7,8 +7,7 @@ import {
   type SummaryDisplayPayload,
 } from '@/lib/summary-display-store';
 import { normalizeSpanishKey } from '@/lib/themed-vocabulary';
-import { useFocusEffect } from '@react-navigation/native';
-import { useLocalSearchParams, useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useLocalSearchParams, useRouter, type Href } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';

@@ -9,9 +9,8 @@ import {
   type GrammarCurriculumState,
 } from '@/lib/grammar-curriculum';
 import { getLessonHistory } from '@/lib/practice-storage';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
-import { useFocusEffect } from '@react-navigation/native';
 import {
   ActivityIndicator,
   Pressable,

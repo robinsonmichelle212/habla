@@ -23,8 +23,7 @@ import {
   PROGRESSION_BLOCKS,
   type ProgressionGroupStatus,
 } from '@/lib/progression-test';
-import { useFocusEffect } from '@react-navigation/native';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 

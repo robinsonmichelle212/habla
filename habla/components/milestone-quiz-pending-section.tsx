@@ -2,8 +2,7 @@ import {
   CELEBRATION_QUIZ_CATALOG,
   getPendingMilestoneQuizzes,
 } from '@/lib/milestone-celebration-quiz';
-import { useFocusEffect } from '@react-navigation/native';
-import { useRouter, type Href } from 'expo-router';
+import { useFocusEffect, useRouter, type Href } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 

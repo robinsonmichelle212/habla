@@ -1,6 +1,6 @@
 import { progressPalette } from '@/components/progress/chart-theme';
 import { getMilestoneProgress, type MilestoneProgressItem } from '@/lib/milestones';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 

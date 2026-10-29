@@ -8,7 +8,7 @@ import {
 } from '@/lib/level-progress';
 import type { LessonHistoryEntry } from '@/lib/practice-storage';
 import type { NextLevelRequirements } from '@/lib/level-progress';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect } from 'expo-router';
 import { Fragment, useCallback, useEffect, useRef } from 'react';
 import {
   AccessibilityInfo,
